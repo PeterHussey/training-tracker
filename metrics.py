@@ -8,13 +8,14 @@ ZONE_WEIGHTS = {1: 1.0, 2: 2.0, 3: 2.5, 4: 3.5, 5: 4.5}
 
 
 def load_raw(date_tag=None):
-    files = sorted(CACHE_DIR.glob("garmin_raw_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not files:
+    path = CACHE_DIR / "garmin_raw.json"
+    if not path.exists():
         return {}
-    data = json.loads(files[0].read_text())
-    # Unwrap common wrapper formats
+    data = json.loads(path.read_text())
     if isinstance(data, dict) and "result" in data:
         return data["result"]
+    if isinstance(data, dict) and "data" in data:
+        return data["data"]
     return data
 
 

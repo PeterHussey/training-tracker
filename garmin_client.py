@@ -18,7 +18,6 @@ class GarminClient:
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, env={**os.environ, **ENV},
             )
-            # Consume server startup banner (non-JSON lines before first response)
             time.sleep(0.5)
 
     def call(self, method: str, params: dict = None) -> dict:
@@ -45,7 +44,7 @@ class GarminClient:
 
     def fetch_activities(self, start_date="2026-02-28", end_date="2026-02-28"):
         res = self.call("get_activities", {"start":start_date,"end":end_date})
-        ts_path = self.cache_dir / f"garmin_raw_{start_date or 'all'}_{end_date or 'now'}.json"
+        ts_path = self.cache_dir / "garmin_raw.json"
         ts_path.write_text(json.dumps(res, indent=2, default=str))
         Path("cache/last_fetch_timestamp").write_text(__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat())
         return res
@@ -70,8 +69,7 @@ def fetch_activities_live(start_date="2026-02-28", end_date="2026-02-28") -> dic
         r = requests.get(url, headers=headers, timeout=15)
         r.raise_for_status()
         data = r.json()
-        # Cache it
-        ts_path = Path("cache") / f"garmin_raw_{start_date or 'all'}_{end_date or 'now'}.json"
+        ts_path = Path("cache") / "garmin_raw.json"
         Path("cache").mkdir(exist_ok=True)
         ts_path.write_text(json.dumps(data, indent=2))
         with open("cache/last_fetch_timestamp", "w") as f:
