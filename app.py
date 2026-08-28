@@ -20,6 +20,19 @@ Test window: **2/28/26** set below. Click Refresh → writes `cache/garmin_raw_*
 Fitness Trend reads `get_vo2max` / `get_lactate_threshold` when available.
 """)
 
+# Compute date defaults from cache before sidebar
+raw_tmp = load_raw()
+acts_tmp = parse_activities_from_raw(raw_tmp) if isinstance(raw_tmp, (dict, list)) else []
+if isinstance(acts_tmp, list) and acts_tmp:
+    dlist = sorted([str(a.get("startTimeLocal",""))[:10] for a in acts_tmp if a.get("startTimeLocal")])
+    if dlist:
+        default_start = pd.to_datetime(dlist[0])
+        default_end = pd.to_datetime(dlist[-1])
+    else:
+        default_start = pd.to_datetime("2026-02-28"); default_end = pd.to_datetime("2026-08-28")
+else:
+    default_start = pd.to_datetime("2026-02-28"); default_end = pd.to_datetime("2026-08-28")
+
 # --- Sidebar controls ---
 with st.sidebar:
     st.header("Controls (test: 2/28/26)")
