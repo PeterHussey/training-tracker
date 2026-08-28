@@ -2,7 +2,23 @@
 import json, subprocess, os, time
 from pathlib import Path
 
-ENV = {"GARMIN_EMAIL":"YOUR_EMAIL@example.com","GARMIN_PASSWORD":"ZRpjmanSHVeHy8DQoCAW"}
+def _load_op_creds():
+    import subprocess
+    result = subprocess.run(
+        ["op", "item", "get", "Garmin", "--fields", "username", "--fields", "password", "--reveal"],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return None, None
+    parts = result.stdout.strip().split(",")
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    return None, None
+
+ENV = {}
+_email, _password = _load_op_creds()
+if _email and _password:
+    ENV = {"GARMIN_EMAIL": _email, "GARMIN_PASSWORD": _password}
 MCP_CMD = ["/opt/homebrew/bin/bun", "x", "-y", "@nicolasvegam/garmin-connect-mcp"]
 
 class GarminClient:
@@ -59,12 +75,19 @@ class GarminClient:
 import requests
 
 def fetch_activities_live(start_date="2026-02-28", end_date="2026-02-28") -> dict:
+    from urllib.parse import quote
     token_path = Path.home() / ".garmin-mcp" / "oauth2_token.json"
     if not token_path.exists():
         return {"error":"No OAuth token at ~/.garmin-mcp/oauth2_token.json"}
-    token = json.loads(token_path.read_text())["access_token"]
+    try:
+        token_data = json.loads(token_path.read_text())
+        token = token_data.get("access_token")
+        if not token:
+            return {"error":"No access_token in OAuth file"}
+    except Exception as e:
+        return {"error":f"Failed to read token: {e}"}
     headers = {"Authorization": f"Bearer {token}", "User-Agent": "python-garminconnect"}
-    url = f"https://connectapi.garmin.com/activitylist-service/activities/search/activities?startDate={start_date}&endDate={end_date}"
+    url = f"https://connectapi.garmin.com/activitylist-service/activities/search/activities?startDate={quote(start_date)}&endDate={quote(end_date)}"
     try:
         r = requests.get(url, headers=headers, timeout=15)
         r.raise_for_status()

@@ -49,14 +49,24 @@ def daily_trimp_from_activities(raw) -> list:
         if not date_str or date_str == "unknown":
             continue
         # Duration in minutes; approximate zone from avgHR
-        duration = a.get("duration", 0) / 60.0  # assume seconds
-        avg_hr = a.get("averageHeartRate") or a.get("avgHR") or 130
-        # Simplified zone mapping
-        zone = 2 if avg_hr < 145 else 3 if avg_hr < 165 else 4 if avg_hr < 180 else 5
+        duration_raw = a.get("duration", 0)
+        if isinstance(duration_raw, (int, float)) and duration_raw > 0:
+            duration = duration_raw / 60.0  # assume seconds -> minutes
+        else:
+            duration = 0.0
+        avg_hr_raw = a.get("averageHeartRate") or a.get("avgHR")
+        avg_hr = int(avg_hr_raw) if avg_hr_raw is not None else 130
+        # Simplified zone mapping (includes zone 1 for very low HR)
+        zone = 1 if avg_hr < 120 else 2 if avg_hr < 145 else 3 if avg_hr < 165 else 4 if avg_hr < 180 else 5
         trimp = duration * ZONE_WEIGHTS.get(zone, 2.0)
         daily[date_str] += trimp
-    # Return sorted list of 30 days of values (zeros for missing days)
-    return sorted(daily.values())[-30:] if daily else [0.0] * 30
+    # Return sorted list of last 30 chronological days (zeros for missing days)
+    sorted_items = sorted(daily.items(), key=lambda x: x[0])
+    values = [v for _, v in sorted_items]
+    if not values:
+        return [0.0] * 30
+    # Return last 30 chronological values
+    return values[-30:] if len(values) >= 30 else [0.0] * (30 - len(values)) + values
 
 
 def compute_trimp(zones: dict) -> float:

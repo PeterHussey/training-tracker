@@ -67,9 +67,9 @@ raw = load_raw()
 vo2max_data = raw.get("get_vo2max_result") or raw.get("vo2max") if isinstance(raw, dict) else None
 threshold_data = raw.get("get_lactate_threshold_result") or raw.get("lactate_threshold") if isinstance(raw, dict) else None
 
-# Try live fetch by default for demo
-vm = gc.get_vo2max()
-lt = gc.get_lactate_threshold()
+# Only call live endpoints on explicit refresh/action, not every page load
+vm = None
+lt = None
 
 raw = load_raw()
 # Derive date range from cached activities when available
