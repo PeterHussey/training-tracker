@@ -1,7 +1,7 @@
 """Streamlit training tracker UI."""
 import streamlit as st, plotly.graph_objects as go, pandas as pd, numpy as np
 from pathlib import Path
-from metrics import synthetic_trimp, acwr, banister_ctl_atl_tsb, load_raw, daily_trimp_from_activities
+from metrics import synthetic_trimp, acwr, banister_ctl_atl_tsb, load_raw, daily_trimp_from_activities, parse_activities_from_raw
 from garmin_client import GarminClient
 
 st.set_page_config(page_title="Training Tracker", layout="wide")
@@ -23,8 +23,8 @@ Fitness Trend reads `get_vo2max` / `get_lactate_threshold` when available.
 # --- Sidebar controls ---
 with st.sidebar:
     st.header("Controls (test: 2/28/26)")
-    start = st.date_input("Start date", value=pd.to_datetime("2026-02-28"))
-    end = st.date_input("End date", value=pd.to_datetime("2026-02-28"))
+    start = st.date_input("Start date", value=default_start)
+    end = st.date_input("End date", value=default_end)
     refresh = st.button("Refresh Garmin data")
     gc = GarminClient()
     refresh_result = None
@@ -43,6 +43,7 @@ with st.sidebar:
             st.json(gc.get_lactate_threshold())
 
     ts_path = Path("cache/last_fetch_timestamp")
+refresh_key = ts_path.read_text()[:16] if ts_path.exists() else "none"
     if ts_path.exists():
         st.caption(f"Last fetch: {ts_path.read_text()[:19]}")
     else:
@@ -58,16 +59,37 @@ vm = gc.get_vo2max()
 lt = gc.get_lactate_threshold()
 
 raw = load_raw()
+# Derive date range from cached activities when available
+acts = parse_activities_from_raw(raw) if isinstance(raw, (dict, list)) else []
+if isinstance(acts, list) and acts:
+    dates_list = sorted([a.get("startTimeLocal","")[:10] for a in acts if a.get("startTimeLocal") and isinstance(a.get("startTimeLocal"), str)])
+    if dates_list:
+        min_date = pd.to_datetime(dates_list[0])
+        max_date = pd.to_datetime(dates_list[-1])
+        default_start = min_date
+        default_end = max_date
+    else:
+        default_start = pd.to_datetime("2026-02-28")
+        default_end = pd.to_datetime("2026-08-28")
+else:
+    default_start = pd.to_datetime("2026-02-28")
+    default_end = pd.to_datetime("2026-08-28")
+
 series_real = daily_trimp_from_activities(raw)
-# Show real data when available; synthetic only when cache empty / no activities
 if series_real and sum(series_real) > 0:
     series = series_real
     source_label = "Live Garmin (cached)"
-    dates = pd.date_range("2026-02-01", periods=len(series), freq="D")
+    # Use actual dates from activities for x-axis
+    acts_for_dates = parse_activities_from_raw(raw)
+    date_strs = sorted({a.get("startTimeLocal","")[:10] for a in acts_for_dates if isinstance(a.get("startTimeLocal"), str) and a.get("startTimeLocal","")})
+    if date_strs:
+        dates = pd.to_datetime(date_strs)
+    else:
+        dates = pd.date_range(default_start, periods=len(series), freq="D")
 else:
     series = synthetic_trimp(30)
     source_label = "Synthetic (no live Garmin data)"
-    dates = pd.date_range("2026-01-30", periods=30, freq="D")
+    dates = pd.date_range(default_start, periods=30, freq="D")
 
 ctl_f, atl_f, tsb_v, _, _, tsb_full = banister_ctl_atl_tsb(series)
 acwr_v = acwr(sum(series[-7:]), sum(series[-28:] if len(series) >= 28 else series))
@@ -95,7 +117,7 @@ with tab1:
     fig.add_trace(go.Scatter(x=df_trimp["date"], y=df_trimp["TRIMP"], mode="lines+markers", name="Daily TRIMP"))
     fig.add_trace(go.Scatter(x=df_trimp["date"], y=acwr_series, mode="lines", name="ACWR", yaxis="y2"))
     fig.update_layout(yaxis2=dict(overlaying="y", side="right", range=[0, 2]), title="TRIMP / ACWR — synthetic 30-day")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"load_{refresh_key}")
     st.caption("ACWR green 0.8–1.3; yellow outside; red >1.5. TSB positive = form.")
 
 with tab2:
@@ -134,4 +156,4 @@ with tab4:
     fig_vol.add_trace(go.Scatter(x=df_vol["date"], y=df_vol["7-day"], name="7-day rolling"))
     fig_vol.add_trace(go.Scatter(x=df_vol["date"], y=df_vol["28-day"], name="28-day rolling"))
     fig_vol.update_layout(title="Rolling mileage / TRIMP — synthetic 30-day")
-    st.plotly_chart(fig_vol, use_container_width=True)
+    st.plotly_chart(fig_vol, use_container_width=True, key=f"vol_{refresh_key}")
