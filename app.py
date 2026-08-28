@@ -31,6 +31,9 @@ with st.sidebar:
     if refresh:
         with st.spinner("Calling Garmin MCP (get_activities)..."):
             refresh_result = gc.fetch_activities(str(start), str(end))
+        if isinstance(refresh_result, dict) and (refresh_result.get("status") == "no_mcp_server" or refresh_result.get("method") is None):
+            from garmin_client import fetch_activities_live
+            refresh_result = fetch_activities_live(str(start), str(end))
         st.success("Refresh complete")
     # Also try fitness-trend endpoints
     with st.expander("Live Garmin endpoints"):
