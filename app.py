@@ -1,7 +1,7 @@
 """Streamlit training tracker UI."""
 import streamlit as st, plotly.graph_objects as go, pandas as pd, numpy as np
 from pathlib import Path
-from metrics import synthetic_trimp, acwr, banister_ctl_atl_tsb, load_raw
+from metrics import synthetic_trimp, acwr, banister_ctl_atl_tsb, load_raw, daily_trimp_from_activities
 from garmin_client import GarminClient
 
 st.set_page_config(page_title="Training Tracker", layout="wide")
@@ -54,8 +54,17 @@ threshold_data = raw.get("get_lactate_threshold_result") or raw.get("lactate_thr
 vm = gc.get_vo2max()
 lt = gc.get_lactate_threshold()
 
-series = synthetic_trimp(30)
-dates = pd.date_range("2026-01-30", periods=30, freq="D")
+raw = load_raw()
+series_real = daily_trimp_from_activities(raw)
+# Show real data when available; synthetic only when cache empty / no activities
+if series_real and sum(series_real) > 0:
+    series = series_real
+    source_label = "Live Garmin (cached)"
+    dates = pd.date_range("2026-02-01", periods=len(series), freq="D")
+else:
+    series = synthetic_trimp(30)
+    source_label = "Synthetic (no live Garmin data)"
+    dates = pd.date_range("2026-01-30", periods=30, freq="D")
 
 ctl_f, atl_f, tsb_v, _, _, tsb_full = banister_ctl_atl_tsb(series)
 acwr_v = acwr(sum(series[-7:]), sum(series[-28:] if len(series) >= 28 else series))
@@ -76,7 +85,7 @@ if refresh_result is not None:
 tab1, tab2, tab3, tab4 = st.tabs(["Training Load", "Fitness Trend", "Efficiency", "Volume"])
 
 with tab1:
-    st.subheader("TRIMP & ACWR")
+    st.subheader("TRIMP & ACWR — " + source_label)
     df_trimp = pd.DataFrame({"date": dates, "TRIMP": series})
     acwr_series = [acwr(sum(series[max(0,i-7):i]), sum(series[max(0,i-28):i])) for i in range(1, len(series)+1)]
     fig = go.Figure()
