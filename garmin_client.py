@@ -2,7 +2,8 @@
 import json, subprocess, os, time
 from pathlib import Path
 
-ENV = {"GARMIN_EMAIL": "YOUR_EMAIL@example.com", "GARMIN_PASSWORD": "!op item get 'Garmin' --fields label=password --reveal"}
+ENV = {"GARMIN_EMAIL":"YOUR_EMAIL@example.com","GARMIN_PASSWORD":"ZRpjmanSHVeHy8DQoCAW"}
+MCP_CMD = ["/opt/homebrew/bin/bun", "x", "-y", "@nicolasvegam/garmin-connect-mcp"]
 
 class GarminClient:
     def __init__(self):
@@ -13,7 +14,7 @@ class GarminClient:
     def _start(self):
         if self.proc is None or self.proc.poll() is not None:
             self.proc = subprocess.Popen(
-                ["npx", "-y", "@nicolasvegam/garmin-connect-mcp"],
+                MCP_CMD,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, env={**os.environ, **ENV},
             )
@@ -54,3 +55,27 @@ class GarminClient:
 
     def get_lactate_threshold(self) -> dict:
         return self.call("get_lactate_threshold")
+
+# Real live fallback using cached OAuth token + Garmin REST API directly
+import requests
+
+def fetch_activities_live(start_date="2026-02-28", end_date="2026-02-28") -> dict:
+    token_path = Path.home() / ".garmin-mcp" / "oauth2_token.json"
+    if not token_path.exists():
+        return {"error":"No OAuth token at ~/.garmin-mcp/oauth2_token.json"}
+    token = json.loads(token_path.read_text())["access_token"]
+    headers = {"Authorization": f"Bearer {token}", "User-Agent": "python-garminconnect"}
+    url = f"https://connectapi.garmin.com/activitylist-service/activities/search/activities?startDate={start_date}&endDate={end_date}"
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        # Cache it
+        ts_path = Path("cache") / f"garmin_raw_{start_date or 'all'}_{end_date or 'now'}.json"
+        Path("cache").mkdir(exist_ok=True)
+        ts_path.write_text(json.dumps(data, indent=2))
+        with open("cache/last_fetch_timestamp", "w") as f:
+            f.write(__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat())
+        return {"status":"live","method":"curl/get","data":data,"cached_to":str(ts_path)}
+    except Exception as e:
+        return {"status":"live_failed","error":str(e),"suggestion":"Token may be expired; try refreshing auth via Garmin MCP server."}

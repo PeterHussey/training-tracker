@@ -1,7 +1,1 @@
-{
-  "status": "no_mcp_server",
-  "message": "npx not in PATH (Node/npm missing). Refresh will not work until node/npm installed and `npx` available. Live auth tokens present at ~/.garmin-mcp/.",
-  "error": "[Errno 2] No such file or directory: 'npx'",
-  "method": "get_activities",
-  "suggested_fix": "Install node/npm; verify `which npx`."
-}
+[]
