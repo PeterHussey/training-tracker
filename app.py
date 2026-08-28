@@ -96,7 +96,7 @@ if series_real and sum(series_real) > 0:
     acts_for_dates = parse_activities_from_raw(raw)
     date_strs = sorted({a.get("startTimeLocal","")[:10] for a in acts_for_dates if isinstance(a.get("startTimeLocal"), str) and a.get("startTimeLocal","")})
     if date_strs:
-        dates = pd.to_datetime(date_strs)
+        dates = pd.date_range(pd.to_datetime(date_strs[0]), periods=len(series), freq="D")
     else:
         dates = pd.date_range(default_start, periods=len(series), freq="D")
 else:
