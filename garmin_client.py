@@ -21,12 +21,14 @@ class GarminClient:
             time.sleep(0.5)
 
     def call(self, method: str, params: dict = None) -> dict:
-        self._start()
+        try:
+            self._start()
+        except FileNotFoundError as e:
+            return {"status":"no_mcp_server","message":"npx not in PATH (Node/npm missing). Refresh will not work until node/npm installed and `npx` available. Live auth tokens present at ~/.garmin-mcp/.","error":str(e),"method":method,"suggested_fix":"Install node/npm; verify `which npx`."}
         req = {"jsonrpc":"2.0","id":method,"method":method,"params":params or {}}
         line = json.dumps(req) + "\n"
         try:
             self.proc.stdin.write(line); self.proc.stdin.flush()
-            # Read line-by-line until we get a JSON response line
             for _ in range(30):
                 out = self.proc.stdout.readline()
                 if out:
@@ -36,9 +38,9 @@ class GarminClient:
                             return json.loads(out)
                         except json.JSONDecodeError:
                             continue
-            return {"raw_stdout":"timeout/no-json","method":method}
+            return {"raw_stdout":"timeout/no-json","method":method,"note":"Server may have started but produced no JSON line; check stderr."}
         except Exception as e:
-            return {"error":str(e),"method":method}
+            return {"error":str(e),"method":method,"note":"Subprocess failed — likely npx missing or MCP server crashed."}
 
     def fetch_activities(self, start_date="2026-02-28", end_date="2026-02-28"):
         res = self.call("get_activities", {"start":start_date,"end":end_date})
