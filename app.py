@@ -43,7 +43,7 @@ with st.sidebar:
             st.json(gc.get_lactate_threshold())
 
     ts_path = Path("cache/last_fetch_timestamp")
-refresh_key = ts_path.read_text()[:16] if ts_path.exists() else "none"
+    refresh_key = ts_path.read_text()[:16] if ts_path.exists() else "none"
     if ts_path.exists():
         st.caption(f"Last fetch: {ts_path.read_text()[:19]}")
     else:
