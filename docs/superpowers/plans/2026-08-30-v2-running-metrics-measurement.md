@@ -1219,7 +1219,7 @@ from profile import default_profile
 
 def test_edwards_trimp_sum_zone_minutes_times_weight():
     # 60 min in zone 1 repeated 5 times => 60*1*5 = 300
-    zone_s = {z: 3600.0 for z in range(1, 6)}
+    zone_s = {1: 5 * 3600.0}
     assert edwards_trimp(zone_s) == pytest.approx(300.0)
 
 
