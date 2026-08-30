@@ -135,7 +135,7 @@ docs/
 - `class MetricStore(path: str|Path)`: `save_runner_profile(profile)`, `save_activities(activities: list[Activity])`, `save_metric_rows(rows: list[dict])`, `read_metric(metric: str) -> list[dict]`.
 
 **`pipeline.py`**
-- `run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db: str|Path) -> dict[str,int]` — returns `{"metrics_written": int, "activities": int}`.
+- `run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db: str|Path, lt_payload: dict|None = None, race_payload: dict|None = None) -> dict[str,int]` — returns `{"metrics_written": int, "activities": int}`. Optional `lt_payload` / `race_payload` (from `fetch_lactate_threshold()` / `fetch_race_predictions()`) are ingested as reference metrics when supplied; the pure-activities path always writes the computed metrics.
 
 ---
 
@@ -2189,6 +2189,22 @@ def test_end_to_end_writes_metrics(tmp_path):
     store.close()
 
 
+def test_end_to_end_ingests_lt_and_race(tmp_path):
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    lt = json.loads((Path(__file__).parent / "fixtures" / "lactate_threshold.json").read_text())
+    race = json.loads((Path(__file__).parent / "fixtures" / "race_predictions.json").read_text())
+    db = tmp_path / "metrics2.db"
+    run_pipeline(acts, default_profile(age=40, hrrest=60, sex="M"), str(db),
+                 lt_payload=lt, race_payload=race)
+    store = MetricStore(str(db))
+    assert store.read_metric("load.lt_hr")
+    assert store.read_metric("load.lt_pace")
+    assert store.read_metric("race_5k")
+    assert store.read_metric("load.cs_approx")
+    store.close()
+
+
 def test_rows_from_series_keys():
     s = pd.Series([1.0, 2.5], index=pd.to_datetime(["2026-04-01", "2026-04-02"]))
     rows = rows_from_series("x", s, "computed", params={"a": 1}, flags={"b": 2})
@@ -2203,17 +2219,23 @@ Run: `cd v2 && ../.venv/bin/python -m pytest tests/test_pipeline.py -v`
 Expected: `ModuleNotFoundError`. Then write:
 
 ```python
-"""Orchestrate fetch->normalize->compute->store. Pure computation path: no network."""
+"""Orchestrate fetch->normalize->compute->store. Pure computation path: no network.
+
+Ingested reference metrics (LT, race predictions) enter through optional
+payload arguments — the gateway fetchers call them in, not the pipeline.
+"""
 import pandas as pd
 
 from metric_series import rows_from_series
-from metrics import acwr, elevation, pmc, trimp, vo2max, volume
+from metrics import acwr, elevation, pmc, threshold, trimp, vo2max, volume
+from metrics import racepredict
 from normalize import Activity
 from profile import RunnerProfile
 from store import MetricStore
 
 
-def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db) -> dict[str, int]:
+def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db,
+                 lt_payload: dict | None = None, race_payload: dict | None = None) -> dict[str, int]:
     store = MetricStore(out_db)
     store.save_runner_profile(profile)
     store.save_activities(activities)
@@ -2265,6 +2287,37 @@ def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db) -> 
     rows += rows_from_series("fitness.vo2max", vo2max.daily_vo2max(activities), "garmin_ingested",
                              flags={"error_class": "firstbeat_estimate_5pct", "recompute": "no"})
 
+    # CS (approximate critical speed) — computed from fastestSplit_1609 (brief 2.2)
+    rows += rows_from_series("load.cs_approx", threshold.approx_cs_1609(activities), "computed",
+                             params={"basis": "fastestSplit_1609", "unit": "m/s"})
+
+    # LT + race predictions — ingested reference metrics, only when payloads supplied
+    if lt_payload:
+        lt = threshold.parse_lt(lt_payload)
+        if lt.hr is not None and lt.date:
+            rows += rows_from_series("load.lt_hr",
+                                     pd.Series([float(lt.hr)],
+                                               index=pd.DatetimeIndex([pd.Timestamp(lt.date)])),
+                                     "garmin_ingested", params={"unit": "bpm"},
+                                     flags={"anchored": "hr", "error_class": "lt_hr_7pct"})
+        if lt.speed_m_s is not None and lt.date:
+            rows += rows_from_series("load.lt_pace",
+                                     pd.Series([lt.speed_m_s],
+                                               index=pd.DatetimeIndex([pd.Timestamp(lt.date)])),
+                                     "garmin_ingested", params={"unit": "m/s"},
+                                     flags={"anchored": "no", "error_class": "lt_pace_over_20pct"})
+
+    if race_payload:
+        as_of = race_payload.get("asOfDate") or pd.Timestamp.today().strftime("%Y-%m-%d")
+        for dist, secs in racepredict.parse_predictions(race_payload).items():
+            if secs is None:
+                continue
+            rows += rows_from_series(f"race_{dist}",
+                                     pd.Series([float(secs)],
+                                               index=pd.DatetimeIndex([pd.Timestamp(as_of)])),
+                                     "garmin_ingested", params={"unit": "s", "distance": dist},
+                                     flags={"error_class": "garmin_race_pred_maybe_optimistic"})
+
     store.save_metric_rows(rows)
     store.close()
     return {"metrics_written": len(rows), "activities": len(activities)}
@@ -2273,7 +2326,7 @@ def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db) -> 
 - [ ] **Step 7: Run to verify they pass**
 
 Run: `cd v2 && ../.venv/bin/python -m pytest tests/test_pipeline.py -v`
-Expected: `2 passed`. If `fitness.vo2max` is empty (fixture has few outdoor runs with `vO2MaxValue`), the assertion still passes because `read_metric` just returns `[]` — but confirm at least one row exists; if not, enrich the fixture with more `running` entries (see Task 1 Step 7).
+Expected: `3 passed` (`test_end_to_end_writes_metrics`, `test_end_to_end_ingests_lt_and_race`, `test_rows_from_series_keys`). If `fitness.vo2max` is empty (fixture has few outdoor runs with `vO2MaxValue`), the assertion still passes because `read_metric` just returns `[]` — but confirm at least one row exists; if not, enrich the fixture with more `running` entries (see Task 1 Step 7). If `load.cs_approx` is empty (fixture running runs lack `fastestSplit_1609`), enrich the fixture the same way.
 
 - [ ] **Step 8: Run the full suite**
 
