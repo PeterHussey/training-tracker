@@ -23,7 +23,7 @@ def load_op_creds(item: str = "Garmin") -> tuple[str | None, str | None]:
             ["op", "item", "get", item, "--fields", "username", "--fields", "password", "--reveal"],
             capture_output=True, text=True, timeout=15,
         )
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return None, None
     if result.returncode != 0:
         return None, None
