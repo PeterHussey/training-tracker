@@ -886,6 +886,7 @@ git commit -m "feat(v2): Activity model + normalize + Garmin REST gateway (1Pass
 ```python
 # tests/test_profile.py
 import pytest
+from datetime import date
 from profile import RunnerProfile, default_profile
 
 
@@ -901,7 +902,7 @@ def test_banister_exponent_by_sex():
 
 def test_hrmax_boundaries():
     p = RunnerProfile(hrmax=200, hrrest=50, sex="M", birth_year=1986, lthr_manual=None, hr_zones={}, units="metric")
-    assert p.age_predicted_hrmax() == 186
+    assert p.age_predicted_hrmax() == 220 - (date.today().year - 1986)
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -915,6 +916,7 @@ Expected: fails with `ModuleNotFoundError`.
 """Runner-level config: HRmax/HRrest/sex/birth/LTHR override/HR zones + Banister params."""
 from dataclasses import dataclass, field
 from datetime import date
+from typing import ClassVar
 
 BANISTER_B = {"M": 1.92, "F": 1.67}
 BANISTER_INTERCEPT = 0.64
@@ -931,7 +933,7 @@ class RunnerProfile:
     units: str = "metric"
     hrmax_source: str = "configured"  # "configured" | "age_predicted"
 
-    EDWARDS_WEIGHTS: dict[int, float] = {1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0, 5: 5.0}
+    EDWARDS_WEIGHTS: ClassVar[dict[int, float]] = {1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0, 5: 5.0}
 
     @classmethod
     def from_age(cls, age: int, hrrest: int, sex: str, birth_year: int, **kw):
