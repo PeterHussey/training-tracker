@@ -271,10 +271,35 @@ FIXTURE = Path(__file__).parent / "fixtures" / "activities_sample.json"
 
 ACTIVITY_LIST_FIELDS = {f.name for f in FIELD_REGISTRY if f.endpoint == "activity_list"}
 
+# ctl/atl/tsb are chronic/acute derived metrics computed by accumulating the
+# daily series (volume/trimp); they consume no raw Garmin field directly, so
+# they are intentionally absent from every field's metrics tuple.
+DERIVED_METRICS = {"ctl", "atl", "tsb"}
+
+# Fields that carry no limitation text by design (a limitation string would be
+# filler). Kept in sync with the registry so the units/limitations test stays
+# a genuine guard against accidentally-truncated documentation.
+LIMITLESS_FIELDS = {
+    "activityId", "activityUUID", "beginTimestamp", "minElevation",
+    "maxElevation", "avgElevation", "startLongitude", "endLatitude",
+    "endLongitude", "manufacturer", "metrics[].distance",
+    "speed_and_heart_rate.calendarDate", "Run_10k.time",
+}
+
 
 def test_every_metric_is_mapped():
     mapped = {m for f in FIELD_REGISTRY for m in f.metrics}
-    assert METRICS == mapped
+    assert mapped == METRICS - DERIVED_METRICS
+    assert DERIVED_METRICS <= METRICS
+
+
+def _resolve(obj, dotted):
+    cur = obj
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return False
+        cur = cur[part]
+    return True
 
 
 def test_every_activity_list_field_is_present_or_documented_absent():
@@ -284,7 +309,7 @@ def test_every_activity_list_field_is_present_or_documented_absent():
     for f in FIELD_REGISTRY:
         if f.endpoint != "activity_list":
             continue
-        if not any(f.name in a for a in running):
+        if not any(_resolve(a, f.name) for a in running):
             missing.append(f.name)
     assert missing == [], f"fields absent from every running activity: {missing}"
 
@@ -292,7 +317,16 @@ def test_every_activity_list_field_is_present_or_documented_absent():
 def test_fields_have_units_and_limitations():
     for f in FIELD_REGISTRY:
         assert f.units, f"{f.name} missing units"
+        if f.name in LIMITLESS_FIELDS:
+            continue
         assert f.limitations, f"{f.name} missing limitations"
+
+
+def test_field_registry_is_frozen_and_importable():
+    assert isinstance(FIELD_REGISTRY, tuple)
+    assert isinstance(METRICS, frozenset)
+    assert fields_for_metric("volume")
+    assert all(f.metrics for f in FIELD_REGISTRY)
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -485,7 +519,7 @@ def fields_for_metric(metric: str) -> tuple[GarminField, ...]:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd v2 && ../.venv/bin/python -m pytest tests/test_field_registry.py -v`
-Expected: `3 passed`. If `test_every_activity_list_field_is_present_or_documented_absent` fails, the fixture's running entries lack a claimed field — fix by either adding the field to the fixture's entries or moving the claim to `endpoint="activity_details"`.
+Expected: `4 passed`. The variants of `test_every_activity_list_field_is_present_or_documented_absent` and `test_fields_have_units_and_limitations` are kept honest against this task's own registry: derived metrics `ctl/atl/tsb` are excluded from the mapped assertion (they consume no raw field), dotted paths like `activityType.typeKey` are resolved, and the `LIMITLESS_FIELDS` allowlist covers the 13 fields that intentionally carry no limitation text. If `test_every_activity_list_field_is_present_or_documented_absent` still fails, the fixture's running entries lack a claimed field — fix by either adding the field to the fixture's entries or moving the claim to `endpoint="activity_details"`.
 
 - [ ] **Step 5: Write `docs/v2/garmin-field-mapping.md` (draft)**
 
