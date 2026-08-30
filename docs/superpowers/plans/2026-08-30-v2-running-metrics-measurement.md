@@ -1347,11 +1347,12 @@ from metrics.pmc import ctl_atl_tsb
 
 def test_tsb_is_ctl_minus_atl_and_ctl_smoother():
     idx = pd.date_range("2026-04-01", periods=14, freq="D")
-    tr = pd.Series([100.0] * 14, index=idx)
+    tr = pd.Series([100.0, 50.0] + [50.0] * 12, index=idx)
     out = ctl_atl_tsb(tr)
     assert list(out.columns) == ["ctl", "atl", "tsb"]
     assert out["tsb"].iloc[-1] == pytest.approx(out["ctl"].iloc[-1] - out["atl"].iloc[-1])
-    # ctl (tau 42) moves slower than atl (tau 7) early on
+    # ctl (tau 42) is more sluggish than atl (tau 7), so right after the step
+    # down to 50 it still sits higher than atl
     assert out["ctl"].iloc[1] > out["atl"].iloc[1]
 
 
