@@ -1,0 +1,16 @@
+[project]
+name = "training-tracker-v2"
+version = "0.2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "requests>=2.31",
+    "garminconnect>=0.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
