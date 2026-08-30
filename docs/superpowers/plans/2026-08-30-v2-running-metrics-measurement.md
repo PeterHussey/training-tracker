@@ -163,7 +163,7 @@ python3.11 --version
 rm -rf .venv
 python3.11 -m venv .venv
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install "pandas>=2.2" "requests>=2.31" "garminconnect>=0.8" "pytest>=8"
+.venv/bin/pip install "pandas>=2.2" "requests>=2.31" "garminconnect==0.3.2" "pytest>=8"
 ```
 
 - [ ] **Step 3: Write `v2/pyproject.toml`**
@@ -176,7 +176,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pandas>=2.2",
     "requests>=2.31",
-    "garminconnect>=0.8",
+    "garminconnect==0.3.2",
 ]
 
 [project.optional-dependencies]
