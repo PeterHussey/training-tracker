@@ -790,7 +790,7 @@ class GarminGateway:
         """
         if TOKENSTORE.exists():
             self.auth_path = "tokenstore"
-            self._garmin = Garmin(tokenstore=str(TOKENSTORE), is_cn=False)
+            self._garmin = Garmin(is_cn=False)
             self._garmin.login(tokenstore=str(TOKENSTORE))
         else:
             self.auth_path = "op_credentials"
