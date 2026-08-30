@@ -1454,7 +1454,7 @@ def test_history_percentile_bounds():
     tr = pd.Series(100.0, index=idx)
     acwr = coupled_acwr(tr)
     hp = history_percentile(acwr, window=30)
-    assert hp["history_pct"].iloc[-1] == pytest.approx(0.5)  # all equal -> rank 0.5
+    assert hp["history_pct"].iloc[-1] == pytest.approx((30 + 1) / (2 * 30))  # all equal -> pandas avg-rank pct = (n+1)/2n
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -1497,7 +1497,7 @@ def history_percentile(acwr: pd.Series, window: int = 180) -> pd.DataFrame:
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `cd v2 && ../.venv/bin/python -m pytest tests/test_acwr.py -v`
-Expected: `3 passed`. If `test_history_percentile_bounds` yields a stale rank due to NaN-leading windows, confirm the final value equals `0.5` on the max-window rank at the last point (uses `min_periods=20` so only late points have ranks).
+Expected: `3 passed`. The history-percentile pin is intentionally `(window+1)/(2*window)` (= 31/60), not `0.5`: pandas `rolling().rank(pct=True)` averages tied ranks ((1+n)/2) then divides by n obs. If a stale rank still appears due to NaN-leading windows, confirm the final value on the max-window rank at the last point (uses `min_periods=20` so only late points have ranks).
 
 - [ ] **Step 5: Commit**
 
