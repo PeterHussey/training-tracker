@@ -5,7 +5,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pandas>=2.2",
     "requests>=2.31",
-    "garminconnect>=0.8",
+    "garminconnect==0.3.2",
 ]
 
 [project.optional-dependencies]
