@@ -1,7 +1,11 @@
 """SQLite persistence for the measurement layer."""
 import json
 import sqlite3
+from datetime import date
 from pathlib import Path
+
+from normalize import Activity
+from profile import RunnerProfile
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runner_profile (
@@ -96,6 +100,78 @@ class MetricStore:
         )
         return [dict(zip(("metric", "date", "value", "source", "params", "flags"), row))
                 for row in cur.fetchall()]
+
+    def load_activities(self) -> list[Activity]:
+        rows = self.conn.execute(
+            "SELECT activity_id, activity_date, sport, distance_m, duration_s, "
+            "ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, anaerobic_te, "
+            "avg_speed, fastest_split_1609, zone_s FROM activities "
+            "ORDER BY activity_date, activity_id"
+        ).fetchall()
+        return [self._activity_from_row(r) for r in rows]
+
+    @staticmethod
+    def _activity_from_row(row) -> Activity:
+        (activity_id, activity_date, sport, distance_m, duration_s, ele_gain_m,
+         vo2max, avg_hr, max_hr, aerobic_te, anaerobic_te, avg_speed,
+         fastest_split_1609, zone_s) = row
+        zones: dict[int, float] = {}
+        if zone_s:
+            try:
+                zones = {int(k): float(v) for k, v in json.loads(zone_s).items()}
+            except (json.JSONDecodeError, TypeError, ValueError):
+                zones = {}
+        return Activity(
+            activity_id=int(activity_id),
+            sport=sport,
+            date=date.fromisoformat(activity_date),
+            ts_ms=0,
+            distance_m=float(distance_m),
+            duration_s=float(duration_s),
+            elapsed_s=0.0,
+            zone_s=zones,
+            ele_gain_m=ele_gain_m,
+            vo2max=vo2max,
+            avg_hr=avg_hr,
+            max_hr=max_hr,
+            aerobic_te=aerobic_te,
+            anaerobic_te=anaerobic_te,
+            avg_speed=avg_speed,
+            fastest_split_1609=fastest_split_1609,
+        )
+
+    def load_runner_profile(self) -> RunnerProfile | None:
+        rows = self.conn.execute(
+            "SELECT key, value, meta FROM runner_profile"
+        ).fetchall()
+        if not rows:
+            return None
+        data = {k: v for k, v, _ in rows}
+        hrmax_meta: dict = {}
+        for k, v, m in rows:
+            if k == "hrmax" and m:
+                try:
+                    hrmax_meta = json.loads(m)
+                except json.JSONDecodeError:
+                    hrmax_meta = {}
+        zones: dict[int, tuple[int, int]] = {}
+        raw_zones = data.get("hr_zones", "")
+        if raw_zones:
+            try:
+                zones = {int(k): tuple(v) for k, v in json.loads(raw_zones).items()}
+            except (json.JSONDecodeError, TypeError, ValueError):
+                zones = {}
+        lthr_raw = data.get("lthr_manual", "")
+        return RunnerProfile(
+            hrmax=int(data["hrmax"]),
+            hrrest=int(data["hrrest"]),
+            sex=data["sex"],
+            birth_year=int(data["birth_year"]),
+            lthr_manual=int(lthr_raw) if lthr_raw else None,
+            hr_zones=zones,
+            units=data.get("units", "metric"),
+            hrmax_source=hrmax_meta.get("source", "configured"),
+        )
 
     def close(self) -> None:
         self.conn.close()
