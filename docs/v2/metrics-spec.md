@@ -42,7 +42,8 @@
 ## 5. Context flags carried on every measurement
 - hrmax_source (configured | age_predicted), sensor proxy (deviceId),
   route key, indoor/outdoor, gradients, activity-level flags
-  (hasIntensityIntervals), and per-metric limitation tags from the field registry.
+  (hasIntensityIntervals — registered, not yet carried), and per-metric
+  limitation tags from the field registry.
 
 ## 6. Excluded / documented-as-not-metrics
 - ACWR banded as injury prediction; efficiency factor as a headline;
