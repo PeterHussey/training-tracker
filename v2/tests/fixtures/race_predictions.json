@@ -1,0 +1,20 @@
+{
+  "asOfDate": "2026-08-30",
+  "asOfDateTime": "2026-08-30T08:15:00.000",
+  "Run_5k": {
+    "time": 1500000,
+    "pace": 300
+  },
+  "Run_10k": {
+    "time": 3100000,
+    "pace": 310
+  },
+  "Run_half_marathon": {
+    "time": 6800000,
+    "pace": 323
+  },
+  "Run_full_marathon": {
+    "time": 14400000,
+    "pace": 343
+  }
+}
