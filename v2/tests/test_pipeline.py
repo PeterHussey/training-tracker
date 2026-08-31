@@ -82,6 +82,35 @@ def test_end_to_end_ingests_live_race_schema(tmp_path):
     store.close()
 
 
+def test_end_to_end_emits_cross_training_hr_load(tmp_path):
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    db = tmp_path / "metrics_cross.db"
+    run_pipeline(acts, default_profile(age=40, hrrest=60, sex="M"), str(db))
+    store = MetricStore(str(db))
+    cross_days = {a.date for a in acts if a.sport == "cross"}
+    assert cross_days
+    for metric in ("load.banister_cross", "load.edwards_cross"):
+        rows = store.read_metric(metric)
+        assert rows, f"{metric} missing"
+        for row in rows:
+            assert pd.Timestamp(row["date"]).date() in cross_days, (
+                f"{metric} row on {row['date']} has no cross activity")
+    assert all(r["value"] > 0 for r in store.read_metric("load.banister_cross"))
+    for a in acts:
+        if a.date not in cross_days:
+            for metric in ("load.banister_cross", "load.edwards_cross"):
+                matches = [r for r in store.read_metric(metric)
+                           if pd.Timestamp(r["date"]).date() == a.date]
+                assert not matches, f"{metric} emitted on non-cross day {a.date}"
+    # every cross activity with an avg HR contributes a positive Banister load
+    params = json.loads(store.read_metric("load.banister_cross")[0]["params"])
+    assert params["hrmax"] == 180
+    flags = json.loads(store.read_metric("load.banister_cross")[0]["flags"])
+    assert flags["basis"] == "cross_training"
+    store.close()
+
+
 def test_rows_from_series_keys():
     s = pd.Series([1.0, 2.5], index=pd.to_datetime(["2026-04-01", "2026-04-02"]))
     rows = rows_from_series("x", s, "computed", params={"a": 1}, flags={"b": 2})

@@ -3,12 +3,15 @@
 for a recent period. Usage (from v2/):
 
     ../.venv/bin/python e2e_report.py [--data auto|live|offline] [--since YYYY-MM-DD]
-        [--days N] [--fetch-from YYYY-MM-DD] [--fetch-to YYYY-MM-DD] [--out DB]
+        [--days N] [--fetch-from YYYY-MM-DD] [--fetch-to YYYY-MM-DD]
+        [--units km|miles] [--hrmax estimate|BPM] [--out DB]
 
 --data auto attempts a live Garmin fetch (tokenstore migration or op/env creds)
-and falls back to frozen fixtures when auth/network fails. Exit code 0 = all E2E
-assertions passed; 1 = a check failed. The DB lives in a temp dir unless --out
-is given, so nothing is written into the repo.
+and falls back to frozen fixtures when auth/network fails. --hrmax estimates
+HRmax from the recurring observed max (or applies a manual BPM); default is
+age-predicted. Exit code 0 = all E2E assertions passed; 1 = a check failed.
+The DB lives in a temp dir unless --out is given, so nothing is written into
+the repo.
 """
 import argparse
 import io
@@ -17,6 +20,7 @@ import re
 import sys
 import tempfile
 from collections import OrderedDict
+from dataclasses import replace as dataclass_replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -26,7 +30,7 @@ from gateway import GarminGateway
 from metrics import racepredict, threshold
 from normalize import from_summary
 from pipeline import run_pipeline
-from profile import default_profile
+from profile import default_profile, with_estimated_hrmax
 from store import MetricStore
 
 WEEK_RE = re.compile(r"(\d{4})-W(\d{1,2})")
@@ -39,6 +43,8 @@ EXPECTED_METRICS = [
 CONDITIONAL_METRICS = {
     "load.acwr": "requires a >=28d outdoor-running span for the chronic window",
     "load.acwr_pct": "requires a >=28d outdoor-running span for the chronic window",
+    "load.banister_cross": "requires cross-training activities with HR data",
+    "load.edwards_cross": "requires cross-training activities with HR data",
     "load.lt_hr": "requires a measured lactate threshold in the payload (live LT record was empty)",
     "load.lt_pace": "requires a measured lactate threshold in the payload (live LT record was empty)",
     "race_5k": "requires non-null race predictions in the payload",
@@ -103,6 +109,20 @@ def e2e_checks(activities, metrics: dict[str, list[dict]], metrics_written: int,
             d = pd.Timestamp(row["date"]).date()
             if d not in running_days:
                 failures.append(f"{name} row on {row['date']} has no outdoor running day")
+    cross_days = {a.date for a in activities if a.sport == "cross"}
+    if cross_days:
+        for name in ("load.banister_cross", "load.edwards_cross"):
+            rows = metrics.get(name, [])
+            if not rows:
+                failures.append(f"missing {name} despite {len(cross_days)} cross-training days")
+            for row in rows:
+                d = pd.Timestamp(row["date"]).date()
+                if d not in cross_days:
+                    failures.append(f"{name} row on {row['date']} has no cross-training day")
+    else:
+        for name in ("load.banister_cross", "load.edwards_cross"):
+            if metrics.get(name):
+                failures.append(f"{name} emitted despite no cross-training activities")
     span = running_span_days(activities)
     acwr_present = bool(metrics.get("load.acwr"))
     if acwr_present != (span is not None and span >= 28):
@@ -125,8 +145,26 @@ def _hhmm(value: float) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-def _fmt(value: float, params: dict) -> str:
+KM_PER_MI = 1.609344
+
+
+def _pace_mi(seconds: float) -> str:
+    return f"{_hhmm(seconds)} /mi"
+
+
+def _fmt(value: float, params: dict, units: str = "km") -> str:
     unit = params.get("unit")
+    if units == "miles":
+        if unit == "km":
+            return f"{value / KM_PER_MI:.2f} mi"
+        if unit == "m":
+            return f"{value * 3.28084:.0f} ft"
+        if unit == "m/km":
+            return f"{value * (3.28084 / (1.0 / KM_PER_MI)):.1f} ft/mi"
+        if unit in ("m/s", "m_s") or "m/s" in str(unit):
+            if value > 0:
+                return _pace_mi(1609.344 / value)
+            return "--"
     if unit == "km":
         return f"{value:.2f} km"
     if unit == "m":
@@ -144,13 +182,18 @@ def _fmt(value: float, params: dict) -> str:
     return f"{value:.2f}"
 
 
-def render(store: MetricStore, activities, metrics, meta, since, failures, out) -> None:
+def render(store: MetricStore, activities, metrics, meta, since, failures, out,
+           units: str = "km", profile=None) -> None:
     span = running_span_days(activities) or 0
     running_days = sorted({a.date for a in activities if a.sport == "running"})
     min_d = min((a.date for a in activities), default=None)
     max_d = max((a.date for a in activities), default=None)
     print("==", "E2E metric report", "=" * 20, file=out)
-    print(f"data source : {meta['source']}   auth: {meta.get('auth', 'n/a')}", file=out)
+    print(f"data source : {meta['source']}   auth: {meta.get('auth', 'n/a')}   "
+          f"units: {units}", file=out)
+    if profile is not None:
+        print(f"profile     : hrmax={profile.hrmax} ({profile.hrmax_source})   "
+              f"hrrest={profile.hrrest}   sex={profile.sex}", file=out)
     print(f"activities  : {len(activities)}   running days: {len(running_days)}   "
           f"running span: {span}d   data span: {min_d}..{max_d}", file=out)
     print(f"period      : >= {since} (ISO-week rows included by week end)", file=out)
@@ -163,7 +206,7 @@ def render(store: MetricStore, activities, metrics, meta, since, failures, out) 
         for r in shown[-10:]:
             params = _safe_json(r.get("params"))
             flags = _safe_json(r.get("flags"))
-            print(f"    {r['date']}  {_fmt(r['value'], params):<14} "
+            print(f"    {r['date']}  {_fmt(r['value'], params, units):<14} "
                   f"source={r.get('source')}"
                   + (f"  params={r.get('params')}" if params else "")
                   + (f"  flags={r.get('flags')}" if flags else ""), file=out)
@@ -222,10 +265,27 @@ def _load_live(fetch_from: str | None, fetch_to: str | None, cache_dir=Path("cac
     return acts, lt, race, {"source": "live", "auth": gw.auth_path}
 
 
+def resolve_hrmax(hrmax: str | None, base, activities):
+    """Interpret --hrmax: numeric => configured manual; 'estimate' => observed.
+
+    Returns a RunnerProfile (the numeric/estimated HRmax) or the base unchanged
+    when no flag is given.
+    """
+    if not hrmax:
+        return base
+    if hrmax.strip() == "estimate":
+        return with_estimated_hrmax(base, activities)
+    value = int(hrmax)
+    return dataclass_replace(base, hrmax=value, hrmax_source="configured")
+
+
 def run_report(activities, lt_payload, race_payload, meta, since: date,
-               out=None, out_db: str | None = None) -> int:
+               out=None, out_db: str | None = None, units: str = "km",
+               profile=None, hrmax: str | None = None) -> int:
     import os
     out = out if out is not None else sys.stdout
+    if profile is None:
+        profile = resolve_hrmax(hrmax, default_profile(age=40, hrrest=60, sex="M"), activities)
     tmp_db = out_db
     cleanup = False
     if tmp_db is None:
@@ -233,13 +293,14 @@ def run_report(activities, lt_payload, race_payload, meta, since: date,
         os.close(fd)
         cleanup = True
     try:
-        result = run_pipeline(activities, default_profile(age=40, hrrest=60, sex="M"),
+        result = run_pipeline(activities, profile,
                               tmp_db, lt_payload=lt_payload, race_payload=race_payload)
         store = MetricStore(tmp_db)
         metrics = gather_metrics(store)
         failures = e2e_checks(activities, metrics, result["metrics_written"],
                               lt_payload, race_payload)
-        render(store, activities, metrics, meta, since, failures, out)
+        render(store, activities, metrics, meta, since, failures, out, units=units,
+               profile=profile)
         store.close()
         return 1 if failures else 0
     finally:
@@ -263,16 +324,23 @@ def _main(argv: list[str] | None = None, out=None) -> int:
     parser.add_argument("--fetch-to", type=str, default=None)
     parser.add_argument("--out", type=str, default=None, help="persist DB at path")
     parser.add_argument("--fixtures", type=str, default=str(DEFAULT_FIXTURES))
+    parser.add_argument("--units", choices=["km", "miles"], default="miles",
+                        help="display units (default: miles)")
+    parser.add_argument("--hrmax", type=str, default=None,
+                        help="HRmax: 'estimate' (observed, recurring max) or a numeric "
+                             "manual value. Default: age-predicted.")
     args = parser.parse_args(argv)
 
     acts, lt, race, meta = load_data(args.data, Path(args.fixtures),
                                      args.fetch_from, args.fetch_to)
     max_d = max(a.date for a in acts)
     since = date.fromisoformat(args.since) if args.since else max_d - timedelta(days=args.days)
-    print(f"[e2e] source={meta['source']} activities={len(acts)} period>= {since}",
+    print(f"[e2e] source={meta['source']} activities={len(acts)} period>= {since} "
+          f"units={args.units} hrmax={args.hrmax or 'age'}",
           file=out or sys.stderr)
     out_buf = io.StringIO()
-    rc = run_report(acts, lt, race, meta, since, out=out_buf, out_db=args.out)
+    rc = run_report(acts, lt, race, meta, since, out=out_buf, out_db=args.out,
+                    units=args.units, hrmax=args.hrmax)
     (out or sys.stdout).write(out_buf.getvalue())
     return rc
 

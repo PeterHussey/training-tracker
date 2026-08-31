@@ -56,7 +56,7 @@ fetchers in v2 — the `RunnerProfile` dataclass (with `default_profile` /
 | elapsedDuration | s | volume | Can materially exceed duration on stop-and-go sessions; used for decoupling eligibility (>=90 min sustained). |
 | movingDuration | s | volume | Not always present; fall back to duration. |
 | averageHR | bpm | trimp_banister, cross_training | Optional-sensor dependent (chest strap preferred). Missing on manually-uploaded strength data -> activity excluded from HR-based load. |
-| maxHR | bpm | trimp_banister | Reported even when elevation is missing; excluded from inference when spikes look sensor-artifactual (not enforced in v2). |
+| maxHR | bpm | trimp_banister, cross_training, hrmax | Reported even when elevation is missing; feeds `estimate_hrmax` (recurring max on >=2 distinct days) with one-off spikes discounted as sensor artifacts. |
 | hrTimeInZone_1 | s | trimp_edwards | Seconds-in-zone buckets depend on the device HR-zone config. Reproducibility requires persisting RunnerProfile.hr_zones alongside the series. |
 | hrTimeInZone_2 | s | trimp_edwards | Seconds-in-zone buckets depend on the device HR-zone config. Reproducibility requires persisting RunnerProfile.hr_zones alongside the series. |
 | hrTimeInZone_3 | s | trimp_edwards | Seconds-in-zone buckets depend on the device HR-zone config. Reproducibility requires persisting RunnerProfile.hr_zones alongside the series. |
@@ -163,7 +163,7 @@ consumed by the v2 computation path.
 
 | Garmin field | Units | Maps to metric(s) | Limitations |
 | --- | --- | --- | --- |
-| userData.maxHRSetting | bpm | trimp_banister, vo2max | If unset, age-predicted fallback (220-age) used and flagged in metric flags. |
+| userData.maxHRSetting | bpm | trimp_banister, vo2max | If unset, age-predicted fallback (220-age) used and flagged in metric flags; estimation from recurring observed max (`hrmax_source=observed`) applies when no explicit setting, with a manual `configured` value always winning. |
 | userData.birthDate | date | trimp_banister | Used for fallback HRmax and Banister sex exponent. |
 | userData.measurementSystem | enum | volume | Documented; values stored in SI regardless. |
 
@@ -175,7 +175,7 @@ consumed by the v2 computation path.
 
 ## 6. Cross-cutting limitations
 
-1. No cycling power in the activity list — cross-training load is HR/time/calories only.
+1. No cycling power in the activity list — cross-training load is HR/time/calories only; `load.edwards_cross` can be 0 for sessions without zone seconds.
 2. Elevation absent on indoor/treadmill/zero-distance-cycling activities.
 3. VO2max is a Firstbeat estimate (5–10% error; HRmax-sensitive; underestimates ≥60 mL/kg/min); never recomputed.
 4. Anchor on LT heart rate (≈7% error); LT pace can overestimate 20–26%.

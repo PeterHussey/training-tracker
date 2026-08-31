@@ -66,6 +66,21 @@ def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db,
                                  acwr.history_percentile(acwr_s, window=180)["history_pct"], "computed",
                                  params={"window": 180})
 
+    # Cross-training HR load (indoor bike, elliptical, strength...) — no distance,
+    # so load is measured from HR only. Kept as its OWN series: it never feeds the
+    # running-anchored PMC/ACWR windows (R15 scope). daily_trimp handles distance-less
+    # rows fine since TRIMP is duration * dHR (HR intensity), not distance.
+    CROSS = [a for a in activities if a.sport == "cross"]
+    cross = trimp.daily_trimp(CROSS, profile)
+    if not cross.empty:
+        ban_cross = cross["banister"]
+        rows += rows_from_series("load.banister_cross", ban_cross[ban_cross > 0], "computed",
+                                 params={"hrmax": profile.hrmax, "hrrest": profile.hrrest,
+                                         "sex": profile.sex, "b": profile.banister_exponent()},
+                                 flags={"basis": "cross_training", "hrmax_source": profile.hrmax_source})
+        rows += rows_from_series("load.edwards_cross", cross["edwards"], "computed",
+                                 flags={"basis": "cross_training"})
+
     # VO2max — ingested reference (brief 2.1)
     rows += rows_from_series("fitness.vo2max", vo2max.daily_vo2max(activities), "garmin_ingested",
                              flags={"error_class": "firstbeat_estimate_5pct", "recompute": "no"})
