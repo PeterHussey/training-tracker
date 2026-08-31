@@ -45,7 +45,10 @@ CREATE INDEX IF NOT EXISTS idx_metric ON metric_series (metric, date);
 
 class MetricStore:
     def __init__(self, path):
-        self.conn = sqlite3.connect(str(path))
+        # Streamlit caches the store via st.cache_resource and reuses the same
+        # connection across script reruns, each on a different thread — so the
+        # connection must not be implicitly bound to a single thread.
+        self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.executescript(SCHEMA)
 
     def save_runner_profile(self, profile) -> None:

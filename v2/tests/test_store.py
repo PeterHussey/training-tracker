@@ -1,5 +1,6 @@
 # tests/test_store.py
 import json
+import threading
 from datetime import date
 
 import pytest
@@ -133,3 +134,40 @@ def test_load_runner_profile_nondefault_roundtrip(tmp_path):
     assert loaded.units == "imperial"
     assert loaded.hrmax_source == "configured"
     assert loaded.lthr_manual == 172
+
+
+def test_store_is_usable_from_another_thread(tmp_path):
+    # Streamlit caches the MetricStore via st.cache_resource, so the SAME object
+    # (and its sqlite connection) is reused across script reruns, each of which
+    # runs on a different thread. A connection created on one thread must be
+    # usable from the others, or the dashboard crashes with
+    # sqlite3.ProgrammingError. The check only fires once more than the owning
+    # thread touches the connection, so we exercise it from several threads.
+    db = tmp_path / "t.db"
+
+    created_holder = {}
+
+    def create():
+        s = MetricStore(str(db))
+        s.save_runner_profile(default_profile(age=40, hrrest=60, sex="M"))
+        created_holder["store"] = s
+
+    t_create = threading.Thread(target=create)
+    t_create.start()
+    t_create.join()
+    store = created_holder["store"]
+
+    failures = []
+
+    def use(tag):
+        try:
+            store.load_runner_profile()
+        except Exception as e:  # noqa: BLE001
+            failures.append(f"{tag}:{type(e).__name__}")
+
+    threads = [threading.Thread(target=use, args=(f"run{i}",)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not failures, f"cross-thread use failed: {failures}"
