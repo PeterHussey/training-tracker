@@ -5,15 +5,21 @@
 - Tier metrics by evidential strength (see §2.1–2.3).
 - Recompute what we can reproduce (TRIMP, ACWR, CTL/ATL/TSB, volume, elevation,
   decoupling); ingest reference values with surfaced error bars (VO2max, LT HR,
-  race predictions, Garmin load/TE).
+  race predictions). Garmin load/TE ingestion is planned (registry `load_reference`)
+  but NOT yet emitted as a metric series — TE values persist as per-activity
+  columns only.
+- Sport scope: `load.*`, `pmc.*`, `load.acwr*` are computed on **outdoor-running
+  activities only**; `treadmill` is its own volume group; all other sports feed
+  cross-training **volume only**.
 
 ## 2. Metric inventory
 ### 2.1 Primary metrics
 - volume.distance_{total,running,treadmill,cross}: weekly km (ISO week),
   rolling4wk, wow_pct.
-- load.banister / load.edwards: daily TRIMP.
-- pmc.ctl / pmc.atl / pmc.tsb: EWMA tau 42/7.
-- load.acwr + load.acwr_pct: coupled 7/28 calendar-day ratio + 180d history percentile.
+- load.banister / load.edwards: daily TRIMP, outdoor-running only.
+- pmc.ctl / pmc.atl / pmc.tsb: EWMA tau 42/7, outdoor-running only.
+- load.acwr + load.acwr_pct: coupled 7/28 calendar-day ratio + 180d history
+  percentile, outdoor-running only.
 - fitness.vo2max: ingested per-run Firstbeat estimate.
 - lt_hr / lt_pace: ingested, HR anchored, pace flagged. cs_approx: fastest-mile.
   (Stored under load.lt_hr / load.lt_pace / load.cs_approx.)
@@ -23,6 +29,8 @@
 ### 2.3 Conditional (aggregated)
 - decoupling: eligible runs (sport=running, elapsed>=5400s, gain<=25 m/km,
   route-matched), per-half HR/pace, aggregated >=6 sessions, trend only.
+  **NOT emitted by `run_pipeline`** — module + tests shipped; emission waits on
+  the activity-details ingest path.
 
 ## 3. Formulas
 - Banister TRIMP = dur_min * dHR * 0.64 * exp(b * dHR); dHR = (avgHR - HRrest)/
@@ -40,10 +48,11 @@
   ACWR windows 7/28; PMC tau 42/7; history window 180.
 
 ## 5. Context flags carried on every measurement
-- hrmax_source (configured | age_predicted), sensor proxy (deviceId),
-  route key, indoor/outdoor, gradients, activity-level flags
-  (hasIntensityIntervals — registered, not yet carried), and per-metric
-  limitation tags from the field registry.
+- Actually carried today: `hrmax_source` (configured | age_predicted) on
+  load.banister; `error_class`/`recompute` on fitness.vo2max; `anchored`/
+  `error_class` on lt_hr/lt_pace; `error_class` on race_*; per-metric limitation
+  tags come from the field registry. Registered-but-NOT-yet-carried: sensor proxy
+  (deviceId), route key, indoor/outdoor, gradients, hasIntensityIntervals.
 
 ## 6. Excluded / documented-as-not-metrics
 - ACWR banded as injury prediction; efficiency factor as a headline;
