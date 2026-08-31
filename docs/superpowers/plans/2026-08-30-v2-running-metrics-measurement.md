@@ -2464,7 +2464,10 @@ tsb, acwr, decoupling, vo2max, lt_hr, lt_pace, cs_approx,
 race_5k, race_10k, race_half, race_full, load_reference,
 cross_training
 ```
-```
+The prose paragraph DIRECTLY above the fence is NOT permitted — Step 3's check
+requires the heading line, a blank line, then immediately the fenced block.
+Write the explanatory prose BELOW the closing fence (as the completed
+`docs/v2/metrics-spec.md` does) so the machine check passes.
 
 - [ ] **Step 2: Finalize `docs/v2/garmin-field-mapping.md`**
 
