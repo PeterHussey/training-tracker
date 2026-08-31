@@ -227,6 +227,7 @@ class GarminHttp:
 
     def fetch_activities(self, start: str, end: str) -> list[dict]:
         out: list[dict] = []
+        seen: set = set()
         offset = 0
         limit = 100
         while True:
@@ -234,8 +235,19 @@ class GarminHttp:
                 "startDate": start, "endDate": end,
                 "limit": str(limit), "offset": str(offset),
             }) or []
-            out.extend(page)
-            if len(page) < limit:
+            # Deduplicate by activityId AND detect a non-advancing offset:
+            # Garmin's connectapi can ignore `offset` and return the same full
+            # page indefinitely, so `len(page) < limit` never fires and the
+            # loop spins forever. When an entire page is already-seen activityIds
+            # the offset isn't moving — bail to avoid an unbounded fetch.
+            new_ids = 0
+            for row in page:
+                aid = row.get("activityId") if isinstance(row, dict) else None
+                if aid is None or aid not in seen:
+                    seen.add(aid)
+                    out.append(row)
+                    new_ids += 1
+            if len(page) < limit or new_ids == 0:
                 break
             offset += limit
         return out

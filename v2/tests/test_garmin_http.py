@@ -199,3 +199,32 @@ def test_get_json_retries_transient_failure_then_succeeds(tokenstore, monkeypatc
     out = gh.get_json(ACTIVITIES_PATH, params={"limit": "5", "offset": "0"})
     assert out == [{"activityId": 7}]
     assert calls["n"] == 2
+
+
+def test_fetch_activities_terminates_on_duplicate_pages(tokenstore, monkeypatch):
+    """Root-cause regression for the recurring timeout.
+
+    Garmin's connectapi can return the SAME page regardless of `offset`
+    (offset ignored), so each call yields 100 rows that are already-seen
+    activityIds. The healthy break (`len(page) < limit`) never fires because
+    every page is full (100). Without dedup-based termination the loop spins
+    forever (this is what blew the 90s guard). The fetch must detect
+    all-duplicate pages and stop, returning exactly the distinct rows.
+    """
+    page = [_row(i) for i in range(100)]  # activityIds 0..99
+    call_count = {"n": 0}
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        call_count["n"] += 1
+        if call_count["n"] >= 3:
+            raise RuntimeError("LOOP SENTINEL: pagination not terminating")
+        r = mock.Mock(status_code=200)
+        r.json.return_value = list(page)  # identical 100 rows every page
+        return r
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    gh = GarminHttp(tokenstore, max_retries=0)
+    acts = gh.fetch_activities("a", "b")
+    assert call_count["n"] == 2, f"expected dedup to stop after 2 pages, got {call_count['n']}"
+    assert len(acts) == 100
+    assert acts[0]["activityId"] == 0
+    assert acts[-1]["activityId"] == 99
+
