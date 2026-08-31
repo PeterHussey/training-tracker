@@ -2306,8 +2306,12 @@ def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db,
                              elevation.gain_per_km(activities, "running"), "computed",
                              params={"unit": "m/km"})
 
-    # HR load + PMC + ACWR (brief 1.2, 1.3, 1.1)
-    daily = trimp.daily_trimp(activities, profile)
+    # HR load + PMC + ACWR (brief 1.2, 1.3, 1.1).
+    # Scope: OUTDOOR-RUNNING only (Global Constraint line: "running metrics are
+    # computed on outdoor-running activities only"). Treadmill, cycling, strength
+    # feed volume (groups) only — never the HR-load anchors.
+    RUNNING = [a for a in activities if a.sport == "running"]
+    daily = trimp.daily_trimp(RUNNING, profile)
     if not daily.empty:
         ban = daily["banister"]
         # DENSIFY to calendar days (load 0 on rest days) so PMC/ACWR windows are
@@ -2406,15 +2410,21 @@ Write the document with this content (fill from the plan decisions; no TBDs):
 - Tier metrics by evidential strength (Table in 2.2).
 - Recompute what we can reproduce (TRIMP, ACWR, CTL/ATL/TSB, volume, elevation,
   decoupling); ingest reference values with surfaced error bars (VO2max, LT HR,
-  race predictions, Garmin load/TE).
+  race predictions). Garmin load/TE ingestion is planned (registry `load_reference`)
+  but NOT yet emitted as a metric series — TE values persist as per-activity
+  columns only.
+- Sport scope: `load.*`, `pmc.*`, `load.acwr*` are computed on **outdoor-running
+  activities only**; `treadmill` is its own volume group; all other sports feed
+  cross-training **volume only**.
 
 ## 2. Metric inventory
 ### 2.1 Primary metrics
 - volume.distance_{total,running,treadmill,cross}: weekly km (ISO week),
   rolling4wk, wow_pct.
-- load.banister / load.edwards: daily TRIMP.
-- pmc.ctl / pmc.atl / pmc.tsb: EWMA tau 42/7.
-- load.acwr + load.acwr_pct: coupled 7/28 calendar-day ratio + 180d history percentile.
+- load.banister / load.edwards: daily TRIMP, outdoor-running only.
+- pmc.ctl / pmc.atl / pmc.tsb: EWMA tau 42/7, outdoor-running only.
+- load.acwr + load.acwr_pct: coupled 7/28 calendar-day ratio + 180d history
+  percentile, outdoor-running only.
 - fitness.vo2max: ingested per-run Firstbeat estimate.
 - lt_hr / lt_pace: ingested, HR anchored, pace flagged. cs_approx: fastest-mile.
 - race_5k / race_10k / race_half / race_full: ingested, marathon flagged.
@@ -2423,6 +2433,8 @@ Write the document with this content (fill from the plan decisions; no TBDs):
 ### 2.3 Conditional (aggregated)
 - decoupling: eligible runs (sport=running, elapsed>=5400s, gain<=25 m/km,
   route-matched), per-half HR/pace, aggregated >=6 sessions, trend only.
+  **NOT emitted by `run_pipeline`** — module + tests shipped; emission waits on
+  the activity-details ingest path.
 
 ## 3. Formulas
 - Banister TRIMP = dur_min * dHR * 0.64 * exp(b * dHR); dHR = (avgHR - HRrest)/
@@ -2440,9 +2452,11 @@ Write the document with this content (fill from the plan decisions; no TBDs):
   ACWR windows 7/28; PMC tau 42/7; history window 180.
 
 ## 5. Context flags carried on every measurement
-- hrmax_source (configured | age_predicted), sensor proxy (deviceId),
-  route key, indoor/outdoor, gradients, activity-level flags
-  (hasIntensityIntervals), and per-metric limitation tags from the field registry.
+- Actually carried today: `hrmax_source` (configured | age_predicted) on
+  load.banister; `error_class`/`recompute` on fitness.vo2max; `anchored`/
+  `error_class` on lt_hr/lt_pace; `error_class` on race_*; per-metric limitation
+  tags come from the field registry. Registered-but-NOT-yet-carried: sensor proxy
+  (deviceId), route key, indoor/outdoor, gradients, hasIntensityIntervals.
 
 ## 6. Excluded / documented-as-not-metrics
 - ACWR banded as injury prediction; efficiency factor as a headline;
