@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -87,7 +86,7 @@ class GarminTokenStore:
         return float(time.time()) > (exp - 900.0)
 
     def has_valid_token(self) -> bool:
-        return bool(self.access_token())
+        return bool(self.access_token()) and not self.expires_soon()
 
     def refresh(self) -> bool:
         cid = self._data.get("di_client_id")

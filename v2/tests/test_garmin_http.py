@@ -59,6 +59,7 @@ def test_expires_soon_true_within_threshold(tmp_path):
     ts = GarminTokenStore(p, timeout=5.0)
     ts.load()
     assert ts.expires_soon() is True
+    assert ts.has_valid_token() is False
 
 
 def test_refresh_posts_grant_and_persists(tmp_path):
