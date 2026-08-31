@@ -492,11 +492,15 @@ def _view(**kw):
 
 REQUIRED = {
     "volume.distance_total", "volume.rolling4wk_total", "load.banister",
-    "load.edwards", "pmc.ctl", "pmc.atl", "pmc.tsb", "load.acwr",
+    "load.edwards", "pmc.ctl", "pmc.atl", "pmc.tsb",
     "load.banister_cross", "load.edwards_cross", "fitness.vo2max",
     "load.cs_approx", "load.lt_hr", "load.lt_pace",
     "race_5k", "race_10k", "race_half", "race_full",
 }
+# NOTE: load.acwr/load.acwr_pct are deliberately NOT in REQUIRED — the sample
+# fixture's running span is 13d (< 28d chronic window), so coupled_acwr is
+# all-NaN and nothing emits. e2e_report already asserts acwr presence ⇔
+# running_span >= 28d (its conditional cross-check).
 
 
 def test_session_view_emits_expected_metrics():
