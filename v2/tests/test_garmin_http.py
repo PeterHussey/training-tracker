@@ -163,3 +163,18 @@ def test_fetch_activities_paginates(tokenstore, monkeypatch):
     assert len(acts) == 201
     assert acts[0]["activityId"] == 0
     assert acts[-1]["activityId"] == 200
+
+
+def test_get_json_aborts_stall_within_call_budget(tokenstore, monkeypatch):
+    """Root-cause regression: a half-stalled SSL socket defeats requests'
+    `timeout=`, so a stuck connectapi call must be abandoned by force (daemon
+    thread + hard deadline) and surfaced as GarminHttpError — not hang forever."""
+    def stall_forever(url, headers=None, params=None, timeout=5.0):
+        time.sleep(8)  # simulates a half-open socket that never delivers the body
+    monkeypatch.setattr("garmin_http.requests.get", stall_forever)
+    gh = GarminHttp(tokenstore)
+    t0 = time.time()
+    with pytest.raises(GarminHttpError):
+        gh.get_json(ACTIVITIES_PATH, params={"limit": "5", "offset": "0"})
+    elapsed = time.time() - t0
+    assert elapsed < 6, f"call did not abort promptly: {elapsed:.1f}s"

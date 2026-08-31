@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -41,6 +42,34 @@ def _native_headers(extra: dict[str, str]) -> dict[str, str]:
 
 def connectapi_garmin_headers(token: str) -> dict[str, str]:
     return _native_headers({"Authorization": f"Bearer {token}", "Accept": "application/json"})
+
+
+# Per-call hard deadline for a single connectapi GET. Healthy calls return in
+# <1s; a stalled SSL body read can't be aborted by requests' socket timeout
+# alone (see systematic-debugging trace: recv_into hangs indefinitely), so each
+# request runs on a daemon thread bounded by this deadline and the thread is
+# abandoned if it overstays — converting a silent stall into GarminHttpError.
+GET_DEADLINE_SECONDS = 10.0
+
+
+def _threaded_get(url: str, headers: dict, params: dict | None, budget: float) -> requests.Response:
+    box: dict = {}
+
+    def _do():
+        try:
+            box["resp"] = requests.get(url, headers=headers, params=params,
+                                       timeout=min(budget, 5.0))
+        except BaseException as e:  # noqa: BLE001 — re-raised to caller
+            box["error"] = e
+
+    worker = threading.Thread(target=_do, daemon=True)
+    worker.start()
+    worker.join(budget)
+    if worker.is_alive():
+        raise GarminHttpError(f"GET {url} did not complete within {budget}s")
+    if "error" in box:
+        raise box["error"]
+    return box["resp"]
 
 
 class GarminTokenStore:
@@ -165,9 +194,9 @@ class GarminHttp:
     def get_json(self, path: str, params: dict | None = None) -> dict | list:
         url = CONNECTAPI_BASE + path
         headers = connectapi_garmin_headers(self._token())
+        budget = min(self.tokenstore.timeout, GET_DEADLINE_SECONDS)
         try:
-            r = requests.get(url, headers=headers, params=params,
-                             timeout=self.tokenstore.timeout)
+            r = _threaded_get(url, headers=headers, params=params, budget=budget)
         except requests.RequestException as e:
             raise GarminHttpError(f"request failed for {path}: {e}") from e
         if r.status_code != 200:
