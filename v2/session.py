@@ -5,14 +5,20 @@ dated series + interpretation context, and owns the date-filtering / unit-
 formatting helpers shared with e2e_report.py so the CLI report and the
 dashboard use one implementation.
 """
+from __future__ import annotations
+
 import json
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from pipeline import compute_metric_rows
+
+if TYPE_CHECKING:
+    from profile import RunnerProfile
 
 WEEK_RE = re.compile(r"(\d{4})-W(\d{1,2})")
 DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -28,8 +34,8 @@ CONDITIONAL_METRICS = {
     "load.acwr_pct": "requires a >=28d outdoor-running span for the chronic window",
     "load.banister_cross": "requires cross-training activities with HR data",
     "load.edwards_cross": "requires cross-training activities with HR data",
-    "load.lt_hr": "requires a measured lactate threshold in the payload",
-    "load.lt_pace": "requires a measured lactate threshold in the payload",
+    "load.lt_hr": "requires a measured lactate threshold in the payload (live LT record was empty)",
+    "load.lt_pace": "requires a measured lactate threshold in the payload (live LT record was empty)",
     "race_5k": "requires non-null race predictions in the payload",
     "race_10k": "requires non-null race predictions in the payload",
     "race_half": "requires non-null race predictions in the payload",
@@ -89,7 +95,7 @@ def _pace_mi(seconds: float) -> str:
 
 def _fmt(value: float, params: dict, units: str = "km") -> str:
     unit = params.get("unit")
-    if units == "miles":
+    if units in ("miles", "imperial"):
         if unit == "km":
             return f"{value / KM_PER_MI:.2f} mi"
         if unit == "m":
@@ -134,7 +140,7 @@ class SessionView:
     "source"} parsed from the first row of each metric.
     """
 
-    profile: object
+    profile: RunnerProfile
     series: dict[str, pd.Series]
     context: dict[str, dict]
 
@@ -166,7 +172,7 @@ def window_series(s: pd.Series, since: date, until: date, weekly: bool = False) 
     return s[mask]
 
 
-def build_session_view(activities, profile: object, lt_payload: dict | None = None,
+def build_session_view(activities, profile: RunnerProfile, lt_payload: dict | None = None,
                        race_payload: dict | None = None) -> SessionView:
     rows = compute_metric_rows(activities, profile, lt_payload, race_payload)
     series: dict[str, pd.Series] = {}

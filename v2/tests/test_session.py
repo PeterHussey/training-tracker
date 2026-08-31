@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from normalize import from_summary
-from profile import default_profile
+from profile import RunnerProfile, default_profile
 from session import build_session_view, in_period, week_start, window_series
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -126,3 +126,17 @@ def test_window_series_weekly_flag():
     out = window_series(s, date(2026, 8, 20), date(2026, 8, 30), weekly=True)
     assert list(out.index) == [pd.Timestamp("2026-08-17")]
     assert list(out.values) == [2.0]
+
+
+def test_units_do_not_affect_data_level():
+    p_metric = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986,
+                             units="metric")
+    p_imperial = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986,
+                               units="imperial")
+    acts = _acts()
+    v_m = build_session_view(acts, p_metric, _lt(), _race())
+    v_i = build_session_view(acts, p_imperial, _lt(), _race())
+    assert set(v_m.metrics) == set(v_i.metrics)
+    for metric in v_m.metrics:
+        pd.testing.assert_series_equal(v_m.series[metric], v_i.series[metric],
+                                       check_names=False)

@@ -114,3 +114,22 @@ def test_load_runner_profile_none(tmp_path):
     store = MetricStore(str(tmp_path / "t.db"))
     assert store.load_runner_profile() is None
     store.close()
+
+
+def test_load_runner_profile_nondefault_roundtrip(tmp_path):
+    db = tmp_path / "t.db"
+    store = MetricStore(str(db))
+    p = RunnerProfile(hrmax=190, hrrest=55, sex="F", birth_year=1985,
+                      units="imperial", hrmax_source="configured",
+                      lthr_manual=172)
+    store.save_runner_profile(p)
+    loaded = store.load_runner_profile()
+    store.close()
+    assert loaded is not None
+    assert loaded.hrmax == 190
+    assert loaded.hrrest == 55
+    assert loaded.sex == "F"
+    assert loaded.birth_year == 1985
+    assert loaded.units == "imperial"
+    assert loaded.hrmax_source == "configured"
+    assert loaded.lthr_manual == 172

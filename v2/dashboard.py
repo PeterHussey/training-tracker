@@ -86,16 +86,18 @@ def refresh_garmin() -> tuple[list, dict, dict]:
     return acts, lt, race
 
 
-def profile_from_widgets(activities) -> RunnerProfile:
-    sex = st.sidebar.selectbox("Sex", ("M", "F"))
+def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> RunnerProfile:
+    p = persisted or default_profile()
+    sex = st.sidebar.selectbox("Sex", ("M", "F"), index=0 if p.sex == "M" else 1)
     birth_year = st.sidebar.number_input("Birth year", min_value=1920,
-                                         max_value=2100, value=1978)
+                                         max_value=2100, value=p.birth_year)
     hrrest = st.sidebar.number_input("Resting HR (bpm)", min_value=30,
-                                     max_value=120, value=60)
+                                     max_value=120, value=p.hrrest)
     src = st.sidebar.radio("HRmax source",
-                           ("manual", "estimate from workouts", "age-predicted"))
+                           ("manual", "estimate from workouts", "age-predicted"),
+                           index=0 if p.hrmax_source == "configured" else 2)
     if src == "manual":
-        default_hrmax = 220 - (date.today().year - int(birth_year))
+        default_hrmax = p.hrmax if p.hrmax_source == "configured" else 220 - (date.today().year - int(birth_year))
         hrmax = st.sidebar.number_input("HRmax (bpm)", min_value=110, max_value=240,
                                         value=default_hrmax)
         return RunnerProfile(hrmax=int(hrmax), hrrest=int(hrrest), sex=sex,
@@ -109,7 +111,7 @@ def profile_from_widgets(activities) -> RunnerProfile:
 
 
 def profile_sig(p: RunnerProfile) -> tuple:
-    return (p.hrmax, p.hrrest, p.sex, p.birth_year, p.hrmax_source, p.units)
+    return (p.hrmax, p.hrrest, p.sex, p.birth_year, p.hrmax_source)
 
 
 def activities_sig(acts) -> tuple:
@@ -135,7 +137,7 @@ def last_value(s: pd.Series):
 
 
 def pace_per_unit(s: pd.Series, units: str) -> pd.Series:
-    m_per_unit = 1000.0 if units == "km" else 1609.344
+    m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
     return m_per_unit / s
 
 
@@ -148,7 +150,7 @@ def render_kpis(windowed, view, units) -> None:
             col.metric(label, "—")
             continue
         if key == "volume.distance_total":
-            label = f"Weekly {'mi' if units == 'miles' else 'km'}"
+            label = f"Weekly {'mi' if units in ('miles', 'imperial') else 'km'}"
         meta = (view.context.get(key) or {}).get("params", {})
         col.metric(label, _fmt(val, meta, units))
 
@@ -313,7 +315,7 @@ def render_volume_tab(activities, view, windowed, units) -> None:
                                      name="rolling 4wk", yaxis="y2",
                                      line=dict(color="#F18F01")))
             fig.update_layout(yaxis2=dict(overlaying="y", side="right",
-                                          title="rolling km"))
+                                          title=f"rolling {'mi' if units in ('miles', 'imperial') else 'km'}"))
         fig.update_layout(title="Weekly volume", barmode="group",
                           hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
@@ -331,7 +333,8 @@ def render_volume_tab(activities, view, windowed, units) -> None:
 
     gain = windowed.get("elevation.daily_gain_running")
     if gain is not None and len(gain):
-        fig = go.Figure(go.Bar(x=gain.index, y=gain.values, name="daily gain (m)"))
+        fig = go.Figure(go.Bar(x=gain.index, y=gain.values,
+                               name=f"daily gain ({'ft' if units in ('miles', 'imperial') else 'm'})"))
         roll28 = windowed.get("elevation.rolling28d_running")
         if roll28 is not None and len(roll28):
             fig.add_trace(go.Scatter(x=roll28.index, y=roll28.values,
@@ -339,10 +342,11 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         per_km = windowed.get("elevation.gain_per_km_running")
         if per_km is not None and len(per_km):
             fig.add_trace(go.Scatter(x=per_km.index, y=per_km.values,
-                                     name="m / km", yaxis="y2",
+                                     name=f"{'ft' if units in ('miles', 'imperial') else 'm'} / {'mi' if units in ('miles', 'imperial') else 'km'}",
+                                     yaxis="y2",
                                      line=dict(color="#2E86AB", dash="dash")))
             fig.update_layout(yaxis2=dict(overlaying="y", side="right",
-                                          title="m / km"))
+                                          title=f"{'ft' if units in ('miles', 'imperial') else 'm'} / {'mi' if units in ('miles', 'imperial') else 'km'}"))
         fig.update_layout(title="Elevation gain (running)", hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
         st.caption("Elevation is route context, not a risk metric.")
@@ -357,7 +361,7 @@ def render_activities(activities, since, until, units) -> None:
             continue
         pace = None
         if a.avg_speed:
-            m_per_unit = 1000.0 if units == "km" else 1609.344
+            m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
             pace = m_per_unit / a.avg_speed
         rows.append({
             "date": a.date.isoformat(),
@@ -381,7 +385,11 @@ def render_activities(activities, since, until, units) -> None:
 def main() -> None:
     st.title("Training Tracker")
     store = get_store()
-    units = st.sidebar.radio("Units", ("km", "miles"))
+
+    persisted_profile = store.load_runner_profile()
+    _units_display = "km" if (persisted_profile or default_profile()).units == "metric" else "miles"
+    units = st.sidebar.radio("Units", ("km", "miles"),
+                             index=0 if _units_display == "km" else 1)
 
     if "activities" not in st.session_state:
         st.session_state["activities"] = store.load_activities()
@@ -410,7 +418,8 @@ def main() -> None:
         st.stop()
 
     st.sidebar.header("Profile")
-    profile = replace(profile_from_widgets(activities), units=units)
+    units_stored = "metric" if units == "km" else "imperial"
+    profile = replace(profile_from_widgets(activities, persisted_profile), units=units_stored)
     psig = profile_sig(profile)
     if st.session_state.get("_profile_sig") != psig:
         store.save_runner_profile(profile)
@@ -426,13 +435,14 @@ def main() -> None:
     else:
         since = until = period
 
-    view_sig = (activities_sig(activities), psig,
-                st.session_state.get("lt_payload"), st.session_state.get("race_payload"))
-    if st.session_state.get("_view_sig") != view_sig:
+    compute_sig = (activities_sig(activities),
+                   (profile.hrmax, profile.hrrest, profile.sex, profile.birth_year, profile.hrmax_source),
+                   st.session_state.get("lt_payload"), st.session_state.get("race_payload"))
+    if st.session_state.get("_view_sig") != compute_sig:
         st.session_state["view"] = build_session_view(
             activities, profile,
             st.session_state.get("lt_payload"), st.session_state.get("race_payload"))
-        st.session_state["_view_sig"] = view_sig
+        st.session_state["_view_sig"] = compute_sig
     view = st.session_state["view"]
     windowed = view.windowed(since, until)
 
