@@ -67,6 +67,22 @@ GLOSSARY = [
 ]
 
 
+def compute_fetch_start(end: date, latest_activity_date: date | None,
+                        fetch_days: int = FETCH_DAYS) -> date:
+    """Start date for an incremental Garmin refresh.
+
+    Subsequent refreshes fetch only activities newer than the latest date already
+    in the local store (bounded to the last `fetch_days` window for safety): the
+    first run, when the store is empty (`latest_activity_date is None`), fetches
+    the full `fetch_days` window to populate history. This bounds the page count
+    of 100-row paginations so a large history no longer blows the 90s guard.
+    """
+    if latest_activity_date is None:
+        return end - timedelta(days=fetch_days)
+    return max(end - timedelta(days=fetch_days), latest_activity_date + timedelta(days=1))
+
+
+
 @st.cache_resource
 def get_store() -> MetricStore:
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -74,9 +90,14 @@ def get_store() -> MetricStore:
 
 
 def refresh_garmin() -> tuple[list, dict, dict]:
-    gw = GarminGateway(cache_dir=Path("cache/app_cache"))
     end = date.today()
-    start = end - timedelta(days=FETCH_DAYS)
+    # Incremental refresh: only fetch activities newer than the latest already
+    # persisted locally (first run, empty store, fetches the full window).
+    # This bounds the 100-row page count so a large history no longer blows the
+    # 90s guard via aggregate pagination volume.
+    store = get_store()
+    start = compute_fetch_start(end, store.latest_activity_date())
+    gw = GarminGateway(cache_dir=Path("cache/app_cache"))
     with st.spinner("Fetching activities from Garmin..."):
         raw = gw.fetch_activities(start.isoformat(), end.isoformat())
     if not raw:
