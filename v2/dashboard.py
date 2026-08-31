@@ -111,7 +111,7 @@ def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> 
 
 
 def profile_sig(p: RunnerProfile) -> tuple:
-    return (p.hrmax, p.hrrest, p.sex, p.birth_year, p.hrmax_source)
+    return (p.hrmax, p.hrrest, p.sex, p.birth_year, p.hrmax_source, p.units)
 
 
 def activities_sig(acts) -> tuple:
