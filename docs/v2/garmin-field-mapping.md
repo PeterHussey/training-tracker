@@ -4,6 +4,17 @@
 > activity details, lactate threshold, race predictions, training status,
 > user settings / heart-rate zones.
 
+**Confirmation status (frozen fixtures vs live):** live Garmin capture is not
+possible in this environment (no credentials/2FA), so no row below was confirmed
+against a live session. The activity-list rows are confirmed against the frozen
+`v2/tests/fixtures/activities_sample.json` — a 20-activity subset of the real
+cached Garmin activity-list payload (8 running, 4 treadmill_running,
+4 indoor_cycling, 4 strength_training). The lactate-threshold and race-prediction
+rows are confirmed against their frozen fixtures, which were written from the
+documented canonical Garmin schemas (race `time` in ms). Training status has no
+fixture: its rows reflect the garminconnect documented schema and are
+unconfirmed against any payload.
+
 ## 1. Endpoints used
 
 **Activity list** (`activitylist-service/activities/search/activities`) lists
@@ -13,19 +24,22 @@ any per-sample work is done.
 
 **Activity details** (`activity-service/{id}/details`) returns the per-sample
 series (heart rate, speed, distance, altitude, workout step) plus lap summaries.
-This is one request **per activity**, is rate-limit aware, and is fetched
-**lazily** — only when a metric (TRIMP from HR, decoupling, critical speed)
-actually needs the samples. Everything else stays at the cheap list level.
+The gateway wrapper is rate-limit aware and one-request-per-activity. As of the
+current v2 measurement layer **no metric consumes these series** — TRIMP uses the
+list `averageHR`, CS uses `fastestSplit_1609`, and decoupling is not yet wired
+into the pipeline — so the details payload is reserved for deferred
+sample-level metrics (see §3 status note).
 
 **Performance endpoints** cover lactate threshold (`lt`), race predictions
 (`race_predictions`), and training status/load (`training_status`). These are
 `garminconnect` convenience endpoints and are far less frequent than per-run
 requests.
 
-**Profile endpoints** provide user settings and HR-zone config
-(`user_settings`, `heart_rate_zones`). These are read rarely (once per profile
-load) and cached; the HR-zone thresholds must be persisted alongside any
-seconds-in-zone series.
+**Profile endpoints** would provide user settings and HR-zone config
+(`user_settings`, `heart_rate_zones`). These are not implemented as gateway
+fetchers in v2 — the `RunnerProfile` dataclass (with `default_profile` /
+`from_age`) supplies HRmax/HRrest/zones directly and no payload is parsed (see
+§5 status note).
 
 ## 2. Activity list fields
 
@@ -33,8 +47,8 @@ seconds-in-zone series.
 | --- | --- | --- | --- |
 | activityId | id | volume |  |
 | activityUUID | uuid | volume |  |
-| activityType.typeKey | enum | volume, cross_training | Nested under 'activityType'; absent typeKey means classification falls back to sportTypeId. |
-| sportTypeId | id | volume, cross_training | Backup for classification when typeKey is missing; mapping table maintained in normalize.py. |
+| activityType.typeKey | enum | volume, cross_training | Nested under 'activityType'. Classification in normalize.py is typeKey-only (running / treadmill_running / else cross); absent or unknown typeKey is classified as cross. There is **no** sportTypeId fallback. |
+| sportTypeId | id | — | Present in the payload (1/2/4 in the frozen sample) but **not read by normalize.py**; the registry's "backup for classification when typeKey is missing" claim is not implemented in v2. Classification relies solely on activityType.typeKey. Kept for reference only. |
 | startTimeLocal | ISO datetime | volume | Drives local calendar day/week bucketing. Timezone id recorded separately in timeZoneId. |
 | beginTimestamp | epoch ms | volume |  |
 | distance | m | volume, elevation | 0.0 for indoor_cycling; absent for strength. Convert to km for human-facing series. |
@@ -69,11 +83,17 @@ seconds-in-zone series.
 | deviceId | id | decoupling | Proxy for sensor source. Cannot reliably distinguish chest strap vs optical from the list payload; flag recorded, honesty preferred. |
 | manufacturer | text | decoupling |  |
 | calories | kcal | cross_training | Estimate only; not a training-stress metric in v2. |
-| hasIntensityIntervals | bool | trimp_banister, decoupling | Interval sessions are excluded from decoupling (not sustained effort); Banister TRIMP uses details HR series when available to handle them. |
+| hasIntensityIntervals | bool | trimp_banister, decoupling | Not consumed in v2 (not normalized into the Activity model). The registry intent — exclude intervals from decoupling, use details HR series for Banister — is **not implemented**: decoupling eligibility does not check this flag and Banister TRIMP uses the list `averageHR`. |
 | lapCount | count | volume | Informational / structure. |
 | splitSummaries | list | cs_approx, decoupling | No per-split HR here — HR comes from activity_details. |
 
 ## 3. Activity details fields
+
+> Status: the `fetch_activity_details` gateway wrapper exists, but no v2 metric
+> currently consumes the per-sample series or `lapsSummary` — TRIMP uses the
+> activity-list `averageHR`, CS uses `fastestSplit_1609`, and `metrics/decoupling.py`
+> is not wired into the pipeline. The rows below describe the intended source for
+> the deferred sample-level metrics, not a payload consumed today.
 
 | Garmin field | Units | Maps to metric(s) | Limitations |
 | --- | --- | --- | --- |
@@ -94,6 +114,14 @@ seconds-in-zone series.
 | speed_and_heart_rate.speed | m/s | lt_pace, cs_approx | FLAGGED: 2025 studies show Garmin LT pace can overestimate by 20-26%; use for trend, not absolute prescription. |
 | speed_and_heart_rate.calendarDate | date | lt_hr, lt_pace |  |
 
+Confirmed payload shape (frozen `lactate_threshold.json`, written from the
+documented canonical schema; no live capture — see header): top-level keys
+`speed_and_heart_rate` and `power` (empty object in the fixture).
+`speed_and_heart_rate` carries the three mapped keys above (`heartRate` bpm,
+`speed` m/s, `calendarDate`) plus unmapped `sequence`, `userProfilePK`,
+`version`, `heartRateCycling`. `parse_lt` reads only
+`heartRate`/`speed`/`calendarDate`.
+
 ### Race predictions (`race_predictions`)
 
 | Garmin field | Units | Maps to metric(s) | Limitations |
@@ -103,6 +131,14 @@ seconds-in-zone series.
 | Run_half_marathon.time | ms | race_half | Riegel calibration still OK at half distance. |
 | Run_full_marathon.time | ms | race_full | LEAST TRUSTWORTHY: Riegel underestimates marathon by >=10 min for ~half of runners (Vickers 2016). Trend only. |
 
+Confirmed payload shape (frozen `race_predictions.json`, written from the
+documented canonical schema; no live capture — see header): top-level
+`asOfDate`/`asOfDateTime` plus one object per distance key (`Run_5k`,
+`Run_10k`, `Run_half_marathon`, `Run_full_marathon`), each carrying `time`
+(ms) and `pace` (s/km; informative, not mapped). No unit deviation from the
+canonical ms schema was needed — `parse_predictions` converts `time` ms→s and
+`asOfDate` becomes the series date.
+
 ### Training status (`training_status`)
 
 | Garmin field | Units | Maps to metric(s) | Limitations |
@@ -110,7 +146,18 @@ seconds-in-zone series.
 | load | arbitrary | load_reference | Proprietary, not independently validated. Reference display only. |
 | trainingStatus | enum | load_reference | Proprietary, context only. |
 
+No payload was captured for this endpoint (no fixture, no live session in this
+environment), so the two rows above reflect the garminconnect documented schema
+only and are **unconfirmed** against a real or frozen payload. Neither field is
+consumed by the v2 computation path.
+
 ## 5. Profile fields
+
+> Status: `user_settings` / `heart_rate_zones` are NOT fetched in v2 — there is
+> no gateway fetcher and no payload fixture. `RunnerProfile` (and its
+> `default_profile` / `from_age` constructors) is configured directly, so the
+> rows below describe the intended mapping of configured vs age-predicted
+> profile values (and their `hrmax_source` flag), not a parsed payload.
 
 ### User settings (`user_settings`)
 
@@ -137,3 +184,5 @@ seconds-in-zone series.
 7. Optical vs chest-strap sensor is not reliably distinguishable from the list payload (deviceId is a proxy only).
 8. Garmin Training Status / load / TE are proprietary — reference only, never gates.
 9. Decoupling is only honest when aggregated over ≥6 sessions on similar flat routes; single-run values are noise (preprint: 57–83% session-residual variance).
+10. Banister exponent is population-generic, not individualized (iTRIMP needs lab lactate testing to personalize).
+11. Garmin TRIMP is a black box (proprietary beat-to-beat calculation) — we recompute our own TRIMP from the HR series for reproducible units.
