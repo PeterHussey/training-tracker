@@ -41,7 +41,11 @@ def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db,
                              params={"unit": "m/km"})
 
     # HR load + PMC + ACWR (brief 1.2, 1.3, 1.1)
-    daily = trimp.daily_trimp(activities, profile)
+    # Global Constraint: running metrics are computed on outdoor-`running`
+    # activities only; treadmill/cycling/strength feed cross-training volume
+    # (volume.groups()) only, never the HR-load anchors.
+    RUNNING = [a for a in activities if a.sport == "running"]
+    daily = trimp.daily_trimp(RUNNING, profile)
     if not daily.empty:
         ban = daily["banister"]
         # DENSIFY to calendar days (load 0 on rest days) so PMC/ACWR windows are

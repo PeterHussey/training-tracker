@@ -25,10 +25,26 @@ def test_end_to_end_writes_metrics(tmp_path):
     assert store.read_metric("load.banister")
     assert store.read_metric("pmc.atl")
     assert store.read_metric("fitness.vo2max")
-    # ACWR needs a 28-day chronic window; the fixture's span decides whether it exists.
-    dates = [a.date for a in acts]
-    span = (max(dates) - min(dates)).days
+    # ACWR needs a 28-day chronic window over the running-only load series;
+    # the fixture's running span decides whether it exists.
+    running_days = {a.date for a in acts if a.sport == "running"}
+    span = (max(running_days) - min(running_days)).days
     assert bool(store.read_metric("load.acwr")) == (span >= 28)
+    # Global Constraint: HR load/PMC/ACWR are computed on outdoor-running
+    # activities only. Every load row must land on a day with a running activity,
+    # and no load row may exist on a day whose only activities are
+    # treadmill/cycling/strength (cross-training volume only).
+    for metric in ("load.banister", "load.edwards"):
+        for row in store.read_metric(metric):
+            assert pd.Timestamp(row["date"]).date() in running_days, (
+                f"{metric} row on {row['date']} has no outdoor running activity")
+    for a in acts:
+        if a.date not in running_days:
+            for metric in ("load.banister", "load.edwards"):
+                matches = [r for r in store.read_metric(metric)
+                           if pd.Timestamp(r["date"]).date() == a.date]
+                assert not matches, (
+                    f"{metric} emitted on {a.date} ({a.sport}) — non-running day")
     store.close()
 
 
