@@ -6,7 +6,11 @@ from unittest import mock
 
 import pytest
 
-from garmin_http import DI_TOKEN_URL, GarminAuthError, GarminTokenStore
+from garmin_http import (
+    ACTIVITIES_PATH, CONNECTAPI_BASE,
+    GarminHttp, GarminHttpError, GarminTokenStore, GarminAuthError,
+    DI_TOKEN_URL,
+)
 
 
 def _jwt(claims: dict) -> str:
@@ -87,3 +91,75 @@ def test_refresh_non_200_returns_false(tmp_path):
         ts = GarminTokenStore(p, timeout=5.0)
         ts.load()
         assert ts.refresh() is False
+
+
+# --- Task 2: GarminHttp tests ---
+
+
+@pytest.fixture
+def tokenstore(tmp_path) -> GarminTokenStore:
+    p = _write_store(tmp_path / "v2.json")
+    ts = GarminTokenStore(p, timeout=5.0)
+    ts.load()
+    return ts
+
+
+def _row(activity_id):
+    return {"activityId": activity_id, "startTimeLocal": "2026-08-01 00:00:00",
+            "distance": 1000.0, "duration": 600.0}
+
+
+def test_get_json_calls_connectapi_with_bearer(tokenstore, monkeypatch):
+    calls = {}
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        calls["url"] = url
+        calls["hdr"] = headers
+        calls["timeout"] = timeout
+        r = mock.Mock(status_code=200)
+        r.json.return_value = [{"activityId": 1}]
+        return r
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    gh = GarminHttp(tokenstore)
+    out = gh.get_json(ACTIVITIES_PATH, params={"limit": 1})
+    assert out == [{"activityId": 1}]
+    assert calls["url"] == CONNECTAPI_BASE + ACTIVITIES_PATH
+    assert calls["hdr"]["Authorization"].startswith("Bearer ")
+    assert calls["timeout"] == 5.0
+
+
+def test_get_json_raises_on_error_status(tokenstore, monkeypatch):
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        r = mock.Mock(status_code=500)
+        r.text = "boom"
+        return r
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    gh = GarminHttp(tokenstore)
+    with pytest.raises(GarminHttpError):
+        gh.get_json("/x")
+
+
+def test_fetch_activities_uses_limit_100_and_offset(tokenstore, monkeypatch):
+    seen = []
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        seen.append((params["limit"], params.get("offset", "0")))
+        r = mock.Mock(status_code=200)
+        r.json.return_value = []
+        return r
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    GarminHttp(tokenstore).fetch_activities("a", "b")
+    assert seen == [("100", "0")]
+
+
+def test_fetch_activities_paginates(tokenstore, monkeypatch):
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        offset = int(params["offset"])
+        page = [_row(i) for i in range(offset, offset + 100)] if offset < 200 else [_row(200)]
+        r = mock.Mock(status_code=200)
+        r.json.return_value = page
+        return r
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    gh = GarminHttp(tokenstore)
+    acts = gh.fetch_activities("2026-01-01", "2026-08-31")
+    assert len(acts) == 201
+    assert acts[0]["activityId"] == 0
+    assert acts[-1]["activityId"] == 200

@@ -140,3 +140,94 @@ class GarminTokenStore:
     def _persist(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(self._data, indent=2))
+
+
+ACTIVITIES_PATH = "/activitylist-service/activities/search/activities"
+
+
+class GarminHttpError(Exception):
+    """Raised when a Garmin connectapi call fails (network or non-200)."""
+
+
+class GarminHttp:
+    def __init__(self, tokenstore: GarminTokenStore):
+        self.tokenstore = tokenstore
+        self._display_name: str | None = None
+
+    def _token(self) -> str:
+        if self.tokenstore.expires_soon():
+            self.tokenstore.refresh()
+        tok = self.tokenstore.access_token()
+        if not tok:
+            raise GarminAuthError("no access token available")
+        return tok
+
+    def get_json(self, path: str, params: dict | None = None) -> dict | list:
+        url = CONNECTAPI_BASE + path
+        headers = connectapi_garmin_headers(self._token())
+        try:
+            r = requests.get(url, headers=headers, params=params,
+                             timeout=self.tokenstore.timeout)
+        except requests.RequestException as e:
+            raise GarminHttpError(f"request failed for {path}: {e}") from e
+        if r.status_code != 200:
+            raise GarminHttpError(f"API {r.status_code} for {path}: {r.text[:200]}")
+        try:
+            return r.json()
+        except ValueError as e:
+            raise GarminHttpError(f"non-JSON response for {path}") from e
+
+    def _resolve_display_name(self) -> str:
+        if self._display_name:
+            return self._display_name
+        prof = self.get_json("/userprofile-service/socialProfile")
+        name = (prof.get("displayName") if isinstance(prof, dict) else None) or ""
+        if not name:
+            raise GarminHttpError("could not resolve Garmin display name")
+        self._display_name = name
+        return name
+
+    def fetch_activities(self, start: str, end: str) -> list[dict]:
+        out: list[dict] = []
+        offset = 0
+        limit = 100
+        while True:
+            page = self.get_json(ACTIVITIES_PATH, params={
+                "startDate": start, "endDate": end,
+                "limit": str(limit), "offset": str(offset),
+            }) or []
+            out.extend(page)
+            if len(page) < limit:
+                break
+            offset += limit
+        return out
+
+    def fetch_lactate_threshold(self) -> dict:
+        import datetime as _dt
+        power = self.get_json("/biometric-service/biometric/powerToWeight/latest/"
+                              f"{_dt.date.today()}?sport=Running")
+        if isinstance(power, list) and power:
+            power_dict = power[0]
+        elif isinstance(power, dict):
+            power_dict = power
+        else:
+            power_dict = {}
+        sweat = self.get_json("/biometric-service/biometric/latestLactateThreshold")
+        card = {"userProfilePK": None, "version": None, "calendarDate": None,
+                "sequence": None, "speed": None, "heartRate": None,
+                "heartRateCycling": None}
+        if isinstance(sweat, list):
+            for entry in sweat:
+                if entry.get("speed") is not None:
+                    card["speed"] = entry["speed"]
+                hr = entry.get("heartRate") or entry.get("hearRate")
+                if hr is not None:
+                    card["heartRate"] = hr
+                hrc = entry.get("heartRateCycling")
+                if hrc is not None:
+                    card["heartRateCycling"] = hrc
+        return {"speed_and_heart_rate": card, "power": power_dict}
+
+    def fetch_race_predictions(self) -> dict:
+        name = self._resolve_display_name()
+        return self.get_json(f"/metrics-service/metrics/racepredictions/latest/{name}")
