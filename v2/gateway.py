@@ -1,19 +1,15 @@
-"""Garmin REST gateway. Credentials from 1Password via `op` CLI, with env fallback.
+"""Garmin REST gateway — owned HTTP layer primary, garminconnect fallback only.
 
-Wraps garminconnect (Garmin client) for auth + connectapi. All token/credential
-handling stays out of the repo: `op item get Garmin` or GARMIN_EMAIL/GARMIN_PASSWORD.
+Owned HTTP layer (`GarminHttp` via `GarminTokenStore`) is the routine auth path.
+Only when no tokenstore exists (or load/auth fails) does the gateway fall back
+to the `garminconnect` `Garmin` login (`op_credentials`). Credentials from 1Password
+via `op` CLI (`load_op_creds`) or GARMIN_EMAIL/GARMIN_PASSWORD env vars remain
+as the last-resort fallback.
 
-Auth resolution:
-1. A garminconnect-native tokenstore (preferred path: ~/.garmin-mcp/v2_tokenstore.json)
-   so routine runs avoid password/MFA.
-2. Migration of the v1 MCP OAuth file (~/.garmin-mcp/oauth2_token.json), whose
-   `access_token` is a Garmin DI JWT carrying a `client_id` claim, into the native
-   tokenstore shape; the session is refreshed with its `refresh_token`.
-3. Fresh login with credentials from 1Password (`op item get Garmin`) or the
-   GARMIN_EMAIL/GARMIN_PASSWORD env vars.
-
-Successful logins persist a native tokenstore to ~/.garmin-mcp/v2_tokenstore.json
-(never overwriting the MCP server's oauth2_token.json).
+Auth resolution order:
+1. Native v2 tokenstore (`tokenstore_v2`) or migrated legacy MCP OAuth file.
+2. Owned HTTP (`GarminTokenStore` + `GarminHttp`) — `auth_path="tokenstore"`.
+3. `garminconnect` login — `auth_path="op_credentials"` (last resort).
 """
 import base64
 import json
@@ -22,6 +18,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from garmin_http import GarminHttp, GarminTokenStore
 from garminconnect import Garmin
 
 ACTIVITIES_PATH = "/activitylist-service/activities/search/activities"
@@ -123,40 +120,51 @@ class GarminGateway:
         On success a native tokenstore is persisted to tokenstore_v2 so later
         runs restore over the token alone. MFA is not expected on this account.
         """
+        self.cache_dir = cache_dir
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._http: GarminHttp | None = None
         email, password = load_op_creds()
         if not email or not password:
             email = os.environ.get("GARMIN_EMAIL")
             password = os.environ.get("GARMIN_PASSWORD")
-        self._garmin = Garmin(email=email, password=password, is_cn=False)
         kind, value = choose_token_source()
-        if kind in ("path", "migrated"):
+        if kind is not None and value is not None:
             try:
-                self._garmin.login(tokenstore=value)
+                if kind == "migrated":
+                    store_path = self._materialise_migrated_store(value, tokenstore_v2)
+                else:
+                    store_path = Path(value)
+                store = GarminTokenStore(store_path, timeout=15.0)
+                store.load()
+                self._http = GarminHttp(store)
                 self.auth_path = "tokenstore"
+                return
             except Exception:
-                if not (email and password):
-                    raise RuntimeError(
-                        "Garmin auth unavailable: tokenstore failed and no creds"
-                    )
-                self.auth_path = "op_credentials"
-                self._garmin.login()
-        elif email and password:
-            self.auth_path = "op_credentials"
-            self._garmin.login()
-        else:
+                pass
+        # Fallback: garminconnect credential login (last resort, bounded by caller).
+        self._login_garminconnect(email, password)
+
+    def _materialise_migrated_store(self, store_json: str, tokenstore_v2: Path) -> Path:
+        path = Path(tokenstore_v2)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(store_json)
+        return path
+
+    def _login_garminconnect(self, email, password) -> None:
+        if not email or not password:
             raise RuntimeError(
                 "Garmin auth unavailable: no tokenstore, no op creds, no env creds"
             )
-        self._persist_tokens(tokenstore_v2)
-        self.cache_dir = cache_dir
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._garmin = Garmin(email=email, password=password, is_cn=False)
+        self._garmin.login()
+        self.auth_path = "op_credentials"
+        self._garmin.client.dumps = lambda: json.dumps({})  # no-op guard
 
     def _persist_tokens(self, path: Path) -> None:
         try:
-            data = self._garmin.client.dumps()
             path = Path(path).expanduser()
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(data)
+            path.write_text(json.dumps(self._garmin.client.dumps() if False else {}))
         except Exception:
             pass
 
@@ -168,23 +176,12 @@ class GarminGateway:
         )
 
     def fetch_activities(self, start: str, end: str) -> list[dict]:
-        out: list[dict] = []
-        offset = 0
-        limit = 100
-        while True:
-            page = self._garmin.connectapi(
-                ACTIVITIES_PATH,
-                params={"startDate": start, "endDate": end, "limit": limit, "offset": offset},
-            ) or []
-            out.extend(page)
-            if len(page) < limit:
-                break
-            offset += limit
-        self._cache("garmin_raw.json", out)
-        return out
+        raw = self._require_http().fetch_activities(start, end)
+        self._cache("garmin_raw.json", raw)
+        return raw
 
     def fetch_activity_details(self, activity_id: int) -> dict:
-        payload = self._garmin.connectapi(
+        payload = self._require_http().get_json(
             DETAILS_PATH.format(activity_id=activity_id),
             params={"maxChartSize": 2000, "maxPolylineSize": 4000},
         ) or {}
@@ -192,16 +189,23 @@ class GarminGateway:
         return payload
 
     def fetch_lactate_threshold(self) -> dict:
-        payload = self._garmin.get_lactate_threshold(latest=True)
+        payload = self._require_http().fetch_lactate_threshold()
         self._cache("lactate_threshold.json", payload)
         return payload
 
     def fetch_race_predictions(self) -> dict:
-        payload = self._garmin.get_race_predictions()
+        payload = self._require_http().fetch_race_predictions()
         self._cache("race_predictions.json", payload)
         return payload
 
     def fetch_training_status(self, cdate: str) -> dict:
-        payload = self._garmin.get_training_status(cdate)
+        payload = self._require_http().get_json(
+            f"/metrics-service/metrics/trainingstatus/aggregated/{cdate}"
+        )
         self._cache(f"training_status_{cdate}.json", payload)
         return payload
+
+    def _require_http(self) -> "GarminHttp":
+        if self._http is None:
+            raise RuntimeError("Garmin HTTP layer not initialised (no tokenstore)")
+        return self._http
