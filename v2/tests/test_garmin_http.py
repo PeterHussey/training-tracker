@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from unittest import mock
 
+import requests
 import pytest
 
 from garmin_http import (
@@ -172,9 +173,29 @@ def test_get_json_aborts_stall_within_call_budget(tokenstore, monkeypatch):
     def stall_forever(url, headers=None, params=None, timeout=5.0):
         time.sleep(8)  # simulates a half-open socket that never delivers the body
     monkeypatch.setattr("garmin_http.requests.get", stall_forever)
-    gh = GarminHttp(tokenstore)
+    gh = GarminHttp(tokenstore, max_retries=0)
     t0 = time.time()
     with pytest.raises(GarminHttpError):
         gh.get_json(ACTIVITIES_PATH, params={"limit": "5", "offset": "0"})
     elapsed = time.time() - t0
     assert elapsed < 6, f"call did not abort promptly: {elapsed:.1f}s"
+
+
+def test_get_json_retries_transient_failure_then_succeeds(tokenstore, monkeypatch):
+    """Phase-4 robustness: a transient (stalled-then-recovers) page must be
+    retried within the bounded retry budget instead of failing the whole fetch."""
+    calls = {"n": 0}
+    def flaky(url, headers=None, params=None, timeout=5.0):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise requests.Timeout("simulated stalled SSL read")
+        r = mock.Mock(status_code=200)
+        r.json.return_value = [{"activityId": 7}]
+        return r
+    monkeypatch.setattr("garmin_http.requests.get", flaky)
+    # patch threading time.sleep used for backoff so the test is instant
+    monkeypatch.setattr("garmin_http.time.sleep", lambda s: None)
+    gh = GarminHttp(tokenstore, max_retries=2, retry_backoff=0.0)
+    out = gh.get_json(ACTIVITIES_PATH, params={"limit": "5", "offset": "0"})
+    assert out == [{"activityId": 7}]
+    assert calls["n"] == 2

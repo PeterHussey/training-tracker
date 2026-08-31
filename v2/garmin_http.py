@@ -179,9 +179,12 @@ class GarminHttpError(Exception):
 
 
 class GarminHttp:
-    def __init__(self, tokenstore: GarminTokenStore):
+    def __init__(self, tokenstore: GarminTokenStore, max_retries: int = 3,
+                 retry_backoff: float = 1.0):
         self.tokenstore = tokenstore
         self._display_name: str | None = None
+        self._max_retries = max_retries
+        self._retry_backoff = retry_backoff
 
     def _token(self) -> str:
         if self.tokenstore.expires_soon():
@@ -195,16 +198,22 @@ class GarminHttp:
         url = CONNECTAPI_BASE + path
         headers = connectapi_garmin_headers(self._token())
         budget = min(self.tokenstore.timeout, GET_DEADLINE_SECONDS)
-        try:
-            r = _threaded_get(url, headers=headers, params=params, budget=budget)
-        except requests.RequestException as e:
-            raise GarminHttpError(f"request failed for {path}: {e}") from e
-        if r.status_code != 200:
-            raise GarminHttpError(f"API {r.status_code} for {path}: {r.text[:200]}")
-        try:
-            return r.json()
-        except ValueError as e:
-            raise GarminHttpError(f"non-JSON response for {path}") from e
+        last_error: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                r = _threaded_get(url, headers=headers, params=params, budget=budget)
+                if r.status_code != 200:
+                    raise GarminHttpError(f"API {r.status_code} for {path}: {r.text[:200]}")
+                try:
+                    return r.json()
+                except ValueError as e:
+                    raise GarminHttpError(f"non-JSON response for {path}") from e
+            except (requests.RequestException, GarminHttpError) as e:
+                last_error = e
+                if attempt < self._max_retries and self._retry_backoff:
+                    time.sleep(self._retry_backoff)
+        raise last_error  # type: ignore[misc]
+
 
     def _resolve_display_name(self) -> str:
         if self._display_name:
