@@ -28,7 +28,7 @@ st.set_page_config(page_title="Training Tracker", layout="wide")
 
 DB_PATH = os.environ.get("TRAINING_DB", str(Path(__file__).parent / "data" / "training.sqlite"))
 FETCH_DAYS = 365
-FETCH_TIMEOUT = 30  # hard cap on the whole Garmin refresh (auth + fetches)
+FETCH_TIMEOUT = 90  # hard cap on the whole Garmin refresh (auth + fetches)
 DEFAULT_WINDOW_DAYS = 180
 
 KPI_KEYS = [
