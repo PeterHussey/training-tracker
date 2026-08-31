@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from garmin_http import GarminHttp, GarminTokenStore
-from garminconnect import Garmin
 
 ACTIVITIES_PATH = "/activitylist-service/activities/search/activities"
 DETAILS_PATH = "/activity-service/activity/{activity_id}/details"
@@ -142,7 +141,7 @@ class GarminGateway:
             except Exception:
                 pass
         # Fallback: garminconnect credential login (last resort, bounded by caller).
-        self._login_garminconnect(email, password)
+        self._login_garminconnect(email, password, tokenstore_v2=tokenstore_v2)
 
     def _materialise_migrated_store(self, store_json: str, tokenstore_v2: Path) -> Path:
         path = Path(tokenstore_v2)
@@ -150,7 +149,8 @@ class GarminGateway:
         path.write_text(store_json)
         return path
 
-    def _login_garminconnect(self, email, password) -> None:
+    def _login_garminconnect(self, email, password, tokenstore_v2: Path = TOKENSTORE_V2) -> None:
+        from garminconnect import Garmin  # lazy: keeps garminconnect off the routine path
         if not email or not password:
             raise RuntimeError(
                 "Garmin auth unavailable: no tokenstore, no op creds, no env creds"
@@ -158,7 +158,20 @@ class GarminGateway:
         self._garmin = Garmin(email=email, password=password, is_cn=False)
         self._garmin.login()
         self.auth_path = "op_credentials"
-        self._garmin.client.dumps = lambda: json.dumps({})  # no-op guard
+        # Bootstrap an owned tokenstore from the garminconnect session so the
+        # routine fetch path (GarminHttp) works without touching garminconnect.
+        # garminconnect's `Client.dumps()` already emits the v2 native schema
+        # {di_token, di_refresh_token, di_client_id}.
+        try:
+            tokenstore_v2.parent.mkdir(parents=True, exist_ok=True)
+            tokenstore_v2.write_text(self._garmin.client.dumps())
+            store = GarminTokenStore(tokenstore_v2, timeout=15.0)
+            store.load()
+            self._http = GarminHttp(store)
+        except Exception:
+            # garminconnect client is still usable directly as a last resort;
+            # fetches that need the owned layer will raise a clear error.
+            self._http = None
 
     def _persist_tokens(self, path: Path) -> None:
         try:
