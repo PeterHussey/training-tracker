@@ -6,7 +6,7 @@ import pandas as pd
 
 from metric_series import rows_from_series
 from normalize import from_summary
-from pipeline import run_pipeline
+from pipeline import compute_metric_rows, run_pipeline
 from profile import default_profile
 from store import MetricStore
 
@@ -117,3 +117,34 @@ def test_rows_from_series_keys():
     assert set(rows[0].keys()) == {"metric", "date", "value", "source", "params", "flags"}
     assert rows[0]["metric"] == "x"
     assert rows[1]["value"] == 2.5
+
+
+def test_compute_metric_rows_matches_run_pipeline(tmp_path):
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    lt = json.loads((FIXTURE.parent / "lactate_threshold.json").read_text())
+    race = json.loads((FIXTURE.parent / "race_predictions.json").read_text())
+
+    rows = compute_metric_rows(acts, default_profile(age=40, hrrest=60, sex="M"),
+                               lt, race)
+    assert rows
+
+    db = tmp_path / "m.db"
+    run_pipeline(acts, default_profile(age=40, hrrest=60, sex="M"), str(db),
+                 lt_payload=lt, race_payload=race)
+    store = MetricStore(str(db))
+    stored = []
+    for metric in {r["metric"] for r in rows}:
+        stored += store.read_metric(metric)
+    store.close()
+
+    def norm(r):
+        return (r["metric"], r["date"], r["value"], r["source"],
+                r["params"], r["flags"])
+
+    assert {norm(r) for r in rows} == {norm(r) for r in stored}
+
+
+def test_compute_metric_rows_empty():
+    rows = compute_metric_rows([], default_profile(age=40, hrrest=60, sex="M"))
+    assert rows == []

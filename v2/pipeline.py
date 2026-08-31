@@ -13,12 +13,14 @@ from profile import RunnerProfile
 from store import MetricStore
 
 
-def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db,
-                 lt_payload: dict | None = None, race_payload: dict | None = None) -> dict[str, int]:
-    store = MetricStore(out_db)
-    store.save_runner_profile(profile)
-    store.save_activities(activities)
+def compute_metric_rows(activities: list[Activity], profile: RunnerProfile,
+                        lt_payload: dict | None = None,
+                        race_payload: dict | None = None) -> list[dict]:
+    """Compute every metric row for a session view. Pure: no DB, no network.
 
+    All other computation in this module builds on this; it must stay
+    behavior-identical to what run_pipeline writes to the metric_series table.
+    """
     rows = []
 
     # Volume — weekly distance (km), 4-wk rolling, week-over-week % (brief 4.1)
@@ -117,6 +119,15 @@ def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db,
                                      "garmin_ingested", params={"unit": "s", "distance": dist},
                                      flags={"error_class": "garmin_race_pred_maybe_optimistic"})
 
+    return rows
+
+
+def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db,
+                 lt_payload: dict | None = None, race_payload: dict | None = None) -> dict[str, int]:
+    store = MetricStore(out_db)
+    store.save_runner_profile(profile)
+    store.save_activities(activities)
+    rows = compute_metric_rows(activities, profile, lt_payload, race_payload)
     store.save_metric_rows(rows)
     store.close()
     return {"metrics_written": len(rows), "activities": len(activities)}
