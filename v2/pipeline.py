@@ -91,7 +91,8 @@ def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db,
                                      flags={"anchored": "no", "error_class": "lt_pace_over_20pct"})
 
     if race_payload:
-        as_of = race_payload.get("asOfDate") or pd.Timestamp.today().strftime("%Y-%m-%d")
+        as_of = (race_payload.get("asOfDate") or race_payload.get("calendarDate")
+                 or pd.Timestamp.today().strftime("%Y-%m-%d"))
         for dist, secs in racepredict.parse_predictions(race_payload).items():
             if secs is None:
                 continue

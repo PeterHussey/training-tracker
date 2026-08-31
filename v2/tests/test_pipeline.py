@@ -64,6 +64,24 @@ def test_end_to_end_ingests_lt_and_race(tmp_path):
     store.close()
 
 
+def test_end_to_end_ingests_live_race_schema(tmp_path):
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    lt = json.loads((Path(__file__).parent / "fixtures" / "lactate_threshold.json").read_text())
+    race = {
+        "time5K": 1405, "time10K": 3076, "timeHalfMarathon": 7420, "timeMarathon": 17179,
+        "calendarDate": "2026-08-28", "userId": 111267328,
+    }
+    db = tmp_path / "metrics_live.db"
+    run_pipeline(acts, default_profile(age=40, hrrest=60, sex="M"), str(db),
+                 lt_payload=lt, race_payload=race)
+    store = MetricStore(str(db))
+    row = store.read_metric("race_5k")[0]
+    assert row["value"] == 1405
+    assert row["date"] == "2026-08-28"
+    store.close()
+
+
 def test_rows_from_series_keys():
     s = pd.Series([1.0, 2.5], index=pd.to_datetime(["2026-04-01", "2026-04-02"]))
     rows = rows_from_series("x", s, "computed", params={"a": 1}, flags={"b": 2})

@@ -31,3 +31,15 @@ def test_frozen_payload_parses():
     out = parse_predictions(data)
     for k in DISTANCE_KEYS:
         assert k in out
+
+
+def test_live_schema_flat_seconds():
+    payload = {
+        "time5K": 1405,
+        "time10K": 3076,
+        "timeHalfMarathon": 7420,
+        "timeMarathon": 17179,
+        "calendarDate": "2026-08-28",
+    }
+    out = parse_predictions(payload)
+    assert out == {"5k": 1405, "10k": 3076, "half": 7420, "full": 17179}

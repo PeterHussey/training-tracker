@@ -11,17 +11,31 @@ DISTANCE_KEYS = {
     "full": "Run_full_marathon",
 }
 
+LIVE_KEYS = {
+    "5k": "time5K",
+    "10k": "time10K",
+    "half": "timeHalfMarathon",
+    "full": "timeMarathon",
+}
+
 
 def parse_predictions(payload: dict) -> dict[str, int | None]:
     out: dict[str, int | None] = {}
+    if not isinstance(payload, dict):
+        return {k: None for k in DISTANCE_KEYS}
+    canonical = any(k in payload for k in DISTANCE_KEYS.values())
+    live = any(k in payload for k in LIVE_KEYS.values())
     for dist, key in DISTANCE_KEYS.items():
-        entry = payload.get(key) if isinstance(payload, dict) else None
         raw = None
-        if isinstance(entry, dict):
-            raw = entry.get("time") or entry.get("goalTime")
+        if canonical:
+            entry = payload.get(key)
+            if isinstance(entry, dict):
+                raw = entry.get("time") or entry.get("goalTime")
+        elif live:
+            raw = payload.get(LIVE_KEYS[dist])
         if raw is None:
             out[dist] = None
             continue
         ms = int(raw)
-        out[dist] = round(ms / 1000.0)  # ms -> s (Garmin payload unit)
+        out[dist] = round(ms / 1000.0) if canonical else ms
     return out
