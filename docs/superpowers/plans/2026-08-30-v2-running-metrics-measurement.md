@@ -2189,7 +2189,15 @@ class MetricStore:
 Run: `cd v2 && ../.venv/bin/python -m pytest tests/test_store.py -v`
 Expected: `2 passed`.
 
-- [ ] **Step 5: Write the failing pipeline test**
+- [ ] **Step 5: Freeze the LT fixture, then write the failing pipeline test**
+
+Create `tests/fixtures/lactate_threshold.json` from the documented `get_lactate_threshold` schema (the same shape as Task 11's `LT_PAYLOAD`), so `test_end_to_end_ingests_lt_and_race` has input:
+
+```json
+{"speed_and_heart_rate": {"heartRate": 168, "speed": 3.35, "calendarDate": "2026-08-01", "sequence": 1, "userProfilePK": 1, "version": null, "heartRateCycling": null}, "power": {}}
+```
+
+Then write the failing test:
 
 ```python
 # tests/test_pipeline.py
@@ -2373,7 +2381,7 @@ Expected: all tests pass (components + integration). Fix any cross-module issues
 - [ ] **Step 9: Commit**
 
 ```bash
-git add v2/metric_series.py v2/store.py v2/pipeline.py v2/tests/test_store.py v2/tests/test_pipeline.py
+git add v2/metric_series.py v2/store.py v2/pipeline.py v2/tests/test_store.py v2/tests/test_pipeline.py v2/tests/fixtures/lactate_threshold.json
 git commit -m "feat(v2): SQLite store + end-to-end measurement pipeline"
 ```
 
