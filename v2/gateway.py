@@ -173,14 +173,6 @@ class GarminGateway:
             # fetches that need the owned layer will raise a clear error.
             self._http = None
 
-    def _persist_tokens(self, path: Path) -> None:
-        try:
-            path = Path(path).expanduser()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(self._garmin.client.dumps() if False else {}))
-        except Exception:
-            pass
-
     def _cache(self, name: str, payload) -> None:
         path = self.cache_dir / name
         path.write_text(json.dumps(payload, indent=2, default=str))
