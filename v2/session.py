@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
@@ -170,6 +171,34 @@ def window_series(s: pd.Series, since: date, until: date, weekly: bool = False) 
     idx = pd.to_datetime(s.index)
     mask = (idx >= pd.Timestamp(since)) & (idx <= pd.Timestamp(until))
     return s[mask]
+
+
+def run_with_timeout(fn, timeout: float):
+    """Run fn on a daemon thread, bounding it to a hard wall-clock timeout.
+
+    Returns fn()'s return value. If fn does not finish within `timeout`
+    seconds it raises TimeoutError; the worker thread keeps running in the
+    background and its late results are discarded. Exceptions raised by fn
+    (other than a timeout) propagate to the caller. Used to keep blocking
+    third-party calls (e.g. the Garmin auth/fetch chain) from leaving the
+    Streamlit script stuck on a spinner forever when a network call stalls.
+    """
+    outcome: dict = {}
+
+    def _target() -> None:
+        try:
+            outcome["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - re-raised to caller
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=_target, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise TimeoutError(f"operation did not complete within {timeout}s")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
 
 
 def build_session_view(activities, profile: RunnerProfile, lt_payload: dict | None = None,

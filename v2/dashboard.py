@@ -21,13 +21,14 @@ import streamlit as st
 from gateway import GarminGateway
 from normalize import from_summary
 from profile import RunnerProfile, default_profile, with_estimated_hrmax
-from session import _fmt, build_session_view
+from session import _fmt, build_session_view, run_with_timeout
 from store import MetricStore
 
 st.set_page_config(page_title="Training Tracker", layout="wide")
 
 DB_PATH = os.environ.get("TRAINING_DB", str(Path(__file__).parent / "data" / "training.sqlite"))
 FETCH_DAYS = 365
+FETCH_TIMEOUT = 30  # hard cap on the whole Garmin refresh (auth + fetches)
 DEFAULT_WINDOW_DAYS = 180
 
 KPI_KEYS = [
@@ -399,7 +400,7 @@ def main() -> None:
     st.sidebar.header("Data")
     if st.sidebar.button("Refresh from Garmin"):
         try:
-            acts, lt, race = refresh_garmin()
+            acts, lt, race = run_with_timeout(refresh_garmin, timeout=FETCH_TIMEOUT)
             store.save_activities(acts)
             st.session_state["activities"] = acts
             st.session_state["lt_payload"] = lt

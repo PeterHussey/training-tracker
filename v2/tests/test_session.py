@@ -8,7 +8,7 @@ import pytest
 
 from normalize import from_summary
 from profile import RunnerProfile, default_profile
-from session import build_session_view, in_period, week_start, window_series
+from session import build_session_view, in_period, run_with_timeout, week_start, window_series
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -140,3 +140,25 @@ def test_units_do_not_affect_data_level():
     for metric in v_m.metrics:
         pd.testing.assert_series_equal(v_m.series[metric], v_i.series[metric],
                                        check_names=False)
+
+
+def test_run_with_timeout_returns_result():
+    assert run_with_timeout(lambda: 42, timeout=1.0) == 42
+
+
+def test_run_with_timeout_times_out():
+    def slow():
+        import time
+        time.sleep(0.5)
+        return "done"
+
+    with pytest.raises(TimeoutError):
+        run_with_timeout(slow, timeout=0.05)
+
+
+def test_run_with_timeout_propagates_exception():
+    def boom():
+        raise ValueError("nope")
+
+    with pytest.raises(ValueError, match="nope"):
+        run_with_timeout(boom, timeout=1.0)
