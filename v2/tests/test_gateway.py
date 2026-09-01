@@ -5,13 +5,13 @@ from pathlib import Path
 from unittest import mock
 
 import gateway
+from garmin_http import GarminHttp, GarminTokenStore
 from gateway import (
     GarminGateway,
     choose_token_source,
     load_op_creds,
     migrate_mcp_token,
 )
-from garmin_http import GarminTokenStore, GarminHttp
 
 
 def _jwt(payload: dict) -> str:
@@ -56,10 +56,12 @@ def test_nonzero_returncode_returns_none():
 def test_parse_json_format_output():
     r = mock.Mock()
     r.returncode = 0
-    r.stdout = json.dumps([
-        {"label": "username", "value": "runner@example.com"},
-        {"label": "password", "value": "s3cret"},
-    ])
+    r.stdout = json.dumps(
+        [
+            {"label": "username", "value": "runner@example.com"},
+            {"label": "password", "value": "s3cret"},
+        ]
+    )
     with mock.patch("gateway.subprocess.run", return_value=r):
         assert load_op_creds() == ("runner@example.com", "s3cret")
 
@@ -74,11 +76,15 @@ def test_parse_newline_output():
 
 def test_migrate_mcp_token_builds_native_store(tmp_path):
     p = tmp_path / "oauth2_token.json"
-    p.write_text(json.dumps({
-        "access_token": _jwt({"client_id": "di-client-abc", "scope": "garmin"}),
-        "refresh_token": "refresh-123",
-        "token_type": "Bearer",
-    }))
+    p.write_text(
+        json.dumps(
+            {
+                "access_token": _jwt({"client_id": "di-client-abc", "scope": "garmin"}),
+                "refresh_token": "refresh-123",
+                "token_type": "Bearer",
+            }
+        )
+    )
     stored = json.loads(migrate_mcp_token(p))
     assert stored["di_refresh_token"] == "refresh-123"
     assert stored["di_client_id"] == "di-client-abc"
@@ -107,8 +113,12 @@ def test_choose_token_source_priority(tmp_path):
     mcp_native = tmp_path / "mcp_native.json"
     mcp_legacy = tmp_path / "mcp_legacy.json"
     legacy_other = tmp_path / "legacy_no_jwt.json"
-    mcp_native.write_text(json.dumps({"di_token": "t", "di_refresh_token": "r", "di_client_id": "c"}))
-    mcp_legacy.write_text(json.dumps({"access_token": _jwt({"client_id": "c"}), "refresh_token": "r"}))
+    mcp_native.write_text(
+        json.dumps({"di_token": "t", "di_refresh_token": "r", "di_client_id": "c"})
+    )
+    mcp_legacy.write_text(
+        json.dumps({"access_token": _jwt({"client_id": "c"}), "refresh_token": "r"})
+    )
     legacy_other.write_text(json.dumps({"access_token": "no-jwt", "refresh_token": "r"}))
     v2.write_text(json.dumps({"di_token": "t2", "di_refresh_token": "r2", "di_client_id": "c2"}))
     assert choose_token_source(v2, mcp_native) == ("path", str(v2))
@@ -144,8 +154,10 @@ def test_gateway_prefers_tokenstore_path(monkeypatch, tmp_path):
     fh = mock.Mock(spec=GarminHttp)
     monkeypatch.setattr("gateway.GarminTokenStore", lambda p, timeout=None: ts)
     monkeypatch.setattr("gateway.GarminHttp", lambda ts: fh)
-    with mock.patch("gateway.load_op_creds", return_value=(None, None)), \
-         mock.patch("gateway.choose_token_source", return_value=("path", str(v2))):
+    with (
+        mock.patch("gateway.load_op_creds", return_value=(None, None)),
+        mock.patch("gateway.choose_token_source", return_value=("path", str(v2))),
+    ):
         gw = GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=v2)
         assert gw.auth_path == "tokenstore"
         assert gw._http is fh
@@ -155,10 +167,12 @@ def test_gateway_falls_back_to_op_credentials(monkeypatch, tmp_path):
     v2 = tmp_path / "v2_tokenstore.json"
     v2.write_text(json.dumps({"di_token": "t", "di_refresh_token": "r", "di_client_id": "c"}))
     fake = _FakeGarmin(login_effects=[None])
-    with mock.patch("garminconnect.Garmin", return_value=fake), \
-         mock.patch("gateway.load_op_creds", return_value=("u", "p")), \
-         mock.patch("gateway.choose_token_source", return_value=("migrated", "{}")), \
-         mock.patch("gateway.GarminTokenStore") as mock_ts:
+    with (
+        mock.patch("garminconnect.Garmin", return_value=fake),
+        mock.patch("gateway.load_op_creds", return_value=("u", "p")),
+        mock.patch("gateway.choose_token_source", return_value=("migrated", "{}")),
+        mock.patch("gateway.GarminTokenStore") as mock_ts,
+    ):
         mock_ts.side_effect = RuntimeError("tokenstore failed")
         gw = GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=v2)
         assert gw.auth_path == "op_credentials"
@@ -167,9 +181,11 @@ def test_gateway_falls_back_to_op_credentials(monkeypatch, tmp_path):
 def test_gateway_op_login_without_tokenstore(monkeypatch, tmp_path):
     v2 = tmp_path / "v2_tokenstore.json"
     fake = _FakeGarmin(login_effects=[None])
-    with mock.patch("garminconnect.Garmin", return_value=fake), \
-         mock.patch("gateway.load_op_creds", return_value=("u", "p")), \
-         mock.patch("gateway.choose_token_source", return_value=(None, None)):
+    with (
+        mock.patch("garminconnect.Garmin", return_value=fake),
+        mock.patch("gateway.load_op_creds", return_value=("u", "p")),
+        mock.patch("gateway.choose_token_source", return_value=(None, None)),
+    ):
         gw = GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=v2)
         fake.login.assert_called_once_with()
         assert gw.auth_path == "op_credentials"
@@ -177,9 +193,11 @@ def test_gateway_op_login_without_tokenstore(monkeypatch, tmp_path):
 
 def test_gateway_raises_without_any_credentials(tmp_path):
     fake = _FakeGarmin()
-    with mock.patch("garminconnect.Garmin", return_value=fake), \
-         mock.patch("gateway.load_op_creds", return_value=(None, None)), \
-         mock.patch("gateway.choose_token_source", return_value=(None, None)):
+    with (
+        mock.patch("garminconnect.Garmin", return_value=fake),
+        mock.patch("gateway.load_op_creds", return_value=(None, None)),
+        mock.patch("gateway.choose_token_source", return_value=(None, None)),
+    ):
         try:
             GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=tmp_path / "v2.json")
         except RuntimeError as e:
@@ -191,11 +209,16 @@ def test_gateway_raises_without_any_credentials(tmp_path):
 def _fake_http(monkeypatch, fetch_results=None):
     fh = mock.Mock(spec=GarminHttp)
     if fetch_results is None:
-        fetch_results = {"activities": [], "lactate": {"speed_and_heart_rate": {}, "power": {}},
-                         "race": {"maybeMap": {}}}
+        fetch_results = {
+            "activities": [],
+            "lactate": {"speed_and_heart_rate": {}, "power": {}},
+            "race": {"maybeMap": {}},
+            "vo2max": [],
+        }
     fh.fetch_activities.return_value = fetch_results["activities"]
     fh.fetch_lactate_threshold.return_value = fetch_results["lactate"]
     fh.fetch_race_predictions.return_value = fetch_results["race"]
+    fh.fetch_vo2max_trend.return_value = fetch_results["vo2max"]
     return fh
 
 
@@ -215,7 +238,8 @@ def test_gateway_uses_owned_http_path(monkeypatch, tmp_path):
 def test_gateway_fetch_delegates(monkeypatch, tmp_path):
     v2 = tmp_path / "v2_tokenstore.json"
     v2.write_text(json.dumps({"di_token": "t", "di_refresh_token": "r", "di_client_id": "c"}))
-    ts = GarminTokenStore(v2, timeout=5.0); ts.load()
+    ts = GarminTokenStore(v2, timeout=5.0)
+    ts.load()
     fh = _fake_http(monkeypatch)
     monkeypatch.setattr("gateway.GarminTokenStore", lambda p, timeout=None: ts)
     monkeypatch.setattr("gateway.GarminHttp", lambda ts: fh)
@@ -223,16 +247,20 @@ def test_gateway_fetch_delegates(monkeypatch, tmp_path):
     gw.fetch_activities("a", "b")
     gw.fetch_lactate_threshold()
     gw.fetch_race_predictions()
+    gw.fetch_vo2max_trend("a", "b")
     fh.fetch_activities.assert_called_once_with("a", "b")
     fh.fetch_lactate_threshold.assert_called_once()
     fh.fetch_race_predictions.assert_called_once()
+    fh.fetch_vo2max_trend.assert_called_once_with("a", "b")
 
 
 def test_gateway_still_falls_back_to_op_login_without_tokenstore(monkeypatch, tmp_path):
     fake = _FakeGarmin(login_effects=[None])
-    with mock.patch("garminconnect.Garmin", return_value=fake), \
-         mock.patch("gateway.load_op_creds", return_value=("u", "p")), \
-         mock.patch("gateway.choose_token_source", return_value=(None, None)):
+    with (
+        mock.patch("garminconnect.Garmin", return_value=fake),
+        mock.patch("gateway.load_op_creds", return_value=("u", "p")),
+        mock.patch("gateway.choose_token_source", return_value=(None, None)),
+    ):
         gw = GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=tmp_path / "v2.json")
         assert gw.auth_path == "op_credentials"
 
@@ -246,9 +274,13 @@ def test_fallback_materialises_tokenstore_and_builds_owned_http(monkeypatch, tmp
     from `garminconnect`'s `client.dumps()` (v2 schema) and build a `GarminHttp`.
     """
     v2_path = tmp_path / "v2_tokenstore.json"
-    tokenstore_json = json.dumps({
-        "di_token": "di-t", "di_refresh_token": "di-r", "di_client_id": "di-c",
-    })
+    tokenstore_json = json.dumps(
+        {
+            "di_token": "di-t",
+            "di_refresh_token": "di-r",
+            "di_client_id": "di-c",
+        }
+    )
     fake = mock.Mock()
     fake.login = mock.Mock(return_value=None)
 
@@ -261,9 +293,11 @@ def test_fallback_materialises_tokenstore_and_builds_owned_http(monkeypatch, tmp
     http = mock.Mock(spec=GarminHttp)
     monkeypatch.setattr("gateway.GarminHttp", lambda ts: http)
     monkeypatch.setattr("gateway.GarminTokenStore", lambda p, timeout=None: _RaisingTS(p))
-    with mock.patch("garminconnect.Garmin", return_value=fake), \
-         mock.patch("gateway.load_op_creds", return_value=("u", "p")), \
-         mock.patch("gateway.choose_token_source", return_value=(None, None)):
+    with (
+        mock.patch("garminconnect.Garmin", return_value=fake),
+        mock.patch("gateway.load_op_creds", return_value=("u", "p")),
+        mock.patch("gateway.choose_token_source", return_value=(None, None)),
+    ):
         gw = GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=v2_path)
         assert gw.auth_path == "op_credentials"
         assert gw._http is http, "fallback must build the owned HTTP layer"
@@ -274,8 +308,10 @@ def test_fallback_materialises_tokenstore_and_builds_owned_http(monkeypatch, tmp
 
 class _RaisingTS:
     """GarminTokenStore double whose load() always succeeds (no network)."""
+
     def __init__(self, p, timeout=None):
         self.path = p
+
     def load(self):
         pass
 
@@ -285,6 +321,7 @@ def test_no_top_level_garminconnect_import():
     import-time cost. `from garminconnect import Garmin` must be lazy (inside
     `_login_garminconnect`), not a top-level statement."""
     import ast
+
     src = Path(gateway.__file__).read_text()
     tree = ast.parse(src)
     top_level_imports = []
@@ -299,8 +336,7 @@ def test_no_top_level_garminconnect_import():
         for n in top_level_imports
     ), "gateway must not import garminconnect at module top level"
     lazy = any(
-        isinstance(n, ast.ImportFrom)
-        and n.module == "garminconnect"
+        isinstance(n, ast.ImportFrom) and n.module == "garminconnect"
         for fn in ast.walk(tree)
         if isinstance(fn, (ast.FunctionDef,))
         for n in fn.body

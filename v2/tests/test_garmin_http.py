@@ -4,24 +4,27 @@ import time
 from pathlib import Path
 from unittest import mock
 
-import requests
 import pytest
+import requests
 
 from garmin_http import (
-    ACTIVITIES_PATH, CONNECTAPI_BASE,
-    GarminHttp, GarminHttpError, GarminTokenStore, GarminAuthError,
-    DI_TOKEN_URL,
+    ACTIVITIES_PATH,
+    CONNECTAPI_BASE,
+    GarminAuthError,
+    GarminHttp,
+    GarminHttpError,
+    GarminTokenStore,
 )
 
 
 def _jwt(claims: dict) -> str:
     def b64(x) -> str:
         return base64.urlsafe_b64encode(json.dumps(x).encode()).rstrip(b"=").decode()
-    return f"{b64({'alg':'none'})}.{b64(claims)}.sig"
+
+    return f"{b64({'alg': 'none'})}.{b64(claims)}.sig"
 
 
-def _write_store(path: Path, token_claims: dict | None = None,
-                 extra: dict | None = None) -> Path:
+def _write_store(path: Path, token_claims: dict | None = None, extra: dict | None = None) -> Path:
     claims = token_claims if token_claims is not None else {"exp": int(time.time()) + 7200}
     data = {"di_token": _jwt(claims), "di_refresh_token": "rt", "di_client_id": "cid"}
     if extra:
@@ -106,12 +109,17 @@ def tokenstore(tmp_path) -> GarminTokenStore:
 
 
 def _row(activity_id):
-    return {"activityId": activity_id, "startTimeLocal": "2026-08-01 00:00:00",
-            "distance": 1000.0, "duration": 600.0}
+    return {
+        "activityId": activity_id,
+        "startTimeLocal": "2026-08-01 00:00:00",
+        "distance": 1000.0,
+        "duration": 600.0,
+    }
 
 
 def test_get_json_calls_connectapi_with_bearer(tokenstore, monkeypatch):
     calls = {}
+
     def fake_get(url, headers=None, params=None, timeout=5.0):
         calls["url"] = url
         calls["hdr"] = headers
@@ -119,6 +127,7 @@ def test_get_json_calls_connectapi_with_bearer(tokenstore, monkeypatch):
         r = mock.Mock(status_code=200)
         r.json.return_value = [{"activityId": 1}]
         return r
+
     monkeypatch.setattr("garmin_http.requests.get", fake_get)
     gh = GarminHttp(tokenstore)
     out = gh.get_json(ACTIVITIES_PATH, params={"limit": 1})
@@ -133,6 +142,7 @@ def test_get_json_raises_on_error_status(tokenstore, monkeypatch):
         r = mock.Mock(status_code=500)
         r.text = "boom"
         return r
+
     monkeypatch.setattr("garmin_http.requests.get", fake_get)
     gh = GarminHttp(tokenstore)
     with pytest.raises(GarminHttpError):
@@ -141,11 +151,13 @@ def test_get_json_raises_on_error_status(tokenstore, monkeypatch):
 
 def test_fetch_activities_uses_limit_100_and_offset(tokenstore, monkeypatch):
     seen = []
+
     def fake_get(url, headers=None, params=None, timeout=5.0):
         seen.append((params["limit"], params.get("offset", "0")))
         r = mock.Mock(status_code=200)
         r.json.return_value = []
         return r
+
     monkeypatch.setattr("garmin_http.requests.get", fake_get)
     GarminHttp(tokenstore).fetch_activities("a", "b")
     assert seen == [("100", "0")]
@@ -158,6 +170,7 @@ def test_fetch_activities_paginates(tokenstore, monkeypatch):
         r = mock.Mock(status_code=200)
         r.json.return_value = page
         return r
+
     monkeypatch.setattr("garmin_http.requests.get", fake_get)
     gh = GarminHttp(tokenstore)
     acts = gh.fetch_activities("2026-01-01", "2026-08-31")
@@ -170,8 +183,10 @@ def test_get_json_aborts_stall_within_call_budget(tokenstore, monkeypatch):
     """Root-cause regression: a half-stalled SSL socket defeats requests'
     `timeout=`, so a stuck connectapi call must be abandoned by force (daemon
     thread + hard deadline) and surfaced as GarminHttpError — not hang forever."""
+
     def stall_forever(url, headers=None, params=None, timeout=5.0):
         time.sleep(8)  # simulates a half-open socket that never delivers the body
+
     monkeypatch.setattr("garmin_http.requests.get", stall_forever)
     gh = GarminHttp(tokenstore, max_retries=0)
     t0 = time.time()
@@ -185,6 +200,7 @@ def test_get_json_retries_transient_failure_then_succeeds(tokenstore, monkeypatc
     """Phase-4 robustness: a transient (stalled-then-recovers) page must be
     retried within the bounded retry budget instead of failing the whole fetch."""
     calls = {"n": 0}
+
     def flaky(url, headers=None, params=None, timeout=5.0):
         calls["n"] += 1
         if calls["n"] == 1:
@@ -192,6 +208,7 @@ def test_get_json_retries_transient_failure_then_succeeds(tokenstore, monkeypatc
         r = mock.Mock(status_code=200)
         r.json.return_value = [{"activityId": 7}]
         return r
+
     monkeypatch.setattr("garmin_http.requests.get", flaky)
     # patch threading time.sleep used for backoff so the test is instant
     monkeypatch.setattr("garmin_http.time.sleep", lambda s: None)
@@ -213,6 +230,7 @@ def test_fetch_activities_terminates_on_duplicate_pages(tokenstore, monkeypatch)
     """
     page = [_row(i) for i in range(100)]  # activityIds 0..99
     call_count = {"n": 0}
+
     def fake_get(url, headers=None, params=None, timeout=5.0):
         call_count["n"] += 1
         if call_count["n"] >= 3:
@@ -220,6 +238,7 @@ def test_fetch_activities_terminates_on_duplicate_pages(tokenstore, monkeypatch)
         r = mock.Mock(status_code=200)
         r.json.return_value = list(page)  # identical 100 rows every page
         return r
+
     monkeypatch.setattr("garmin_http.requests.get", fake_get)
     gh = GarminHttp(tokenstore, max_retries=0)
     acts = gh.fetch_activities("a", "b")
@@ -228,3 +247,27 @@ def test_fetch_activities_terminates_on_duplicate_pages(tokenstore, monkeypatch)
     assert acts[0]["activityId"] == 0
     assert acts[-1]["activityId"] == 99
 
+
+def test_fetch_vo2max_trend_hits_daily_endpoint(tokenstore, monkeypatch):
+    """The trend endpoint must be /maxmet/daily/{start}/{end} (NOT /latest),
+
+    which always returns the current value regardless of the date in the URL
+    (python-garminconnect#74). The daily endpoint returns real historical
+    variance.
+    """
+    calls = {}
+
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        calls["url"] = url
+        r = mock.Mock(status_code=200)
+        r.json.return_value = [
+            {"generic": {"calendarDate": "2026-08-09", "vo2MaxPreciseValue": 46.5}}
+        ]
+        return r
+
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    gh = GarminHttp(tokenstore)
+    out = gh.fetch_vo2max_trend("2026-08-01", "2026-08-27")
+    assert "maxmet/daily/2026-08-01/2026-08-27" in calls["url"]
+    assert "maxmet/latest" not in calls["url"]
+    assert out[0]["generic"]["vo2MaxPreciseValue"] == 46.5

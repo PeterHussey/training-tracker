@@ -5,6 +5,7 @@ dated series + interpretation context, and owns the date-filtering / unit-
 formatting helpers shared with e2e_report.py so the CLI report and the
 dashboard use one implementation.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,15 +27,27 @@ DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 KM_PER_MI = 1.609344
 
 EXPECTED_METRICS = [
-    "volume.distance_total", "load.banister", "load.edwards",
-    "pmc.ctl", "pmc.atl", "pmc.tsb", "fitness.vo2max", "load.cs_approx",
+    "volume.distance_total",
+    "volume.duration_total",
+    "load.banister",
+    "load.edwards",
+    "pmc.ctl",
+    "pmc.atl",
+    "pmc.tsb",
+    "fitness.vo2max",
+    "load.cs_approx",
 ]
 
 CONDITIONAL_METRICS = {
-    "load.acwr": "requires a >=28d outdoor-running span for the chronic window",
-    "load.acwr_pct": "requires a >=28d outdoor-running span for the chronic window",
+    "load.acwr": "requires a >=28-day span of HR-load activities (running + treadmill + cross) for the chronic window",
+    "load.acwr_pct": "requires a >=28-day span of HR-load activities (running + treadmill + cross) for the chronic window",
     "load.banister_cross": "requires cross-training activities with HR data",
     "load.edwards_cross": "requires cross-training activities with HR data",
+    "load.banister_treadmill": "requires treadmill activities with HR data",
+    "load.edwards_treadmill": "requires treadmill activities with HR data",
+    "load.banister_running": "requires outdoor-running activities with HR data",
+    "load.edwards_running": "requires outdoor-running activities with HR data",
+    "volume.duration_cross": "time-volume is populated whenever a cross-training activity exists (duration is distance-independent)",
     "load.lt_hr": "requires a measured lactate threshold in the payload (live LT record was empty)",
     "load.lt_pace": "requires a measured lactate threshold in the payload (live LT record was empty)",
     "race_5k": "requires non-null race predictions in the payload",
@@ -201,9 +214,14 @@ def run_with_timeout(fn, timeout: float):
     return outcome["value"]
 
 
-def build_session_view(activities, profile: RunnerProfile, lt_payload: dict | None = None,
-                       race_payload: dict | None = None) -> SessionView:
-    rows = compute_metric_rows(activities, profile, lt_payload, race_payload)
+def build_session_view(
+    activities,
+    profile: RunnerProfile,
+    lt_payload: dict | None = None,
+    race_payload: dict | None = None,
+    vo2max_payload: list[dict] | None = None,
+) -> SessionView:
+    rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload)
     series: dict[str, pd.Series] = {}
     context: dict[str, dict] = {}
     for metric in sorted({r["metric"] for r in rows}):

@@ -6,8 +6,11 @@ These tests pin the incremental-fetch behavior: subsequent refreshes narrow the
 Garmin window to activities newer than the latest already in the local store,
 while the first refresh (empty store) keeps the full window.
 """
+
 from datetime import date, timedelta
 from unittest import mock
+
+import pytest
 
 import dashboard as d
 from dashboard import FETCH_DAYS, compute_fetch_start
@@ -47,15 +50,22 @@ def test_refresh_garmin_narrows_window_when_store_has_activities(monkeypatch):
     fake_gw.fetch_activities.return_value = [{"activityId": 1}]
     fake_gw.fetch_lactate_threshold.return_value = {"speed_and_heart_rate": {}, "power": {}}
     fake_gw.fetch_race_predictions.return_value = {"maybeMap": {}}
+    fake_gw.fetch_vo2max_trend.return_value = [{"generic": {"calendarDate": "2026-08-29"}}]
     monkeypatch.setattr("dashboard.GarminGateway", lambda **kw: fake_gw)
     monkeypatch.setattr("dashboard.date", mock.Mock(today=mock.Mock(return_value=end)))
 
-    acts, lt, race = d.refresh_garmin()
+    acts, lt, race, vo2 = d.refresh_garmin()
 
     args = fake_gw.fetch_activities.call_args.args
     assert args[0] == expected_start.isoformat()  # narrowed start
     assert args[1] == end.isoformat()
     assert len(acts) == 1
+    # VO2max trend ALWAYS uses the full window, independent of the incremental
+    # activities window (single non-paginated daily-summary call).
+    vo2_args = fake_gw.fetch_vo2max_trend.call_args.args
+    assert vo2_args[0] == (end - timedelta(days=FETCH_DAYS)).isoformat()
+    assert vo2_args[1] == end.isoformat()
+    assert vo2[0]["generic"]["calendarDate"] == "2026-08-29"
 
 
 def test_refresh_garmin_full_window_when_store_empty(monkeypatch):
@@ -71,8 +81,60 @@ def test_refresh_garmin_full_window_when_store_empty(monkeypatch):
     fake_gw.fetch_activities.return_value = [{"activityId": 1}]
     fake_gw.fetch_lactate_threshold.return_value = {"speed_and_heart_rate": {}, "power": {}}
     fake_gw.fetch_race_predictions.return_value = {"maybeMap": {}}
+    fake_gw.fetch_vo2max_trend.return_value = []
     monkeypatch.setattr("dashboard.GarminGateway", lambda **kw: fake_gw)
 
-    d.refresh_garmin()
+    acts, lt, race, vo2 = d.refresh_garmin()
     args = fake_gw.fetch_activities.call_args.args
     assert args[0] == (end - timedelta(days=FETCH_DAYS)).isoformat()
+    assert vo2 == []
+
+
+def test_refresh_garmin_no_activities_is_noop_when_store_has_data(monkeypatch):
+    """Incremental refresh with nothing new must be a no-op, not a fatal error.
+
+    `compute_fetch_start` narrows the window to newer-than-latest (Aug 31..Sep 1
+    here); when the athlete simply has not run since, Garmin returns [] for that
+    window (verified live: garmin_raw.json == []). That is a NORMAL outcome of
+    the incremental design — the dashboard must keep existing data and not raise
+    "Garmin returned no activities". Trend payloads still refresh.
+    """
+    end = date(2026, 9, 1)
+    latest = date(2026, 8, 30)
+    expected_start = date(2026, 8, 31)
+
+    fake_store = mock.Mock()
+    fake_store.latest_activity_date.return_value = latest
+    monkeypatch.setattr("dashboard.get_store", lambda: fake_store)
+
+    fake_gw = mock.Mock()
+    fake_gw.fetch_activities.return_value = []  # API legitimately empty
+    fake_gw.fetch_lactate_threshold.return_value = {"speed_and_heart_rate": {}, "power": {}}
+    fake_gw.fetch_race_predictions.return_value = {"maybeMap": {}}
+    fake_gw.fetch_vo2max_trend.return_value = [{"generic": {"calendarDate": "2026-08-31"}}]
+    monkeypatch.setattr("dashboard.GarminGateway", lambda **kw: fake_gw)
+    monkeypatch.setattr("dashboard.date", mock.Mock(today=mock.Mock(return_value=end)))
+
+    acts, lt, race, vo2 = d.refresh_garmin()
+
+    assert acts == []  # nothing new: no-op, not an exception
+    assert vo2[0]["generic"]["calendarDate"] == "2026-08-31"  # trend still refreshed
+    args = fake_gw.fetch_activities.call_args.args
+    assert args[0] == expected_start.isoformat()
+    assert args[1] == end.isoformat()
+
+
+def test_refresh_garmin_raises_only_when_store_empty(monkeypatch):
+    """First-run failure (no local data AND no API data) still surfaces loudly."""
+    end = date(2026, 9, 1)
+    fake_store = mock.Mock()
+    fake_store.latest_activity_date.return_value = None
+    monkeypatch.setattr("dashboard.get_store", lambda: fake_store)
+
+    fake_gw = mock.Mock()
+    fake_gw.fetch_activities.return_value = []
+    monkeypatch.setattr("dashboard.GarminGateway", lambda **kw: fake_gw)
+    monkeypatch.setattr("dashboard.date", mock.Mock(today=mock.Mock(return_value=end)))
+
+    with pytest.raises(RuntimeError, match="returned no activities"):
+        d.refresh_garmin()

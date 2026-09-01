@@ -19,6 +19,7 @@ def compute_metric_rows(
     profile: RunnerProfile,
     lt_payload: dict | None = None,
     race_payload: dict | None = None,
+    vo2max_payload: list[dict] | None = None,
 ) -> list[dict]:
     """Compute every metric row for a session view. Pure: no DB, no network.
 
@@ -159,10 +160,12 @@ def compute_metric_rows(
             params={"window": 180},
         )
 
-    # VO2max — ingested reference (brief 2.1)
+    # VO2max — ingested reference (brief 2.1). Uses the daily trend endpoint
+    # /metrics-service/metrics/maxmet/daily/{start}/{end} (vo2MaxPreciseValue,
+    # decimal). Empty only when the trend fetch returned nothing usable.
     rows += rows_from_series(
         "fitness.vo2max",
-        vo2max.daily_vo2max(activities),
+        vo2max.daily_vo2max_from_trend(vo2max_payload or []),
         "garmin_ingested",
         flags={"error_class": "firstbeat_estimate_5pct", "recompute": "no"},
     )
@@ -245,11 +248,12 @@ def run_pipeline(
     out_db,
     lt_payload: dict | None = None,
     race_payload: dict | None = None,
+    vo2max_payload: list[dict] | None = None,
 ) -> dict[str, int]:
     store = MetricStore(out_db)
     store.save_runner_profile(profile)
     store.save_activities(activities)
-    rows = compute_metric_rows(activities, profile, lt_payload, race_payload)
+    rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload)
     store.save_metric_rows(rows)
     store.close()
     return {"metrics_written": len(rows), "activities": len(activities)}

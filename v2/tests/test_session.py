@@ -2,12 +2,12 @@
 import json
 from datetime import date
 from pathlib import Path
+from profile import RunnerProfile, default_profile
 
 import pandas as pd
 import pytest
 
 from normalize import from_summary
-from profile import RunnerProfile, default_profile
 from session import build_session_view, in_period, run_with_timeout, week_start, window_series
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -26,24 +26,39 @@ def _race():
     return json.loads((FIXTURES / "race_predictions.json").read_text())
 
 
+def _vo2():
+    return json.loads((FIXTURES / "vo2max_trend.json").read_text())
+
+
 def _view(**kw):
     profile = kw.pop("profile", default_profile(age=40, hrrest=60, sex="M"))
-    return build_session_view(kw.pop("acts", _acts()), profile,
-                              _lt(), _race())
+    return build_session_view(kw.pop("acts", _acts()), profile, _lt(), _race(), _vo2())
 
 
 REQUIRED = {
-    "volume.distance_total", "volume.rolling4wk_total", "load.banister",
-    "load.edwards", "pmc.ctl", "pmc.atl", "pmc.tsb",
-    "load.banister_cross", "load.edwards_cross", "fitness.vo2max",
-    "load.cs_approx", "load.lt_hr", "load.lt_pace",
-    "race_5k", "race_10k", "race_half", "race_full",
+    "volume.distance_total",
+    "volume.rolling4wk_total",
+    "load.banister",
+    "load.edwards",
+    "pmc.ctl",
+    "pmc.atl",
+    "pmc.tsb",
+    "load.banister_cross",
+    "load.edwards_cross",
+    "fitness.vo2max",
+    "load.cs_approx",
+    "load.lt_hr",
+    "load.lt_pace",
+    "race_5k",
+    "race_10k",
+    "race_half",
+    "race_full",
 }
 
 
 def test_session_view_emits_expected_metrics():
     view = _view()
-    assert REQUIRED <= set(view.metrics)
+    assert set(view.metrics) >= REQUIRED
 
 
 def test_series_have_sorted_datetime_index():
@@ -73,6 +88,14 @@ def test_context_carries_params_and_flags():
     assert cross["flags"]["basis"] == "cross_training"
 
 
+def test_vo2max_series_uses_trend_precise_values():
+    view = _view()
+    s = view.series["fitness.vo2max"]
+    assert len(s) > 1
+    assert s.max() > s.min(), "expected variance across days (precise values)"
+    assert s[pd.Timestamp("2026-08-09")] == pytest.approx(46.5)
+
+
 def test_windowed_filters_daily_series():
     view = _view()
     since, until = date(2026, 8, 20), date(2026, 8, 27)
@@ -93,7 +116,7 @@ def test_windowed_includes_week_overlapping_since():
 
 
 def test_higher_hrmax_lowers_banister_trimp():
-    view_low = _view(profile=default_profile(age=40, hrrest=60, sex="M"))   # hrmax 180
+    view_low = _view(profile=default_profile(age=40, hrrest=60, sex="M"))  # hrmax 180
     view_high = _view(profile=default_profile(age=25, hrrest=60, sex="M"))  # hrmax 195
     low, high = view_low.series["load.banister"], view_high.series["load.banister"]
     common = low.index.intersection(high.index)
@@ -106,8 +129,9 @@ def test_empty_activities():
     assert view.metrics == []
 
 
-@pytest.mark.parametrize("label,start", [("2026-W34", date(2026, 8, 17)),
-                                         ("2026-W33", date(2026, 8, 10))])
+@pytest.mark.parametrize(
+    "label,start", [("2026-W34", date(2026, 8, 17)), ("2026-W33", date(2026, 8, 10))]
+)
 def test_week_start_parse(label, start):
     assert week_start(label) == start
 
@@ -129,17 +153,14 @@ def test_window_series_weekly_flag():
 
 
 def test_units_do_not_affect_data_level():
-    p_metric = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986,
-                             units="metric")
-    p_imperial = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986,
-                               units="imperial")
+    p_metric = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986, units="metric")
+    p_imperial = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986, units="imperial")
     acts = _acts()
-    v_m = build_session_view(acts, p_metric, _lt(), _race())
-    v_i = build_session_view(acts, p_imperial, _lt(), _race())
+    v_m = build_session_view(acts, p_metric, _lt(), _race(), _vo2())
+    v_i = build_session_view(acts, p_imperial, _lt(), _race(), _vo2())
     assert set(v_m.metrics) == set(v_i.metrics)
     for metric in v_m.metrics:
-        pd.testing.assert_series_equal(v_m.series[metric], v_i.series[metric],
-                                       check_names=False)
+        pd.testing.assert_series_equal(v_m.series[metric], v_i.series[metric], check_names=False)
 
 
 def test_run_with_timeout_returns_result():
@@ -149,6 +170,7 @@ def test_run_with_timeout_returns_result():
 def test_run_with_timeout_times_out():
     def slow():
         import time
+
         time.sleep(0.5)
         return "done"
 

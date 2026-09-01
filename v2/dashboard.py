@@ -90,7 +90,7 @@ def get_store() -> MetricStore:
     return MetricStore(DB_PATH)
 
 
-def refresh_garmin() -> tuple[list, dict, dict]:
+def refresh_garmin() -> tuple[list, dict, dict, list[dict]]:
     end = date.today()
     # Incremental refresh: only fetch activities newer than the latest already
     # persisted locally (first run, empty store, fetches the full window).
@@ -101,12 +101,22 @@ def refresh_garmin() -> tuple[list, dict, dict]:
     gw = GarminGateway(cache_dir=Path("cache/app_cache"))
     with st.spinner("Fetching activities from Garmin..."):
         raw = gw.fetch_activities(start.isoformat(), end.isoformat())
-    if not raw:
+    # An empty incremental window is normal: compute_fetch_start only asks for
+    # activities newer than the latest persisted one, so "nothing new since the
+    # last refresh" legitimately returns []. Only a truly empty account (no local
+    # data AND nothing from Garmin) is a fetch failure.
+    if not raw and store.latest_activity_date() is None:
         raise RuntimeError("Garmin returned no activities")
     acts = [from_summary(a) for a in raw]
     lt = gw.fetch_lactate_threshold() or {}
     race = gw.fetch_race_predictions() or {}
-    return acts, lt, race
+    # VO2max trend is a single (non-paginated) daily-summary call, so it always
+    # covers the full window — NOT the incremental activities window. Binding it
+    # to `start` would yield only the days since the last refresh (e.g. 1-2
+    # points on most refreshes), producing a uselessly short chart.
+    vo2_start = end - timedelta(days=FETCH_DAYS)
+    vo2 = gw.fetch_vo2max_trend(vo2_start.isoformat(), end.isoformat()) or []
+    return acts, lt, race, vo2
 
 
 def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> RunnerProfile:
@@ -356,12 +366,16 @@ def render_load_tab(view, windowed, units) -> None:
 def render_fitness_tab(view, windowed, units) -> None:
     vo2 = windowed.get("fitness.vo2max")
     if vo2 is None or vo2.empty:
-        st.write("No VO2max estimates (needs per-run vO2MaxValue on running activities).")
+        st.write(
+            "No VO2max trend data. Use **Refresh from Garmin** to pull the "
+            "daily trend from `/maxmet/daily` (Garmin running VO2max)."
+        )
     else:
         fig = go.Figure(go.Scatter(x=vo2.index, y=vo2.values, mode="lines+markers", name="VO2max"))
-        fig.update_layout(title="VO2max (Firstbeat estimate)", hovermode="x unified")
+        fig.update_layout(title="VO2max (Firstbeat estimate, daily trend)", hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
+            "Daily trend from Garmin `/maxmet/daily` (vo2MaxPreciseValue). "
             "Firstbeat estimate ~5% error, underestimates >=60 mL/kg/min. "
             + context_line(view, "fitness.vo2max")
         )
@@ -644,16 +658,25 @@ def main() -> None:
         st.session_state["activities"] = store.load_activities()
         st.session_state["lt_payload"] = None
         st.session_state["race_payload"] = None
+        st.session_state["vo2max_payload"] = None
 
     st.sidebar.header("Data")
     if st.sidebar.button("Refresh from Garmin"):
         try:
-            acts, lt, race = run_with_timeout(refresh_garmin, timeout=FETCH_TIMEOUT)
-            store.save_activities(acts)
-            st.session_state["activities"] = acts
+            acts, lt, race, vo2 = run_with_timeout(refresh_garmin, timeout=FETCH_TIMEOUT)
+            if acts:
+                store.save_activities(acts)
+                st.session_state["activities"] = acts
+            # Trend payloads update even when there are no new activities.
             st.session_state["lt_payload"] = lt
             st.session_state["race_payload"] = race
-            st.sidebar.success(f"Fetched {len(acts)} activities")
+            st.session_state["vo2max_payload"] = vo2
+            msg = (
+                f"Fetched {len(acts)} activities"
+                if acts
+                else "No new activities; Garmin trend data refreshed"
+            )
+            st.sidebar.success(msg)
         except Exception as exc:
             st.sidebar.warning(f"Garmin fetch failed: {exc.__class__.__name__}: {exc}")
 
@@ -691,6 +714,7 @@ def main() -> None:
         (profile.hrmax, profile.hrrest, profile.sex, profile.birth_year, profile.hrmax_source),
         st.session_state.get("lt_payload"),
         st.session_state.get("race_payload"),
+        st.session_state.get("vo2max_payload"),
     )
     if st.session_state.get("_view_sig") != compute_sig:
         st.session_state["view"] = build_session_view(
@@ -698,6 +722,7 @@ def main() -> None:
             profile,
             st.session_state.get("lt_payload"),
             st.session_state.get("race_payload"),
+            st.session_state.get("vo2max_payload"),
         )
         st.session_state["_view_sig"] = compute_sig
     view = st.session_state["view"]

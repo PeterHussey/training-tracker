@@ -4,14 +4,15 @@ garminconnect's own request layer tunnels through Cloudflare-TLS/curl_cffi
 strategies that can stall for minutes. This module owns the routine path
 (auth via the persisted DI token + connectapi GETs) with strict timeouts.
 """
+
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 import requests
 
@@ -57,8 +58,9 @@ def _threaded_get(url: str, headers: dict, params: dict | None, budget: float) -
 
     def _do():
         try:
-            box["resp"] = requests.get(url, headers=headers, params=params,
-                                       timeout=min(budget, 5.0))
+            box["resp"] = requests.get(
+                url, headers=headers, params=params, timeout=min(budget, 5.0)
+            )
         except BaseException as e:  # noqa: BLE001 — re-raised to caller
             box["error"] = e
 
@@ -72,9 +74,13 @@ def _threaded_get(url: str, headers: dict, params: dict | None, budget: float) -
     return box["resp"]
 
 
+_DEFAULT_TOKENSTORE = Path.home() / ".garmin-mcp" / "v2_tokenstore.json"
+
+
 class GarminTokenStore:
-    def __init__(self, path: Path = Path.home() / ".garmin-mcp" / "v2_tokenstore.json",
-                 timeout: float = 15.0):
+    def __init__(
+        self, path: Path = _DEFAULT_TOKENSTORE, timeout: float = 15.0
+    ):
         self.path = Path(path)
         self.timeout = timeout
         self._data: dict = {}
@@ -92,10 +98,10 @@ class GarminTokenStore:
             raise GarminAuthError("tokenstore has no di_token")
         self._data = data
 
-    def access_token(self) -> Optional[str]:
+    def access_token(self) -> str | None:
         return self._data.get("di_token")
 
-    def _load_expiry(self) -> Optional[float]:
+    def _load_expiry(self) -> float | None:
         tok = self.access_token() or ""
         parts = tok.split(".")
         if len(parts) < 2:
@@ -145,16 +151,14 @@ class GarminTokenStore:
         self._data["di_token"] = j["access_token"]
         if j.get("refresh_token"):
             self._data["di_refresh_token"] = j["refresh_token"]
-        try:
-            self._data["di_client_id"] = (
-                self._re_extract_client_id(j["access_token"]) or self._data.get("di_client_id")
-            )
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            self._data["di_client_id"] = self._re_extract_client_id(
+                j["access_token"]
+            ) or self._data.get("di_client_id")
         self._persist()
         return True
 
-    def _re_extract_client_id(self, token: str) -> Optional[str]:
+    def _re_extract_client_id(self, token: str) -> str | None:
         parts = token.split(".")
         if len(parts) < 2:
             return None
@@ -179,8 +183,9 @@ class GarminHttpError(Exception):
 
 
 class GarminHttp:
-    def __init__(self, tokenstore: GarminTokenStore, max_retries: int = 3,
-                 retry_backoff: float = 1.0):
+    def __init__(
+        self, tokenstore: GarminTokenStore, max_retries: int = 3, retry_backoff: float = 1.0
+    ):
         self.tokenstore = tokenstore
         self._display_name: str | None = None
         self._max_retries = max_retries
@@ -214,7 +219,6 @@ class GarminHttp:
                     time.sleep(self._retry_backoff)
         raise last_error  # type: ignore[misc]
 
-
     def _resolve_display_name(self) -> str:
         if self._display_name:
             return self._display_name
@@ -231,10 +235,18 @@ class GarminHttp:
         offset = 0
         limit = 100
         while True:
-            page = self.get_json(ACTIVITIES_PATH, params={
-                "startDate": start, "endDate": end,
-                "limit": str(limit), "offset": str(offset),
-            }) or []
+            page = (
+                self.get_json(
+                    ACTIVITIES_PATH,
+                    params={
+                        "startDate": start,
+                        "endDate": end,
+                        "limit": str(limit),
+                        "offset": str(offset),
+                    },
+                )
+                or []
+            )
             # Deduplicate by activityId AND detect a non-advancing offset:
             # Garmin's connectapi can ignore `offset` and return the same full
             # page indefinitely, so `len(page) < limit` never fires and the
@@ -254,8 +266,10 @@ class GarminHttp:
 
     def fetch_lactate_threshold(self) -> dict:
         import datetime as _dt
-        power = self.get_json("/biometric-service/biometric/powerToWeight/latest/"
-                              f"{_dt.date.today()}?sport=Running")
+
+        power = self.get_json(
+            f"/biometric-service/biometric/powerToWeight/latest/{_dt.date.today()}?sport=Running"
+        )
         if isinstance(power, list) and power:
             power_dict = power[0]
         elif isinstance(power, dict):
@@ -263,9 +277,15 @@ class GarminHttp:
         else:
             power_dict = {}
         sweat = self.get_json("/biometric-service/biometric/latestLactateThreshold")
-        card = {"userProfilePK": None, "version": None, "calendarDate": None,
-                "sequence": None, "speed": None, "heartRate": None,
-                "heartRateCycling": None}
+        card = {
+            "userProfilePK": None,
+            "version": None,
+            "calendarDate": None,
+            "sequence": None,
+            "speed": None,
+            "heartRate": None,
+            "heartRateCycling": None,
+        }
         if isinstance(sweat, list):
             for entry in sweat:
                 if entry.get("speed") is not None:
@@ -281,3 +301,15 @@ class GarminHttp:
     def fetch_race_predictions(self) -> dict:
         name = self._resolve_display_name()
         return self.get_json(f"/metrics-service/metrics/racepredictions/latest/{name}")
+
+    def fetch_vo2max_trend(self, start_date: str, end_date: str) -> list[dict]:
+        """Fetch daily VO2max trend for a date range.
+
+        Uses /metrics-service/metrics/maxmet/daily/{start}/{end} which returns
+        historical daily values (unlike 'latest' which always returns current).
+        Returns a list of daily objects with 'generic' (running) VO2max data.
+        """
+        payload = self.get_json(
+            f"/metrics-service/metrics/maxmet/daily/{start_date}/{end_date}"
+        )
+        return payload if isinstance(payload, list) else []

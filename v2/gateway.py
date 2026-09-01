@@ -11,11 +11,12 @@ Auth resolution order:
 2. Owned HTTP (`GarminTokenStore` + `GarminHttp`) — `auth_path="tokenstore"`.
 3. `garminconnect` login — `auth_path="op_credentials"` (last resort).
 """
+
 import base64
 import json
 import os
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from garmin_http import GarminHttp, GarminTokenStore
@@ -30,9 +31,20 @@ def load_op_creds(item: str = "Garmin") -> tuple[str | None, str | None]:
     """Read username/password from 1Password. Returns (None, None) if `op` is missing."""
     try:
         result = subprocess.run(
-            ["op", "item", "get", item, "--fields", "username,password",
-             "--format", "json", "--reveal"],
-            capture_output=True, text=True, timeout=15,
+            [
+                "op",
+                "item",
+                "get",
+                item,
+                "--fields",
+                "username,password",
+                "--format",
+                "json",
+                "--reveal",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None, None
@@ -47,8 +59,11 @@ def load_op_creds(item: str = "Garmin") -> tuple[str | None, str | None]:
                 return username, password
     except json.JSONDecodeError:
         pass
-    parts = [x.strip() for x in result.stdout.replace("\r", "").replace(",", "\n").split("\n")
-             if x.strip()]
+    parts = [
+        x.strip()
+        for x in result.stdout.replace("\r", "").replace(",", "\n").split("\n")
+        if x.strip()
+    ]
     if len(parts) >= 2:
         return parts[0], parts[1]
     return None, None
@@ -84,14 +99,18 @@ def migrate_mcp_token(path: Path = TOKENSTORE) -> str | None:
     client_id = _jwt_client_id(access_token)
     if not client_id:
         return None
-    return json.dumps({
-        "di_token": access_token,
-        "di_refresh_token": refresh_token,
-        "di_client_id": client_id,
-    })
+    return json.dumps(
+        {
+            "di_token": access_token,
+            "di_refresh_token": refresh_token,
+            "di_client_id": client_id,
+        }
+    )
 
 
-def choose_token_source(v2_path: Path = TOKENSTORE_V2, mcp_path: Path = TOKENSTORE) -> tuple[str | None, str | None]:
+def choose_token_source(
+    v2_path: Path = TOKENSTORE_V2, mcp_path: Path = TOKENSTORE
+) -> tuple[str | None, str | None]:
     """Pick the best tokenstore available: native v2 > native MCP > migrated legacy."""
     if v2_path.exists():
         return "path", str(v2_path)
@@ -109,8 +128,9 @@ def choose_token_source(v2_path: Path = TOKENSTORE_V2, mcp_path: Path = TOKENSTO
 
 
 class GarminGateway:
-    def __init__(self, cache_dir: Path = Path("cache/test_cache"),
-                 tokenstore_v2: Path = TOKENSTORE_V2):
+    def __init__(
+        self, cache_dir: Path = Path("cache/test_cache"), tokenstore_v2: Path = TOKENSTORE_V2
+    ):
         """Auth resolution order:
         1. Native tokenstore (v2 dump, else MCP file if already native).
         2. Migrated legacy MCP OAuth token (DI JWT + refresh_token).
@@ -151,10 +171,9 @@ class GarminGateway:
 
     def _login_garminconnect(self, email, password, tokenstore_v2: Path = TOKENSTORE_V2) -> None:
         from garminconnect import Garmin  # lazy: keeps garminconnect off the routine path
+
         if not email or not password:
-            raise RuntimeError(
-                "Garmin auth unavailable: no tokenstore, no op creds, no env creds"
-            )
+            raise RuntimeError("Garmin auth unavailable: no tokenstore, no op creds, no env creds")
         self._garmin = Garmin(email=email, password=password, is_cn=False)
         self._garmin.login()
         self.auth_path = "op_credentials"
@@ -176,9 +195,7 @@ class GarminGateway:
     def _cache(self, name: str, payload) -> None:
         path = self.cache_dir / name
         path.write_text(json.dumps(payload, indent=2, default=str))
-        (self.cache_dir / "last_fetch_timestamp").write_text(
-            datetime.now(timezone.utc).isoformat()
-        )
+        (self.cache_dir / "last_fetch_timestamp").write_text(datetime.now(UTC).isoformat())
 
     def fetch_activities(self, start: str, end: str) -> list[dict]:
         raw = self._require_http().fetch_activities(start, end)
@@ -186,10 +203,13 @@ class GarminGateway:
         return raw
 
     def fetch_activity_details(self, activity_id: int) -> dict:
-        payload = self._require_http().get_json(
-            DETAILS_PATH.format(activity_id=activity_id),
-            params={"maxChartSize": 2000, "maxPolylineSize": 4000},
-        ) or {}
+        payload = (
+            self._require_http().get_json(
+                DETAILS_PATH.format(activity_id=activity_id),
+                params={"maxChartSize": 2000, "maxPolylineSize": 4000},
+            )
+            or {}
+        )
         self._cache(f"activity_details_{activity_id}.json", payload)
         return payload
 
@@ -201,6 +221,16 @@ class GarminGateway:
     def fetch_race_predictions(self) -> dict:
         payload = self._require_http().fetch_race_predictions()
         self._cache("race_predictions.json", payload)
+        return payload
+
+    def fetch_vo2max_trend(self, start: str, end: str) -> list[dict]:
+        """Fetch daily VO2max trend for a date range.
+
+        Returns a list of daily objects with 'generic' (running) VO2max data.
+        Caches to vo2max_trend_{start}_{end}.json.
+        """
+        payload = self._require_http().fetch_vo2max_trend(start, end)
+        self._cache(f"vo2max_trend_{start}_{end}.json", payload)
         return payload
 
     def fetch_training_status(self, cdate: str) -> dict:

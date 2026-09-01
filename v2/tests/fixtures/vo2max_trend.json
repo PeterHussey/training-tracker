@@ -1,0 +1,119 @@
+[
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-06-30",
+      "vo2MaxValue": 45.0,
+      "vo2MaxPreciseValue": 45.2,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-07-07",
+      "vo2MaxValue": 45.0,
+      "vo2MaxPreciseValue": 45.6,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-07-15",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 45.8,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-07-22",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 46.1,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-08-04",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 46.3,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-08-09",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 46.5,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-08-12",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 46.2,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-08-14",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 46.0,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-08-18",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 46.4,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-08-21",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 46.1,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-08-23",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 45.9,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-08-25",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 46.2,
+      "maxMetCategory": 0
+    }
+  },
+  {
+    "userId": 111267328,
+    "generic": {
+      "calendarDate": "2026-08-27",
+      "vo2MaxValue": 46.0,
+      "vo2MaxPreciseValue": 46.0,
+      "maxMetCategory": 0
+    }
+  }
+]
