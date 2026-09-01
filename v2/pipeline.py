@@ -3,19 +3,23 @@
 Ingested reference metrics (LT, race predictions) enter through optional
 payload arguments — the gateway fetchers call them in, not the pipeline.
 """
+
+from profile import RunnerProfile
+
 import pandas as pd
 
 from metric_series import rows_from_series
-from metrics import acwr, elevation, pmc, threshold, trimp, vo2max, volume
-from metrics import racepredict
+from metrics import acwr, elevation, pmc, racepredict, threshold, trimp, vo2max, volume
 from normalize import Activity
-from profile import RunnerProfile
 from store import MetricStore
 
 
-def compute_metric_rows(activities: list[Activity], profile: RunnerProfile,
-                        lt_payload: dict | None = None,
-                        race_payload: dict | None = None) -> list[dict]:
+def compute_metric_rows(
+    activities: list[Activity],
+    profile: RunnerProfile,
+    lt_payload: dict | None = None,
+    race_payload: dict | None = None,
+) -> list[dict]:
     """Compute every metric row for a session view. Pure: no DB, no network.
 
     All other computation in this module builds on this; it must stay
@@ -23,107 +27,225 @@ def compute_metric_rows(activities: list[Activity], profile: RunnerProfile,
     """
     rows = []
 
-    # Volume — weekly distance (km), 4-wk rolling, week-over-week % (brief 4.1)
+    # Volume — weekly distance (km) + weekly duration (hours), 4-wk rolling,
+    # week-over-week % (brief 4.1). Duration covers all sports including
+    # cross-training, which has no distance but still burns time/energy.
     for group in volume.groups():
         weekly = volume.weekly_distance(activities, group)
-        rows += rows_from_series(f"volume.distance_{group}", weekly, "computed",
-                                 params={"agg": "iso_week", "unit": "km"})
-        rows += rows_from_series(f"volume.rolling4wk_{group}", volume.rolling_4wk(weekly), "computed",
-                                 params={"agg": "iso_week", "unit": "km"})
-        rows += rows_from_series(f"volume.wow_pct_{group}", volume.week_over_week_pct(weekly), "computed",
-                                 params={"agg": "iso_week", "unit": "fraction"})
+        rows += rows_from_series(
+            f"volume.distance_{group}", weekly, "computed", params={"agg": "iso_week", "unit": "km"}
+        )
+        rows += rows_from_series(
+            f"volume.rolling4wk_{group}",
+            volume.rolling_4wk(weekly),
+            "computed",
+            params={"agg": "iso_week", "unit": "km"},
+        )
+        rows += rows_from_series(
+            f"volume.wow_pct_{group}",
+            volume.week_over_week_pct(weekly),
+            "computed",
+            params={"agg": "iso_week", "unit": "fraction"},
+        )
+        weekly_hours = volume.weekly_duration_hours(activities, group)
+        rows += rows_from_series(
+            f"volume.duration_{group}",
+            weekly_hours,
+            "computed",
+            params={"agg": "iso_week", "unit": "h"},
+        )
+
+    # Duration rolling + week-over-week for the total (mirrors the distance chart
+    # overlay/change views). Duration feeds all sports, including no-distance
+    # cross-training, so the total is a true time-anchored load proxy.
+    total_hours = volume.weekly_duration_hours(activities, "total")
+    rows += rows_from_series(
+        "volume.rolling4wk_duration_total",
+        volume.rolling_4wk(total_hours),
+        "computed",
+        params={"agg": "iso_week", "unit": "h"},
+    )
+    rows += rows_from_series(
+        "volume.wow_pct_duration_total",
+        volume.week_over_week_pct(total_hours),
+        "computed",
+        params={"agg": "iso_week", "unit": "fraction"},
+    )
 
     # Elevation — context only (brief 4.2)
     gain = elevation.daily_elevation_gain(activities, "running")
     rows += rows_from_series("elevation.daily_gain_running", gain, "computed", params={"unit": "m"})
-    rows += rows_from_series("elevation.rolling28d_running", elevation.rolling_28d(gain), "computed",
-                             params={"unit": "m"})
-    rows += rows_from_series("elevation.gain_per_km_running",
-                             elevation.gain_per_km(activities, "running"), "computed",
-                             params={"unit": "m/km"})
+    rows += rows_from_series(
+        "elevation.rolling28d_running",
+        elevation.rolling_28d(gain),
+        "computed",
+        params={"unit": "m"},
+    )
+    rows += rows_from_series(
+        "elevation.gain_per_km_running",
+        elevation.gain_per_km(activities, "running"),
+        "computed",
+        params={"unit": "m/km"},
+    )
 
     # HR load + PMC + ACWR (brief 1.2, 1.3, 1.1)
-    # Global Constraint: running metrics are computed on outdoor-`running`
-    # activities only; treadmill/cycling/strength feed cross-training volume
-    # (volume.groups()) only, never the HR-load anchors.
+    # R15 scope: outdoor running, treadmill, and cross-training activities ALL
+    # contribute HR load (TRIMP = duration * dHR, HR intensity — distance-irrelevant).
+    # Per-sport daily Banister series feed the stacked TRIMP bar; a combined dense
+    # daily total feeds the running-anchored PMC/ACWR windows so load is no longer
+    # split apart across modalities.
     RUNNING = [a for a in activities if a.sport == "running"]
-    daily = trimp.daily_trimp(RUNNING, profile)
-    if not daily.empty:
-        ban = daily["banister"]
-        # DENSIFY to calendar days (load 0 on rest days) so PMC/ACWR windows are
-        # calendar windows, not active-day windows.
-        ban = ban.reindex(pd.date_range(ban.index.min(), ban.index.max(), freq="D"), fill_value=0.0)
-        rows += rows_from_series("load.banister",
-                                 ban[ban > 0], "computed",
-                                 params={"hrmax": profile.hrmax, "hrrest": profile.hrrest,
-                                         "sex": profile.sex, "b": profile.banister_exponent()},
-                                 flags={"hrmax_source": profile.hrmax_source})
-        rows += rows_from_series("load.edwards", daily["edwards"], "computed")
-        rows += rows_from_series("pmc", pmc.ctl_atl_tsb(ban), "computed",
-                                 params={"tau_ctl": 42, "tau_atl": 7})
-        acwr_s = acwr.coupled_acwr(ban)
-        rows += rows_from_series("load.acwr", acwr_s, "computed",
-                                 params={"acute": 7, "chronic": 28, "coupled": True})
-        rows += rows_from_series("load.acwr_pct",
-                                 acwr.history_percentile(acwr_s, window=180)["history_pct"], "computed",
-                                 params={"window": 180})
-
-    # Cross-training HR load (indoor bike, elliptical, strength...) — no distance,
-    # so load is measured from HR only. Kept as its OWN series: it never feeds the
-    # running-anchored PMC/ACWR windows (R15 scope). daily_trimp handles distance-less
-    # rows fine since TRIMP is duration * dHR (HR intensity), not distance.
+    TREADMILL = [a for a in activities if a.sport == "treadmill"]
     CROSS = [a for a in activities if a.sport == "cross"]
-    cross = trimp.daily_trimp(CROSS, profile)
-    if not cross.empty:
-        ban_cross = cross["banister"]
-        rows += rows_from_series("load.banister_cross", ban_cross[ban_cross > 0], "computed",
-                                 params={"hrmax": profile.hrmax, "hrrest": profile.hrrest,
-                                         "sex": profile.sex, "b": profile.banister_exponent()},
-                                 flags={"basis": "cross_training", "hrmax_source": profile.hrmax_source})
-        rows += rows_from_series("load.edwards_cross", cross["edwards"], "computed",
-                                 flags={"basis": "cross_training"})
+    ban_params = {
+        "hrmax": profile.hrmax,
+        "hrrest": profile.hrrest,
+        "sex": profile.sex,
+        "b": profile.banister_exponent(),
+    }
+    per_sport: list[tuple[str, str, pd.DataFrame]] = []
+    for basis, sport_label, acts in (
+        ("outdoor_running", "running", RUNNING),
+        ("treadmill", "treadmill", TREADMILL),
+        ("cross_training", "cross", CROSS),
+    ):
+        daily = trimp.daily_trimp(acts, profile)
+        if daily.empty:
+            continue
+        per_sport.append((basis, sport_label, daily))
+        rows += rows_from_series(
+            f"load.banister_{sport_label}",
+            daily["banister"][daily["banister"] > 0],
+            "computed",
+            params=ban_params,
+            flags={"basis": basis, "hrmax_source": profile.hrmax_source},
+        )
+        rows += rows_from_series(
+            f"load.edwards_{sport_label}", daily["edwards"], "computed", params={"basis": basis}
+        )
+
+    if per_sport:
+        # Combined dense daily total across all HR-load sports.
+        total_ban = pd.concat([d["banister"] for _, _, d in per_sport], axis=1, sort=False).sum(
+            axis=1, min_count=1
+        )
+        total_edw = pd.concat([d["edwards"] for _, _, d in per_sport], axis=1, sort=False).sum(
+            axis=1, min_count=1
+        )
+        ban = total_ban.reindex(
+            pd.date_range(total_ban.index.min(), total_ban.index.max(), freq="D"), fill_value=0.0
+        )
+        rows += rows_from_series(
+            "load.banister",
+            total_ban[total_ban > 0],
+            "computed",
+            params=ban_params,
+            flags={"basis": "combined", "hrmax_source": profile.hrmax_source},
+        )
+        rows += rows_from_series(
+            "load.edwards", total_edw, "computed", params={"basis": "combined"}
+        )
+        rows += rows_from_series(
+            "pmc", pmc.ctl_atl_tsb(ban), "computed", params={"tau_ctl": 42, "tau_atl": 7}
+        )
+        acwr_s = acwr.coupled_acwr(ban)
+        rows += rows_from_series(
+            "load.acwr", acwr_s, "computed", params={"acute": 7, "chronic": 28, "coupled": True}
+        )
+        rows += rows_from_series(
+            "load.acwr_pct",
+            acwr.history_percentile(acwr_s, window=180)["history_pct"],
+            "computed",
+            params={"window": 180},
+        )
 
     # VO2max — ingested reference (brief 2.1)
-    rows += rows_from_series("fitness.vo2max", vo2max.daily_vo2max(activities), "garmin_ingested",
-                             flags={"error_class": "firstbeat_estimate_5pct", "recompute": "no"})
+    rows += rows_from_series(
+        "fitness.vo2max",
+        vo2max.daily_vo2max(activities),
+        "garmin_ingested",
+        flags={"error_class": "firstbeat_estimate_5pct", "recompute": "no"},
+    )
 
     # CS (approximate critical speed) — computed from fastestSplit_1609 (brief 2.2)
-    rows += rows_from_series("load.cs_approx", threshold.approx_cs_1609(activities), "computed",
-                             params={"basis": "fastestSplit_1609", "unit": "m/s"})
+    rows += rows_from_series(
+        "load.cs_approx",
+        threshold.approx_cs_1609(activities),
+        "computed",
+        params={"basis": "fastestSplit_1609", "unit": "m/s"},
+    )
 
     # LT + race predictions — ingested reference metrics, only when payloads supplied
     if lt_payload:
         lt = threshold.parse_lt(lt_payload)
         if lt.hr is not None and lt.date:
-            rows += rows_from_series("load.lt_hr",
-                                     pd.Series([float(lt.hr)],
-                                               index=pd.DatetimeIndex([pd.Timestamp(lt.date)])),
-                                     "garmin_ingested", params={"unit": "bpm"},
-                                     flags={"anchored": "hr", "error_class": "lt_hr_7pct"})
+            rows += rows_from_series(
+                "load.lt_hr",
+                pd.Series([float(lt.hr)], index=pd.DatetimeIndex([pd.Timestamp(lt.date)])),
+                "garmin_ingested",
+                params={"unit": "bpm"},
+                flags={"anchored": "hr", "error_class": "lt_hr_7pct"},
+            )
         if lt.speed_m_s is not None and lt.date:
-            rows += rows_from_series("load.lt_pace",
-                                     pd.Series([lt.speed_m_s],
-                                               index=pd.DatetimeIndex([pd.Timestamp(lt.date)])),
-                                     "garmin_ingested", params={"unit": "m/s"},
-                                     flags={"anchored": "no", "error_class": "lt_pace_over_20pct"})
+            rows += rows_from_series(
+                "load.lt_pace",
+                pd.Series([lt.speed_m_s], index=pd.DatetimeIndex([pd.Timestamp(lt.date)])),
+                "garmin_ingested",
+                params={"unit": "m/s"},
+                flags={"anchored": "no", "error_class": "lt_pace_over_20pct"},
+            )
 
     if race_payload:
-        as_of = (race_payload.get("asOfDate") or race_payload.get("calendarDate")
-                 or pd.Timestamp.today().strftime("%Y-%m-%d"))
+        as_of = (
+            race_payload.get("asOfDate")
+            or race_payload.get("calendarDate")
+            or pd.Timestamp.today().strftime("%Y-%m-%d")
+        )
         for dist, secs in racepredict.parse_predictions(race_payload).items():
             if secs is None:
                 continue
-            rows += rows_from_series(f"race_{dist}",
-                                     pd.Series([float(secs)],
-                                               index=pd.DatetimeIndex([pd.Timestamp(as_of)])),
-                                     "garmin_ingested", params={"unit": "s", "distance": dist},
-                                     flags={"error_class": "garmin_race_pred_maybe_optimistic"})
+            rows += rows_from_series(
+                f"race_{dist}",
+                pd.Series([float(secs)], index=pd.DatetimeIndex([pd.Timestamp(as_of)])),
+                "garmin_ingested",
+                params={"unit": "s", "distance": dist},
+                flags={"error_class": "garmin_race_pred_maybe_optimistic"},
+            )
+
+    # Rolling LT fallback (30-day) — computed when Garmin LT payload missing
+    has_lt_hr = lt_payload is not None and threshold.parse_lt(lt_payload).hr is not None
+    has_lt_pace = lt_payload is not None and threshold.parse_lt(lt_payload).speed_m_s is not None
+    if not has_lt_hr:
+        lt_hr_rolling = threshold.rolling_lt_hr(activities, profile)
+        if not lt_hr_rolling.empty:
+            rows += rows_from_series(
+                "load.lt_hr_rolling",
+                lt_hr_rolling,
+                "computed",
+                params={"unit": "bpm", "window_days": 30, "basis": "sustained_hr_85pct"},
+                flags={"anchored": "hr", "error_class": "rolling_estimate"},
+            )
+    if not has_lt_pace:
+        lt_pace_rolling = threshold.rolling_lt_pace(activities)
+        if not lt_pace_rolling.empty:
+            rows += rows_from_series(
+                "load.lt_pace_rolling",
+                lt_pace_rolling,
+                "computed",
+                params={"unit": "m/s", "window_days": 45, "basis": "approx_cs_1609"},
+                flags={"anchored": "no", "error_class": "rolling_estimate"},
+            )
 
     return rows
 
 
-def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db,
-                 lt_payload: dict | None = None, race_payload: dict | None = None) -> dict[str, int]:
+def run_pipeline(
+    activities: list[Activity],
+    profile: RunnerProfile,
+    out_db,
+    lt_payload: dict | None = None,
+    race_payload: dict | None = None,
+) -> dict[str, int]:
     store = MetricStore(out_db)
     store.save_runner_profile(profile)
     store.save_activities(activities)
