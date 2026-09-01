@@ -13,7 +13,7 @@ from unittest import mock
 import pytest
 
 import dashboard as d
-from dashboard import FETCH_DAYS, compute_fetch_start, DEFAULT_WINDOW_DAYS, period_bounds
+from dashboard import DEFAULT_WINDOW_DAYS, FETCH_DAYS, compute_fetch_start, period_bounds
 
 
 def test_compute_fetch_start_full_window_when_empty():
