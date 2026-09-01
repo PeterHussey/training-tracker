@@ -3,6 +3,7 @@
 Research brief 1.3: TSB is a freshness/load-trajectory visualizer, not a
 performance claim. Band thresholds are heuristics.
 """
+
 import pandas as pd
 
 

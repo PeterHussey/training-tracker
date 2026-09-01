@@ -8,9 +8,20 @@ from normalize import Activity
 
 
 def _run(d, dist_m, gain_m):
-    return Activity(activity_id=int(d.strftime("%Y%m%d")), sport="running", date=d,
-                    ts_ms=0, distance_m=dist_m, duration_s=3600.0, elapsed_s=3600.0,
-                    avg_hr=None, max_hr=None, zone_s={}, ele_gain_m=gain_m, ele_loss_m=0.0)
+    return Activity(
+        activity_id=int(d.strftime("%Y%m%d")),
+        sport="running",
+        date=d,
+        ts_ms=0,
+        distance_m=dist_m,
+        duration_s=3600.0,
+        elapsed_s=3600.0,
+        avg_hr=None,
+        max_hr=None,
+        zone_s={},
+        ele_gain_m=gain_m,
+        ele_loss_m=0.0,
+    )
 
 
 def test_daily_and_rolling():
@@ -28,8 +39,20 @@ def test_gain_per_km():
 
 
 def test_indoor_activities_excluded():
-    acts = [Activity(activity_id=1, sport="treadmill", date=date(2026, 4, 1), ts_ms=0,
-                     distance_m=8000.0, duration_s=3600.0, elapsed_s=3600.0, avg_hr=None,
-                     max_hr=None, zone_s={}, ele_gain_m=None)]
+    acts = [
+        Activity(
+            activity_id=1,
+            sport="treadmill",
+            date=date(2026, 4, 1),
+            ts_ms=0,
+            distance_m=8000.0,
+            duration_s=3600.0,
+            elapsed_s=3600.0,
+            avg_hr=None,
+            max_hr=None,
+            zone_s={},
+            ele_gain_m=None,
+        )
+    ]
     daily = daily_elevation_gain(acts, "running")
     assert daily.empty

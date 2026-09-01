@@ -1,4 +1,5 @@
 """Elevation as context + load-diversity (research brief 4.2). Never a risk number."""
+
 import pandas as pd
 
 from normalize import Activity

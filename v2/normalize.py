@@ -1,4 +1,5 @@
 """Raw Garmin JSON -> validated Activity model. Pure: no network."""
+
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
@@ -62,11 +63,12 @@ def from_summary(summary: dict) -> Activity:
         d = datetime.strptime(ts_local, "%Y-%m-%d %H:%M:%S").date()
     else:
         ts_ms = _f(summary, "beginTimestamp")
-        d = datetime.fromtimestamp(ts_ms / 1000.0).date() if isinstance(ts_ms, (int, float)) else date.today()
-    zone_s = {
-        z: float(_f(summary, f"hrTimeInZone_{z}") or 0.0)
-        for z in range(1, 6)
-    }
+        d = (
+            datetime.fromtimestamp(ts_ms / 1000.0).date()
+            if isinstance(ts_ms, (int, float))
+            else date.today()
+        )
+    zone_s = {z: float(_f(summary, f"hrTimeInZone_{z}") or 0.0) for z in range(1, 6)}
     return Activity(
         activity_id=int(summary.get("activityId")),
         sport=sport_of(summary),

@@ -1,8 +1,8 @@
 # tests/test_profile.py
 from datetime import date
+from profile import RunnerProfile, default_profile
 
 import pytest
-from profile import RunnerProfile, default_profile
 
 
 def test_age_predicted_hrmax_fallback():
@@ -16,5 +16,13 @@ def test_banister_exponent_by_sex():
 
 
 def test_hrmax_boundaries():
-    p = RunnerProfile(hrmax=200, hrrest=50, sex="M", birth_year=1986, lthr_manual=None, hr_zones={}, units="metric")
+    p = RunnerProfile(
+        hrmax=200,
+        hrrest=50,
+        sex="M",
+        birth_year=1986,
+        lthr_manual=None,
+        hr_zones={},
+        units="metric",
+    )
     assert p.age_predicted_hrmax() == 220 - (date.today().year - 1986)

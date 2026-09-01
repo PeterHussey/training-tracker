@@ -1,11 +1,11 @@
 from datetime import date
+from profile import default_profile
 
 import pandas as pd
 import pytest
 
 from metrics.trimp import banister_trimp, daily_trimp, edwards_trimp
 from normalize import Activity
-from profile import default_profile
 
 
 def test_edwards_trimp_sum_zone_minutes_times_weight():
@@ -38,10 +38,30 @@ def test_banister_trimp_invalid_hrmax():
 
 def test_daily_trimp_sums_multiple_activities_per_day():
     acts = [
-        Activity(1, "running", date(2026, 4, 1), 0, 10000.0, 3600.0, 3600.0, 140.0, 160.0,
-                 zone_s={z: 720.0 for z in range(1, 6)}),   # 12 min/zone -> 12*(1+2+3+4+5)=180
-        Activity(2, "running", date(2026, 4, 1), 0, 5000.0, 1800.0, 1800.0, 120.0, 140.0,
-                 zone_s={z: 360.0 for z in range(1, 6)}),   # 6 min/zone  -> 6*15=90
+        Activity(
+            1,
+            "running",
+            date(2026, 4, 1),
+            0,
+            10000.0,
+            3600.0,
+            3600.0,
+            140.0,
+            160.0,
+            zone_s=dict.fromkeys(range(1, 6), 720.0),
+        ),  # 12 min/zone -> 12*(1+2+3+4+5)=180
+        Activity(
+            2,
+            "running",
+            date(2026, 4, 1),
+            0,
+            5000.0,
+            1800.0,
+            1800.0,
+            120.0,
+            140.0,
+            zone_s=dict.fromkeys(range(1, 6), 360.0),
+        ),  # 6 min/zone  -> 6*15=90
     ]
     df = daily_trimp(acts, default_profile(age=40, hrrest=60, sex="M"))
     assert isinstance(df.index, pd.DatetimeIndex)

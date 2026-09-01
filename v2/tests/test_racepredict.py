@@ -2,8 +2,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from metrics.racepredict import DISTANCE_KEYS, parse_predictions
 
 FIXTURE = Path(__file__).parent / "fixtures" / "race_predictions.json"

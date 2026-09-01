@@ -1,18 +1,22 @@
 # tests/test_hrmax.py
 from datetime import date
-
-import pytest
+from profile import RunnerProfile, default_profile, with_estimated_hrmax
 
 from metrics.hrmax import estimate_hrmax
 from normalize import Activity
-from profile import RunnerProfile, default_profile, with_estimated_hrmax
 
 
 def _act(day: int, max_hr, sport: str = "running") -> Activity:
     return Activity(
-        activity_id=day, sport=sport, date=date(2026, 8, day),
-        ts_ms=0, distance_m=0.0, duration_s=0.0, elapsed_s=0.0,
-        avg_hr=None, max_hr=max_hr,
+        activity_id=day,
+        sport=sport,
+        date=date(2026, 8, day),
+        ts_ms=0,
+        distance_m=0.0,
+        duration_s=0.0,
+        elapsed_s=0.0,
+        avg_hr=None,
+        max_hr=max_hr,
     )
 
 

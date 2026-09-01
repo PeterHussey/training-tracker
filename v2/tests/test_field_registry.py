@@ -1,7 +1,8 @@
 # tests/test_field_registry.py
 import json
 from pathlib import Path
-from garmin_fields import FIELD_REGISTRY, METRICS, fields_for_metric, GarminField
+
+from garmin_fields import FIELD_REGISTRY, METRICS, fields_for_metric
 
 FIXTURE = Path(__file__).parent / "fixtures" / "activities_sample.json"
 
@@ -16,10 +17,19 @@ DERIVED_METRICS = {"ctl", "atl", "tsb"}
 # filler). Kept in sync with the registry so the units/limitations test stays
 # a genuine guard against accidentally-truncated documentation.
 LIMITLESS_FIELDS = {
-    "activityId", "activityUUID", "beginTimestamp", "minElevation",
-    "maxElevation", "avgElevation", "startLongitude", "endLatitude",
-    "endLongitude", "manufacturer", "metrics[].distance",
-    "speed_and_heart_rate.calendarDate", "Run_10k.time",
+    "activityId",
+    "activityUUID",
+    "beginTimestamp",
+    "minElevation",
+    "maxElevation",
+    "avgElevation",
+    "startLongitude",
+    "endLatitude",
+    "endLongitude",
+    "manufacturer",
+    "metrics[].distance",
+    "speed_and_heart_rate.calendarDate",
+    "Run_10k.time",
 }
 
 

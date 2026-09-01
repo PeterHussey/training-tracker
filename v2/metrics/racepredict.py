@@ -4,6 +4,7 @@ Riegel-derived. 5K/10K/half are the trustworthy end; the marathon prediction
 is the least trustworthy number Garmin produces (underestimates by >=10 min
 for ~half of runners). Stored as a dated series and trended, never prescribed.
 """
+
 DISTANCE_KEYS = {
     "5k": "Run_5k",
     "10k": "Run_10k",
@@ -22,7 +23,7 @@ LIVE_KEYS = {
 def parse_predictions(payload: dict) -> dict[str, int | None]:
     out: dict[str, int | None] = {}
     if not isinstance(payload, dict):
-        return {k: None for k in DISTANCE_KEYS}
+        return dict.fromkeys(DISTANCE_KEYS)
     canonical = any(k in payload for k in DISTANCE_KEYS.values())
     live = any(k in payload for k in LIVE_KEYS.values())
     for dist, key in DISTANCE_KEYS.items():

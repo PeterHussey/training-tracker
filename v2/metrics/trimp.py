@@ -4,10 +4,12 @@ Research brief 1.2: Banister is the primary load measure (physiologically ground
 Edwards is kept as a cheap, reproducible cross-check. Absolute values are only
 comparable within an individual over time with identical profile parameters.
 """
+
+from profile import RunnerProfile
+
 import pandas as pd
 
 from normalize import Activity
-from profile import RunnerProfile
 
 E = 2.718281828459045
 
@@ -24,7 +26,12 @@ def banister_trimp(duration_min: float, avg_hr: float, profile: RunnerProfile) -
         raise ValueError("hrmax must exceed hrrest")
     dhr = (avg_hr - hrrest) / (hrmax - hrrest)
     dhr = min(max(dhr, 0.0), 1.0)
-    return duration_min * dhr * profile.exp_intercept_factor() * (E ** (profile.banister_exponent() * dhr))
+    return (
+        duration_min
+        * dhr
+        * profile.exp_intercept_factor()
+        * (E ** (profile.banister_exponent() * dhr))
+    )
 
 
 def daily_trimp(activities: list[Activity], profile: RunnerProfile) -> pd.DataFrame:
@@ -33,11 +40,13 @@ def daily_trimp(activities: list[Activity], profile: RunnerProfile) -> pd.DataFr
         if a.avg_hr is None or a.duration_s <= 0:
             continue
         dur_min = a.duration_s / 60.0
-        rows.append({
-            "date": a.date,
-            "banister": banister_trimp(dur_min, float(a.avg_hr), profile),
-            "edwards": edwards_trimp(a.zone_s),
-        })
+        rows.append(
+            {
+                "date": a.date,
+                "banister": banister_trimp(dur_min, float(a.avg_hr), profile),
+                "edwards": edwards_trimp(a.zone_s),
+            }
+        )
     if not rows:
         return pd.DataFrame(columns=["date", "banister", "edwards"])
     df = pd.DataFrame(rows)

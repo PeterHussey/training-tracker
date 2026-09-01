@@ -4,6 +4,7 @@ Research brief 3.1: real signal, but only honest when aggregated over >=6
 sessions on similar flat routes and presented as a trend. Single-run values
 are dominated by day-to-day noise (session-residual variance 57-83%).
 """
+
 import statistics
 
 from normalize import Activity
@@ -28,16 +29,14 @@ def decoupling_percent(hr: list[float], speed: list[float]) -> float:
     return (r2 / r1) - 1.0
 
 
-def eligible_activity(a: Activity, min_duration_s: int = 5400,
-                      max_ele_per_km: float = 25.0) -> bool:
+def eligible_activity(
+    a: Activity, min_duration_s: int = 5400, max_ele_per_km: float = 25.0
+) -> bool:
     if a.sport != "running":
         return False
     if a.elapsed_s < min_duration_s:
         return False
-    if a.ele_gain_m is not None and a.distance_m > 0:
-        if (a.ele_gain_m / (a.distance_m / 1000.0)) > max_ele_per_km:
-            return False
-    return True
+    return not (a.ele_gain_m is not None and a.distance_m > 0 and a.ele_gain_m / (a.distance_m / 1000.0) > max_ele_per_km)
 
 
 def route_key(a: Activity, grid: float = 0.01):
