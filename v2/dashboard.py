@@ -84,6 +84,20 @@ def compute_fetch_start(
     return max(end - timedelta(days=fetch_days), latest_activity_date + timedelta(days=1))
 
 
+def period_bounds(
+    dates: list[date], window_days: int = DEFAULT_WINDOW_DAYS
+) -> tuple[date, date, date]:
+    """(min_d, since, end) for the Period selector.
+
+    min_d/end are the store's earliest/latest activity dates; since is the
+    trailing-window default, floored to min_d. Independent of today's date.
+    """
+    min_d = min(dates)
+    end = max(dates)
+    since = max(min_d, end - timedelta(days=window_days))
+    return min_d, since, end
+
+
 @st.cache_resource
 def get_store() -> MetricStore:
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)

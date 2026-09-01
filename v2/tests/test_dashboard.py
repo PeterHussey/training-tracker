@@ -13,7 +13,7 @@ from unittest import mock
 import pytest
 
 import dashboard as d
-from dashboard import FETCH_DAYS, compute_fetch_start
+from dashboard import FETCH_DAYS, compute_fetch_start, DEFAULT_WINDOW_DAYS, period_bounds
 
 
 def test_compute_fetch_start_full_window_when_empty():
@@ -138,3 +138,34 @@ def test_refresh_garmin_raises_only_when_store_empty(monkeypatch):
 
     with pytest.raises(RuntimeError, match="returned no activities"):
         d.refresh_garmin()
+
+
+def test_period_bounds_min_and_end_from_dates():
+    dates = [date(2026, 1, 5), date(2026, 8, 30), date(2026, 3, 10)]
+    min_d, since, end = period_bounds(dates)
+    assert min_d == date(2026, 1, 5)
+    assert end == date(2026, 8, 30)
+
+
+def test_period_bounds_trailing_window_when_span_exceeds_window():
+    dates = [date(2026, 1, 5), date(2026, 8, 30)]
+    min_d, since, end = period_bounds(dates)
+    assert min_d == date(2026, 1, 5)
+    assert since == end - timedelta(days=DEFAULT_WINDOW_DAYS)
+    assert end == date(2026, 8, 30)
+
+
+def test_period_bounds_floored_to_min_when_span_under_window():
+    dates = [date(2026, 8, 20), date(2026, 8, 30)]
+    min_d, since, end = period_bounds(dates)
+    assert min_d == date(2026, 8, 20)
+    assert since == date(2026, 8, 20)
+    assert end == date(2026, 8, 30)
+
+
+def test_period_bounds_independent_of_today():
+    # Pinning shows the helper never consults the current date.
+    dates = [date(2026, 1, 5), date(2026, 8, 30)]
+    min_d, since, end = period_bounds(dates)
+    assert end == date(2026, 8, 30)
+    assert min_d == date(2026, 1, 5)
