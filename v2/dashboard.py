@@ -31,6 +31,7 @@ DB_PATH = os.environ.get("TRAINING_DB", str(Path(__file__).parent / "data" / "tr
 FETCH_DAYS = 365
 FETCH_TIMEOUT = 90  # hard cap on the whole Garmin refresh (auth + fetches)
 DEFAULT_WINDOW_DAYS = 180
+PERIOD_KEY = "period"
 
 KPI_KEYS = [
     ("load.acwr", "ACWR"),
@@ -680,7 +681,8 @@ def main() -> None:
             acts, lt, race, vo2 = run_with_timeout(refresh_garmin, timeout=FETCH_TIMEOUT)
             if acts:
                 store.save_activities(acts)
-                st.session_state["activities"] = acts
+                st.session_state["activities"] = store.load_activities()
+                st.session_state.pop(PERIOD_KEY, None)
             # Trend payloads update even when there are no new activities.
             st.session_state["lt_payload"] = lt
             st.session_state["race_payload"] = race
@@ -712,12 +714,15 @@ def main() -> None:
         store.save_runner_profile(profile)
         st.session_state["_profile_sig"] = psig
 
-    min_d = min(a.date for a in activities)
-    max_d = max(a.date for a in activities)
-    default_since = max(min_d, max_d - timedelta(days=DEFAULT_WINDOW_DAYS))
+    min_d, default_since, max_d = period_bounds([a.date for a in activities])
     period = st.sidebar.date_input(
-        "Period", value=(default_since, max_d), min_value=min_d, max_value=max_d
+        "Period",
+        value=(default_since, max_d),
+        min_value=min_d,
+        max_value=max_d,
+        key=PERIOD_KEY,
     )
+    st.sidebar.caption(f"Store range {min_d} → {max_d} · {len(activities)} activities")
     if isinstance(period, (tuple, list)):
         since, until = period
     else:
