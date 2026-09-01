@@ -1,4 +1,5 @@
 """Weekly volume / consistency metrics (research brief 4.1)."""
+
 import pandas as pd
 
 from normalize import Activity
@@ -24,6 +25,19 @@ def weekly_distance(activities: list[Activity], group: str) -> pd.Series:
         return pd.Series([], dtype=float)
     idx = pd.DatetimeIndex([a.date for a in acts]).strftime("%G-W%V")
     s = pd.Series([a.distance_km for a in acts], index=idx)
+    out = s.groupby(s.index).sum().sort_index()
+    out.index.name = "week"
+    return out
+
+
+def weekly_duration_hours(activities: list[Activity], group: str) -> pd.Series:
+    """Weekly duration in hours. Unlike distance, cross-training contributes
+    here because it has duration (time-in-seat) even with no distance."""
+    acts = _group_members(activities, group)
+    if not acts:
+        return pd.Series([], dtype=float)
+    idx = pd.DatetimeIndex([a.date for a in acts]).strftime("%G-W%V")
+    s = pd.Series([a.duration_min / 60.0 for a in acts], index=idx)
     out = s.groupby(s.index).sum().sort_index()
     out.index.name = "week"
     return out
