@@ -1,11 +1,11 @@
 """SQLite persistence for the measurement layer."""
+
 import json
 import sqlite3
 from datetime import date
-from pathlib import Path
+from profile import RunnerProfile
 
 from normalize import Activity
-from profile import RunnerProfile
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runner_profile (
@@ -58,7 +58,11 @@ class MetricStore:
             ("sex", profile.sex, {}),
             ("birth_year", str(profile.birth_year), {}),
             ("lthr_manual", "" if profile.lthr_manual is None else str(profile.lthr_manual), {}),
-            ("hr_zones", json.dumps({str(k): list(v) for k, v in sorted(profile.hr_zones.items())}), {}),
+            (
+                "hr_zones",
+                json.dumps({str(k): list(v) for k, v in sorted(profile.hr_zones.items())}),
+                {},
+            ),
             ("units", profile.units, {}),
         ]
         self.conn.executemany(
@@ -68,14 +72,29 @@ class MetricStore:
         self.conn.commit()
 
     def save_activities(self, activities) -> None:
-        rows = [(
-            a.activity_id, a.date.isoformat(), a.sport, a.distance_m, a.duration_s,
-            a.ele_gain_m, a.vo2max, a.avg_hr, a.max_hr, a.aerobic_te, a.anaerobic_te,
-            a.avg_speed, a.fastest_split_1609,
-            json.dumps(a.zone_s, sort_keys=True),
-            json.dumps({"lat": a.lat, "lon": a.lon, "location": a.location,
-                        "device_id": a.device_id}, sort_keys=True),
-        ) for a in activities]
+        rows = [
+            (
+                a.activity_id,
+                a.date.isoformat(),
+                a.sport,
+                a.distance_m,
+                a.duration_s,
+                a.ele_gain_m,
+                a.vo2max,
+                a.avg_hr,
+                a.max_hr,
+                a.aerobic_te,
+                a.anaerobic_te,
+                a.avg_speed,
+                a.fastest_split_1609,
+                json.dumps(a.zone_s, sort_keys=True),
+                json.dumps(
+                    {"lat": a.lat, "lon": a.lon, "location": a.location, "device_id": a.device_id},
+                    sort_keys=True,
+                ),
+            )
+            for a in activities
+        ]
         self.conn.executemany(
             "INSERT OR REPLACE INTO activities (activity_id, activity_date, sport, "
             "distance_m, duration_s, ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, "
@@ -101,8 +120,22 @@ class MetricStore:
             "WHERE metric = ? ORDER BY date",
             (metric,),
         )
-        return [dict(zip(("metric", "date", "value", "source", "params", "flags"), row))
-                for row in cur.fetchall()]
+        return [
+            dict(zip(("metric", "date", "value", "source", "params", "flags"), row, strict=False))
+            for row in cur.fetchall()
+        ]
+
+    def latest_activity_date(self) -> date | None:
+        """Date of the most recent activity persisted, or None when the store is empty.
+
+        Used to bound an incremental Garmin refresh to only-new pages instead of
+        re-paginating the full history every run (which can exceed the dashboard's
+        90s guard for accounts with many years of activities).
+        """
+        row = self.conn.execute("SELECT MAX(activity_date) FROM activities").fetchone()
+        if not row or row[0] is None:
+            return None
+        return date.fromisoformat(row[0])
 
     def load_activities(self) -> list[Activity]:
         rows = self.conn.execute(
@@ -115,9 +148,22 @@ class MetricStore:
 
     @staticmethod
     def _activity_from_row(row) -> Activity:
-        (activity_id, activity_date, sport, distance_m, duration_s, ele_gain_m,
-         vo2max, avg_hr, max_hr, aerobic_te, anaerobic_te, avg_speed,
-         fastest_split_1609, zone_s) = row
+        (
+            activity_id,
+            activity_date,
+            sport,
+            distance_m,
+            duration_s,
+            ele_gain_m,
+            vo2max,
+            avg_hr,
+            max_hr,
+            aerobic_te,
+            anaerobic_te,
+            avg_speed,
+            fastest_split_1609,
+            zone_s,
+        ) = row
         zones: dict[int, float] = {}
         if zone_s:
             try:
@@ -144,14 +190,12 @@ class MetricStore:
         )
 
     def load_runner_profile(self) -> RunnerProfile | None:
-        rows = self.conn.execute(
-            "SELECT key, value, meta FROM runner_profile"
-        ).fetchall()
+        rows = self.conn.execute("SELECT key, value, meta FROM runner_profile").fetchall()
         if not rows:
             return None
         data = {k: v for k, v, _ in rows}
         hrmax_meta: dict = {}
-        for k, v, m in rows:
+        for k, _v, m in rows:
             if k == "hrmax" and m:
                 try:
                     hrmax_meta = json.loads(m)
