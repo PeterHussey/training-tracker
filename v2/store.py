@@ -137,6 +137,16 @@ class MetricStore:
             return None
         return date.fromisoformat(row[0])
 
+    def earliest_activity_date(self) -> date | None:
+        """Date of the earliest activity persisted, or None when the store is empty.
+
+        Used for historical data fetch to determine the date range for older activities.
+        """
+        row = self.conn.execute("SELECT MIN(activity_date) FROM activities").fetchone()
+        if not row or row[0] is None:
+            return None
+        return date.fromisoformat(row[0])
+
     def load_activities(self) -> list[Activity]:
         rows = self.conn.execute(
             "SELECT activity_id, activity_date, sport, distance_m, duration_s, "

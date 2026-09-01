@@ -186,7 +186,7 @@ def window_series(s: pd.Series, since: date, until: date, weekly: bool = False) 
     return s[mask]
 
 
-def run_with_timeout(fn, timeout: float):
+def run_with_timeout(fn, timeout: float, **kwargs):
     """Run fn on a daemon thread, bounding it to a hard wall-clock timeout.
 
     Returns fn()'s return value. If fn does not finish within `timeout`
@@ -200,7 +200,7 @@ def run_with_timeout(fn, timeout: float):
 
     def _target() -> None:
         try:
-            outcome["value"] = fn()
+            outcome["value"] = fn(**kwargs)
         except BaseException as exc:  # noqa: BLE001 - re-raised to caller
             outcome["error"] = exc
 

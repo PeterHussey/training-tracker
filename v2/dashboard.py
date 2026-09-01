@@ -105,24 +105,29 @@ def get_store() -> MetricStore:
     return MetricStore(DB_PATH)
 
 
-def refresh_garmin() -> tuple[list, dict, dict, list[dict]]:
+def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, dict, list[dict]]:
+    """Fetch activities from Garmin.
+
+    Args:
+        fetch_mode: "incremental" to fetch only activities newer than the latest
+            persisted date; "historical" to fetch older activities up to the API's
+            100-activity per-page limit.
+    """
     end = date.today()
-    # Incremental refresh: only fetch activities newer than the latest already
-    # persisted locally (first run, empty store, fetches the full window).
-    # This bounds the 100-row page count so a large history no longer blows the
-    # 90s guard via aggregate pagination volume.
     store = get_store()
-    start = compute_fetch_start(end, store.latest_activity_date())
+    if fetch_mode == "historical":
+        earliest = store.earliest_activity_date()
+        if earliest is None:
+            start = end - timedelta(days=FETCH_DAYS)
+        else:
+            start = max(date.min, earliest - timedelta(days=FETCH_DAYS))
+        fetch_end = earliest
+    else:
+        start = compute_fetch_start(end, store.latest_activity_date())
+        fetch_end = end
     gw = GarminGateway(cache_dir=Path("cache/app_cache"))
     with st.spinner("Fetching activities from Garmin..."):
-        raw = gw.fetch_activities(start.isoformat(), end.isoformat())
-    # An empty incremental window is normal: compute_fetch_start only asks for
-    # activities newer than the latest persisted one, so "nothing new since the
-    # last refresh" legitimately returns []. Only a truly empty account (no local
-    # data AND nothing from Garmin) is a fetch failure.
-    if not raw and store.latest_activity_date() is None:
-        raise RuntimeError("Garmin returned no activities")
-    acts = [from_summary(a) for a in raw]
+        raw = gw.fetch_activities(start.isoformat(), fetch_end.isoformat())
     lt = gw.fetch_lactate_threshold() or {}
     race = gw.fetch_race_predictions() or {}
     # VO2max trend is a single (non-paginated) daily-summary call, so it always
@@ -131,6 +136,18 @@ def refresh_garmin() -> tuple[list, dict, dict, list[dict]]:
     # points on most refreshes), producing a uselessly short chart.
     vo2_start = end - timedelta(days=FETCH_DAYS)
     vo2 = gw.fetch_vo2max_trend(vo2_start.isoformat(), end.isoformat()) or []
+    # An empty incremental window is normal: compute_fetch_start only asks for
+    # activities newer than the latest persisted one, so "nothing new since the
+    # last refresh" legitimately returns []. Only a truly empty account (no local
+    # data AND nothing from Garmin) is a fetch failure.
+    if not raw:
+        if store.latest_activity_date() is None:
+            raise RuntimeError("Garmin returned no activities")
+        if fetch_mode == "historical":
+            raise RuntimeError("No older activities found in this date range")
+        # Incremental mode with no new activities is a normal no-op.
+        return [], lt, race, vo2
+    acts = [from_summary(a) for a in raw]
     return acts, lt, race, vo2
 
 
@@ -676,9 +693,18 @@ def main() -> None:
         st.session_state["vo2max_payload"] = None
 
     st.sidebar.header("Data")
+    fetch_mode = st.sidebar.radio(
+        "Fetch mode",
+        ("incremental", "historical"),
+        index=0,
+        format_func=lambda x: "Incremental (new only)" if x == "incremental" else "Historical (up to 100)",
+    )
+
     if st.sidebar.button("Refresh from Garmin"):
         try:
-            acts, lt, race, vo2 = run_with_timeout(refresh_garmin, timeout=FETCH_TIMEOUT)
+            acts, lt, race, vo2 = run_with_timeout(
+                refresh_garmin, timeout=FETCH_TIMEOUT, fetch_mode=fetch_mode
+            )
             if acts:
                 store.save_activities(acts)
                 st.session_state["activities"] = store.load_activities()
@@ -687,11 +713,14 @@ def main() -> None:
             st.session_state["lt_payload"] = lt
             st.session_state["race_payload"] = race
             st.session_state["vo2max_payload"] = vo2
-            msg = (
-                f"Fetched {len(acts)} activities"
-                if acts
-                else "No new activities; Garmin trend data refreshed"
-            )
+            if fetch_mode == "historical":
+                msg = f"Historical fetch: {len(acts)} activities fetched"
+            else:
+                msg = (
+                    f"Fetched {len(acts)} activities"
+                    if acts
+                    else "No new activities; Garmin trend data refreshed"
+                )
             st.sidebar.success(msg)
         except Exception as exc:
             st.sidebar.warning(f"Garmin fetch failed: {exc.__class__.__name__}: {exc}")
