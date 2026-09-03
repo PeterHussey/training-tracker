@@ -15,7 +15,7 @@ with st.expander("How to run / refresh", expanded=True):
 streamlit run app.py
 ```
 Refresh uses `garmin_client.py` (persistent stdio JSON-RPC to `garmin-connect-mcp`).
-Live auth: `GARMIN_EMAIL=YOUR_EMAIL@example.com` (from `~/.garmin-mcp/`).
+Live auth: `GARMIN_EMAIL` (from `~/.garmin-mcp/`).
 Test window: **2/28/26** set below. Click Refresh → writes `cache/garmin_raw_*.json`.
 Fitness Trend reads `get_vo2max` / `get_lactate_threshold` when available.
 """)
