@@ -10,6 +10,7 @@ interpretation context. All computation lives in session.build_session_view;
 this module is a thin view.
 """
 
+import json
 import os
 from dataclasses import replace
 from datetime import date, timedelta
@@ -22,6 +23,7 @@ import streamlit as st
 
 from gateway import GarminGateway
 from normalize import from_summary
+from pipeline import persist_session_metrics
 from session import _fmt, build_session_view, run_with_timeout
 from store import MetricStore
 
@@ -32,6 +34,8 @@ FETCH_DAYS = 365
 FETCH_TIMEOUT = 90  # hard cap on the whole Garmin refresh (auth + fetches)
 DEFAULT_WINDOW_DAYS = 180
 PERIOD_KEY = "period"
+CACHE_DIR_NAME = "app_cache"
+APP_CACHE_DIR = Path("cache") / CACHE_DIR_NAME
 
 KPI_KEYS = [
     ("load.acwr", "ACWR"),
@@ -105,6 +109,41 @@ def get_store() -> MetricStore:
     return MetricStore(DB_PATH)
 
 
+def _load_json_file(path: Path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def load_cached_trends(
+    cache_dir: Path = APP_CACHE_DIR,
+) -> tuple[dict | None, dict | None, list | None]:
+    """Rehydrate the last-fetched Garmin trend payloads from the gateway cache.
+
+    The gateway persists each fetch to cache/app_cache/ (race_predictions.json,
+    lactate_threshold.json, vo2max_trend_*.json), but the dashboard previously
+    kept fresh payloads only in st.session_state — so every app restart lost
+    the race predictions until the next refresh. Returns (lt, race, vo2max)
+    with None for anything not cached.
+    """
+    cache = Path(cache_dir)
+    if not cache.is_dir():
+        return None, None, None
+    lt = _load_json_file(cache / "lactate_threshold.json")
+    race = _load_json_file(cache / "race_predictions.json")
+    vo2: list | None = None
+    try:
+        candidates = [p for p in cache.glob("vo2max_trend_*.json") if p.is_file()]
+    except OSError:
+        candidates = []
+    if candidates:
+        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        latest = _load_json_file(candidates[0])
+        vo2 = latest if isinstance(latest, list) else None
+    return lt, race, vo2
+
+
 def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, dict, list[dict]]:
     """Fetch activities from Garmin.
 
@@ -125,7 +164,7 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, dict, l
     else:
         start = compute_fetch_start(end, store.latest_activity_date())
         fetch_end = end
-    gw = GarminGateway(cache_dir=Path("cache/app_cache"))
+    gw = GarminGateway(cache_dir=APP_CACHE_DIR)
     with st.spinner("Fetching activities from Garmin..."):
         raw = gw.fetch_activities(start.isoformat(), fetch_end.isoformat())
     lt = gw.fetch_lactate_threshold() or {}
@@ -691,6 +730,15 @@ def main() -> None:
         st.session_state["lt_payload"] = None
         st.session_state["race_payload"] = None
         st.session_state["vo2max_payload"] = None
+        # First run in this session: rehydrate the last-fetched trend payloads
+        # from the gateway cache so race predictions etc. survive restarts.
+        cached_lt, cached_race, cached_vo2 = load_cached_trends()
+        if cached_lt is not None:
+            st.session_state["lt_payload"] = cached_lt
+        if cached_race is not None:
+            st.session_state["race_payload"] = cached_race
+        if cached_vo2 is not None:
+            st.session_state["vo2max_payload"] = cached_vo2
 
     st.sidebar.header("Data")
     fetch_mode = st.sidebar.radio(
@@ -773,6 +821,16 @@ def main() -> None:
             st.session_state.get("vo2max_payload"),
         )
         st.session_state["_view_sig"] = compute_sig
+        # Mirror the computed rows (including ingested race predictions) into
+        # the store so direct DB readers see what the UI shows.
+        persist_session_metrics(
+            store,
+            activities,
+            profile,
+            st.session_state.get("lt_payload"),
+            st.session_state.get("race_payload"),
+            st.session_state.get("vo2max_payload"),
+        )
     view = st.session_state["view"]
     windowed = view.windowed(since, until)
 

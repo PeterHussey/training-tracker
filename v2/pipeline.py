@@ -242,6 +242,26 @@ def compute_metric_rows(
     return rows
 
 
+def persist_session_metrics(
+    store: MetricStore,
+    activities: list[Activity],
+    profile: RunnerProfile,
+    lt_payload: dict | None = None,
+    race_payload: dict | None = None,
+    vo2max_payload: list[dict] | None = None,
+) -> int:
+    """Compute the session metric rows and persist them to an open store.
+
+    The dashboard builds its in-memory view via compute_metric_rows but
+    historically never wrote those rows back, leaving metric_series (and
+    therefore race_* for direct DB readers) empty. Call this after the view
+    is built so the store mirrors what the UI shows. Returns rows written.
+    """
+    rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload)
+    store.save_metric_rows(rows)
+    return len(rows)
+
+
 def run_pipeline(
     activities: list[Activity],
     profile: RunnerProfile,
