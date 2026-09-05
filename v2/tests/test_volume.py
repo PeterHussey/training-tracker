@@ -50,7 +50,7 @@ def test_rolling_and_wow():
 def test_groups_total_spans_sports():
     from metrics.volume import groups
 
-    assert set(groups()) == {"total", "running", "treadmill", "cross"}
+    assert set(groups()) == {"total", "running", "treadmill", "cross", "strength"}
 
 
 def test_weekly_duration_hours_sums_cross_with_no_distance():
@@ -74,3 +74,15 @@ def test_weekly_duration_hours_excludes_by_group():
     assert weekly_duration_hours(acts, "running").iloc[0] + weekly_duration_hours(
         acts, "cross"
     ).iloc[0] == pytest.approx(1.5)
+
+
+def test_weekly_duration_hours_strength_group():
+    acts = [
+        _act(date(2026, 4, 6), "running", 10_000.0, dur_s=3600.0),
+        _act(date(2026, 4, 7), "strength", 0.0, dur_s=2700.0),  # 0.75h strength
+        _act(date(2026, 4, 8), "cross", 0.0, dur_s=1800.0),  # 0.5h cross
+    ]
+    assert weekly_duration_hours(acts, "strength").iloc[0] == pytest.approx(0.75)
+    # strength is separate from cross and included in the total
+    assert weekly_duration_hours(acts, "cross").iloc[0] == pytest.approx(0.5)
+    assert weekly_duration_hours(acts, "total").iloc[0] == pytest.approx(2.25)

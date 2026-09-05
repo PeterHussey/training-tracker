@@ -17,7 +17,7 @@ def test_sport_classification():
     assert sport_of(_first("running")) == "running"
     assert sport_of(_first("treadmill_running")) == "treadmill"
     assert sport_of(_first("indoor_cycling")) == "cross"
-    assert sport_of(_first("strength_training")) == "cross"
+    assert sport_of(_first("strength_training")) == "strength"
 
 
 def test_from_summary_maps_core_fields():

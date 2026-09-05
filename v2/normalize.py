@@ -6,6 +6,7 @@ from typing import Any
 
 RUNNING_KEYS = {"running"}
 TREADMILL_KEYS = {"treadmill_running"}
+STRENGTH_KEYS = {"strength_training"}
 
 
 def sport_of(summary: dict) -> str:
@@ -14,6 +15,8 @@ def sport_of(summary: dict) -> str:
         return "running"
     if tk in TREADMILL_KEYS:
         return "treadmill"
+    if tk in STRENGTH_KEYS:
+        return "strength"
     return "cross"
 
 

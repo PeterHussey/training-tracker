@@ -6,7 +6,7 @@ from normalize import Activity
 
 
 def groups() -> list[str]:
-    return ["total", "running", "treadmill", "cross"]
+    return ["total", "running", "treadmill", "cross", "strength"]
 
 
 def _group_members(activities: list[Activity], group: str) -> list[Activity]:
@@ -16,6 +16,8 @@ def _group_members(activities: list[Activity], group: str) -> list[Activity]:
         return [a for a in activities if a.sport == "running"]
     if group == "treadmill":
         return [a for a in activities if a.sport == "treadmill"]
+    if group == "strength":
+        return [a for a in activities if a.sport == "strength"]
     return [a for a in activities if a.sport == "cross"]
 
 
