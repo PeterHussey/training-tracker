@@ -20,6 +20,7 @@ class RunnerProfile:
     hr_zones: dict[int, tuple[int, int]] = field(default_factory=dict)
     units: str = "metric"
     hrmax_source: str = "configured"  # "configured" | "age_predicted"
+    selected_race: str = "5k"  # "5k" | "10k" | "half" | "full"
 
     EDWARDS_WEIGHTS: ClassVar[dict[int, float]] = {1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0, 5: 5.0}
 

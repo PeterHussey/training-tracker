@@ -117,6 +117,26 @@ def _load_json_file(path: Path):
         return None
 
 
+def _latest_json_file(cache: Path, pattern: str):
+    try:
+        candidates = [p for p in cache.glob(pattern) if p.is_file()]
+    except OSError:
+        return None
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return _load_json_file(candidates[0])
+
+
+def _persist_selected_fields(store: MetricStore, selected_race: str) -> None:
+    """Persist user-selected race distance to the runner profile."""
+    profile = store.load_runner_profile()
+    if profile is None:
+        profile = default_profile()
+    if profile.selected_race != selected_race:
+        store.save_runner_profile(replace(profile, selected_race=selected_race))
+
+
 def load_cached_trends(
     cache_dir: Path = APP_CACHE_DIR,
 ) -> tuple[dict | None, dict | None, list | None]:
@@ -132,7 +152,10 @@ def load_cached_trends(
     if not cache.is_dir():
         return None, None, None
     lt = _load_json_file(cache / "lactate_threshold.json")
-    race = _load_json_file(cache / "race_predictions.json")
+    race: dict | list | None = _latest_json_file(cache, "race_predictions_trend_*.json")
+    if race is None:
+        latest = _load_json_file(cache / "race_predictions.json")
+        race = latest if isinstance(latest, (dict, list)) else None
     vo2: list | None = None
     try:
         candidates = [p for p in cache.glob("vo2max_trend_*.json") if p.is_file()]
@@ -145,7 +168,7 @@ def load_cached_trends(
     return lt, race, vo2
 
 
-def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, dict, list[dict]]:
+def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, list[dict]]:
     """Fetch activities from Garmin.
 
     Args:
@@ -169,13 +192,15 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, dict, l
     with st.spinner("Fetching activities from Garmin..."):
         raw = gw.fetch_activities(start.isoformat(), fetch_end.isoformat())
     lt = gw.fetch_lactate_threshold() or {}
-    race = gw.fetch_race_predictions() or {}
-    # VO2max trend is a single (non-paginated) daily-summary call, so it always
-    # covers the full window — NOT the incremental activities window. Binding it
-    # to `start` would yield only the days since the last refresh (e.g. 1-2
-    # points on most refreshes), producing a uselessly short chart.
-    vo2_start = end - timedelta(days=FETCH_DAYS)
-    vo2 = gw.fetch_vo2max_trend(vo2_start.isoformat(), end.isoformat()) or []
+    # Trend payloads are single (non-paginated) daily-summary calls, so they
+    # always cover the full window — NOT the incremental activities window.
+    # Binding them to `start` would yield only the days since the last refresh
+    # (e.g. 1-2 points on most refreshes), producing uselessly short charts.
+    # Race uses the daily history endpoint (not /latest, which is a single
+    # current snapshot) so the predictions chart has a real trend.
+    trend_start = end - timedelta(days=FETCH_DAYS)
+    race = gw.fetch_race_predictions_trend(trend_start.isoformat(), end.isoformat()) or []
+    vo2 = gw.fetch_vo2max_trend(trend_start.isoformat(), end.isoformat()) or []
     # An empty incremental window is normal: compute_fetch_start only asks for
     # activities newer than the latest persisted one, so "nothing new since the
     # last refresh" legitimately returns []. Only a truly empty account (no local
@@ -205,9 +230,12 @@ def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> 
         ("manual", "estimate from workouts", "age-predicted"),
         index=0 if p.hrmax_source == "configured" else 2,
     )
-    hrmax_val, hrmax_src_label = get_hrmax_display(
-        src, birth_year, hrrest, sex, p, activities
+    selected_race = st.sidebar.selectbox(
+        "Race distance",
+        ("5k", "10k", "half", "full"),
+        index=("5k", "10k", "half", "full").index(p.selected_race) if p.selected_race else 0,
     )
+    hrmax_val, hrmax_src_label = get_hrmax_display(src, birth_year, hrrest, sex, p, activities)
     st.sidebar.caption(f"HRmax: {hrmax_val} · Source: {hrmax_src_label}")
     if src == "manual":
         default_hrmax = (
@@ -218,12 +246,15 @@ def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> 
         hrmax = st.sidebar.number_input(
             "HRmax (bpm)", min_value=110, max_value=240, value=default_hrmax
         )
-        return RunnerProfile(
-            hrmax=int(hrmax),
-            hrrest=int(hrrest),
-            sex=sex,
-            birth_year=int(birth_year),
-            hrmax_source="configured",
+        return replace(
+            RunnerProfile(
+                hrmax=int(hrmax),
+                hrrest=int(hrrest),
+                sex=sex,
+                birth_year=int(birth_year),
+                hrmax_source="configured",
+            ),
+            selected_race=selected_race,
         )
     base = RunnerProfile.from_age(
         age=date.today().year - int(birth_year),
@@ -232,8 +263,8 @@ def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> 
         birth_year=int(birth_year),
     )
     if src == "estimate from workouts":
-        return with_estimated_hrmax(base, activities)
-    return base
+        return replace(with_estimated_hrmax(base, activities), selected_race=selected_race)
+    return replace(base, selected_race=selected_race)
 
 
 def profile_sig(p: RunnerProfile) -> tuple:
@@ -316,9 +347,26 @@ def _fmt_pace_min(v: float, units: str) -> str:
     return f"{m}:{s:02d} {unit}"
 
 
-def render_kpis(windowed, view, units) -> None:
-    cols = st.columns(len(KPI_KEYS))
-    for col, (key, label) in zip(cols, KPI_KEYS, strict=False):
+def apply_yaxis_mode(fig: go.Figure, mode: str) -> go.Figure:
+    """Apply the user's y-axis scale preference to a Plotly figure.
+
+    mode: "auto" (Plotly picks the range from the data, the default) or
+    "fit to data" (same as auto; future option for fixed/manual ranges).
+    """
+    if mode == "fit to data":
+        # Plotly auto-fits by default; explicit range=None lets the data drive it.
+        for axis in ("yaxis", "yaxis2"):
+            if axis in fig.layout:
+                fig.layout[axis].range = None
+    return fig
+
+
+def render_kpis(windowed, view, units, selected_kpi_labels: list[str] | None = None) -> None:
+    visible = [
+        (k, lbl) for k, lbl in KPI_KEYS if selected_kpi_labels is None or lbl in selected_kpi_labels
+    ]
+    cols = st.columns(len(visible))
+    for col, (key, label) in zip(cols, visible, strict=False):
         s = windowed.get(key)
         val = last_value(s) if s is not None else None
         if val is None:
@@ -350,7 +398,9 @@ def render_load_tab(view, windowed, units) -> None:
             e = windowed.get("load.edwards")
             if e is not None and len(e):
                 fig.add_trace(go.Scatter(x=e.index, y=e.values, name="Edwards (total)", yaxis="y2"))
-                fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "title": "Edwards TRIMP"})
+                fig.update_layout(
+                    yaxis2={"overlaying": "y", "side": "right", "title": "Edwards TRIMP"}
+                )
         fig.update_layout(
             barmode="stack",
             title="Daily Banister TRIMP (stacked by sport)",
@@ -358,6 +408,7 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis_title="Banister TRIMP",
             legend={"orientation": "h", "y": 1.12},
         )
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Stacked across running + treadmill + cross-training (HR intensity only). "
@@ -380,9 +431,7 @@ def render_load_tab(view, windowed, units) -> None:
             if t is not None and len(t):
                 fig.add_trace(go.Scatter(x=t.index, y=t.values, name=name, line={"color": color}))
         fig.add_trace(
-            go.Scatter(
-                x=tsb.index, y=tsb.values, name="TSB", yaxis="y2", line={"color": "#F18F01"}
-            )
+            go.Scatter(x=tsb.index, y=tsb.values, name="TSB", yaxis="y2", line={"color": "#F18F01"})
         )
         fig.add_hline(y=0, line_dash="dot", line_color="gray")
         fig.update_layout(
@@ -392,6 +441,7 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis2={"overlaying": "y", "side": "right", "title": "TSB"},
             legend={"orientation": "h", "y": 1.12},
         )
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "TSB = CTL - ATL; positive = fresh/form. Combined load windows. "
@@ -418,7 +468,9 @@ def render_load_tab(view, windowed, units) -> None:
                     line={"color": "#F18F01", "dash": "dash"},
                 )
             )
-            fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "title": "% within last 180d"})
+            fig.update_layout(
+                yaxis2={"overlaying": "y", "side": "right", "title": "% within last 180d"}
+            )
         fig.add_hline(y=0.5, line_dash="dot", line_color="red")
         fig.add_hline(y=1.5, line_dash="dot", line_color="red")
         fig.update_layout(
@@ -427,6 +479,7 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis={"range": [0, max(2.0, float(acwr.max()))]},
             legend={"orientation": "h", "y": 1.12},
         )
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Green 0.8-1.3 is a heuristic. ACWR measures load SWING, not "
@@ -445,6 +498,7 @@ def render_fitness_tab(view, windowed, units) -> None:
     else:
         fig = go.Figure(go.Scatter(x=vo2.index, y=vo2.values, mode="lines+markers", name="VO2max"))
         fig.update_layout(title="VO2max (Firstbeat estimate, daily trend)", hovermode="x unified")
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Daily trend from Garmin `/maxmet/daily` (vo2MaxPreciseValue). "
@@ -478,8 +532,11 @@ def render_fitness_tab(view, windowed, units) -> None:
             )
         )
         fig.update_layout(
-            title=name, yaxis_title=("bpm" if params and params.get("unit") != "m/s" else f"min per {units}"), hovermode="x unified"
+            title=name,
+            yaxis_title=("bpm" if params and params.get("unit") != "m/s" else f"min per {units}"),
+            hovermode="x unified",
         )
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(context_line(view, key))
 
@@ -488,8 +545,9 @@ def render_fitness_tab(view, windowed, units) -> None:
         ("load.lt_hr_rolling", "LT heart rate (rolling 45d)", {"unit": "bpm"}),
         ("load.lt_pace_rolling", "LT pace (rolling 45d)", {"unit": "m/s"}),
     ]
-    has_garmin_lt = (windowed.get("load.lt_hr") is not None and not windowed.get("load.lt_hr").empty) or \
-                    (windowed.get("load.lt_pace") is not None and not windowed.get("load.lt_pace").empty)
+    has_garmin_lt = (
+        windowed.get("load.lt_hr") is not None and not windowed.get("load.lt_hr").empty
+    ) or (windowed.get("load.lt_pace") is not None and not windowed.get("load.lt_pace").empty)
     has_rolling = False
     for key, name, params in rolling_threshes:
         s = windowed.get(key)
@@ -513,8 +571,11 @@ def render_fitness_tab(view, windowed, units) -> None:
             )
         )
         fig.update_layout(
-            title=name, yaxis_title=("bpm" if params and params.get("unit") != "m/s" else f"min per {units}"), hovermode="x unified"
+            title=name,
+            yaxis_title=("bpm" if params and params.get("unit") != "m/s" else f"min per {units}"),
+            hovermode="x unified",
         )
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(context_line(view, key))
     if not has_garmin_lt and not has_rolling:
@@ -545,6 +606,7 @@ def render_fitness_tab(view, windowed, units) -> None:
         fig.update_layout(
             title="Garmin race predictions", hovermode="x unified", yaxis_title="seconds"
         )
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "5K/10K/half are the trustworthy end; marathon is the least trustworthy prediction."
@@ -557,9 +619,7 @@ def render_fitness_tab(view, windowed, units) -> None:
 
 
 def render_volume_tab(activities, view, windowed, units) -> None:
-    weeks = {
-        g: windowed.get(f"volume.distance_{g}") for g in ("running", "treadmill", "cross")
-    }
+    weeks = {g: windowed.get(f"volume.distance_{g}") for g in ("running", "treadmill", "cross")}
     weeks = {g: s for g, s in weeks.items() if s is not None and len(s)}
     if weeks:
         fig = go.Figure()
@@ -584,6 +644,7 @@ def render_volume_tab(activities, view, windowed, units) -> None:
                 }
             )
         fig.update_layout(title="Weekly distance", barmode="stack", hovermode="x unified")
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Stacked by sport. Cross-training has no distance and stacks "
@@ -622,6 +683,7 @@ def render_volume_tab(activities, view, windowed, units) -> None:
             hovermode="x unified",
             yaxis_title="hours",
         )
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Time-anchored workload: running + treadmill + cross-training + strength. "
@@ -636,7 +698,8 @@ def render_volume_tab(activities, view, windowed, units) -> None:
             fig.update_layout(
                 title="Week-over-week duration change", hovermode="x unified", yaxis_title="%"
             )
-            st.plotly_chart(fig, use_container_width=True)
+            apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
+        st.plotly_chart(fig, use_container_width=True)
 
     wow = windowed.get("volume.wow_pct_total")
     if wow is not None and len(wow):
@@ -645,6 +708,7 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         fig.update_layout(
             title="Week-over-week distance change", hovermode="x unified", yaxis_title="%"
         )
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
 
     gain = windowed.get("elevation.daily_gain_running")
@@ -682,6 +746,7 @@ def render_volume_tab(activities, view, windowed, units) -> None:
                 }
             )
         fig.update_layout(title="Elevation gain (running)", hovermode="x unified")
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption("Elevation is route context, not a risk metric.")
     else:
@@ -747,7 +812,9 @@ def main() -> None:
         "Fetch mode",
         ("incremental", "historical"),
         index=0,
-        format_func=lambda x: "Incremental (new only)" if x == "incremental" else "Historical (up to 100)",
+        format_func=lambda x: (
+            "Incremental (new only)" if x == "incremental" else "Historical (up to 100)"
+        ),
     )
 
     if st.sidebar.button("Refresh from Garmin"):
@@ -793,6 +860,33 @@ def main() -> None:
         store.save_runner_profile(profile)
         st.session_state["_profile_sig"] = psig
 
+    st.sidebar.header("Chart axes")
+    yaxis_mode = st.sidebar.radio(
+        "Y-axis scale",
+        ("auto", "fit to data"),
+        index=0,
+        help=(
+            "auto: Plotly picks the range from the data (default). "
+            "fit to data: same as auto; future option for fixed/manual ranges."
+        ),
+        key="yaxis_mode",
+    )
+    st.session_state["_yaxis_mode"] = yaxis_mode
+
+    st.sidebar.header("Selected KPI fields")
+    all_kpi_labels = [label for _key, label in KPI_KEYS]
+    default_kpi_labels = st.session_state.get("selected_kpi_labels", all_kpi_labels)
+    selected_kpi_labels = st.sidebar.multiselect(
+        "KPI tiles",
+        all_kpi_labels,
+        default=default_kpi_labels,
+        key="selected_kpi_labels_widget",
+    )
+    if selected_kpi_labels != default_kpi_labels:
+        st.session_state["selected_kpi_labels"] = selected_kpi_labels
+    _persist_selected_fields(store, profile.selected_race)
+    st.session_state["selected_kpi_labels"] = selected_kpi_labels
+
     min_d, default_since, max_d = period_bounds([a.date for a in activities])
     period = st.sidebar.date_input(
         "Period",
@@ -837,7 +931,8 @@ def main() -> None:
     windowed = view.windowed(since, until)
 
     st.subheader("Current values (within selected range)")
-    render_kpis(windowed, view, units)
+    selected_kpis = st.session_state.get("selected_kpi_labels")
+    render_kpis(windowed, view, units, selected_kpis)
 
     tab_load, tab_fitness, tab_volume, tab_acts = st.tabs(
         ["Load & Recovery", "Fitness", "Volume & Terrain", "Activities"]
