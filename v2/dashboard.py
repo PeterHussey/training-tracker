@@ -152,10 +152,14 @@ def load_cached_trends(
     if not cache.is_dir():
         return None, None, None
     lt = _load_json_file(cache / "lactate_threshold.json")
-    race: dict | list | None = _latest_json_file(cache, "race_predictions_trend_*.json")
+    # race payload: the pipeline expects a dict (with "asOfDate"/"calendarDate"
+    # keys); the trend file is a list. Prefer the dict form, fall back to the
+    # list only if no dict is cached (pipeline will then skip race rows).
+    race_dict = _load_json_file(cache / "race_predictions.json")
+    race: dict | list | None = race_dict if isinstance(race_dict, dict) else None
     if race is None:
-        latest = _load_json_file(cache / "race_predictions.json")
-        race = latest if isinstance(latest, (dict, list)) else None
+        race_list = _latest_json_file(cache, "race_predictions_trend_*.json")
+        race = race_list if isinstance(race_list, (dict, list)) else None
     vo2: list | None = None
     try:
         candidates = [p for p in cache.glob("vo2max_trend_*.json") if p.is_file()]
@@ -199,7 +203,7 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
     # Race uses the daily history endpoint (not /latest, which is a single
     # current snapshot) so the predictions chart has a real trend.
     trend_start = end - timedelta(days=FETCH_DAYS)
-    race = gw.fetch_race_predictions_trend(trend_start.isoformat(), end.isoformat()) or []
+    race_predictions = gw.fetch_race_predictions() or {}  # dict - for pipeline
     vo2 = gw.fetch_vo2max_trend(trend_start.isoformat(), end.isoformat()) or []
     # An empty incremental window is normal: compute_fetch_start only asks for
     # activities newer than the latest persisted one, so "nothing new since the
@@ -211,9 +215,9 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
         if fetch_mode == "historical":
             raise RuntimeError("No older activities found in this date range")
         # Incremental mode with no new activities is a normal no-op.
-        return [], lt, race, vo2
+        return [], lt, race_predictions, vo2
     acts = [from_summary(a) for a in raw]
-    return acts, lt, race, vo2
+    return acts, lt, race_predictions, vo2
 
 
 def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> RunnerProfile:
@@ -802,8 +806,13 @@ def main() -> None:
         cached_lt, cached_race, cached_vo2 = load_cached_trends()
         if cached_lt is not None:
             st.session_state["lt_payload"] = cached_lt
+        # race payload: ensure it's a dict (fallback to None if only trend list cached)
         if cached_race is not None:
-            st.session_state["race_payload"] = cached_race
+            if isinstance(cached_race, dict):
+                st.session_state["race_payload"] = cached_race
+            elif isinstance(cached_race, list) and st.session_state.get("race_payload") is None:
+                # Use trend payload only for chart; pipeline needs a dict, leave as None
+                st.session_state["race_payload"] = None
         if cached_vo2 is not None:
             st.session_state["vo2max_payload"] = cached_vo2
 
