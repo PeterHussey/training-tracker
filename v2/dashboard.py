@@ -64,8 +64,9 @@ GLOSSARY = [
     "recomputed here.",
     "LT heart rate anchors (~7% error); LT pace can overestimate 20-26%.",
     "Race predictions: 5K/10K/half are the trustworthy end; marathon least.",
-    "Cross-training has no distance, so it is excluded from distance volume but is "
-    "included in the time-volume (hours/week) chart and in HR load.",
+    "Cross-training and strength have no distance, so they are excluded from distance "
+    "volume but are reported separately in the time-volume (hours/week) chart. "
+    "Cross-training is included in HR load; strength is duration-only.",
     "Elevation is route context, not a risk metric.",
     "Garmin proprietary load/TE and ACWR bands are reference, never gates.",
     "Aerobic decoupling needs >=6 route-matched flat sessions; single-run values are "
@@ -595,7 +596,8 @@ def render_volume_tab(activities, view, windowed, units) -> None:
     # Time-volume chart (hours/week) — includes cross-training, which has no
     # distance but still consumes time/energy.
     hours = {
-        g: windowed.get(f"volume.duration_{g}") for g in ("running", "treadmill", "cross")
+        g: windowed.get(f"volume.duration_{g}")
+        for g in ("running", "treadmill", "cross", "strength")
     }
     hours = {g: s for g, s in hours.items() if s is not None and len(s)}
     if hours:
@@ -622,8 +624,8 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         )
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "Time-anchored workload: running + treadmill + cross-training. "
-            "Cross-training contributes time even with no distance. "
+            "Time-anchored workload: running + treadmill + cross-training + strength. "
+            "Cross-training and strength contribute time even with no distance. "
             + context_line(view, "volume.duration_total")
         )
 

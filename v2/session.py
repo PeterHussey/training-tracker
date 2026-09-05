@@ -48,6 +48,7 @@ CONDITIONAL_METRICS = {
     "load.banister_running": "requires outdoor-running activities with HR data",
     "load.edwards_running": "requires outdoor-running activities with HR data",
     "volume.duration_cross": "time-volume is populated whenever a cross-training activity exists (duration is distance-independent)",
+    "volume.duration_strength": "time-volume is populated whenever a strength activity exists (duration is distance-independent)",
     "load.lt_hr": "requires a measured lactate threshold in the payload (live LT record was empty)",
     "load.lt_pace": "requires a measured lactate threshold in the payload (live LT record was empty)",
     "race_5k": "requires non-null race predictions in the payload",

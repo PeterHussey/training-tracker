@@ -4,6 +4,7 @@ from pathlib import Path
 from profile import default_profile
 
 import pandas as pd
+import pytest
 
 from metric_series import rows_from_series
 from normalize import from_summary
@@ -202,3 +203,29 @@ def test_compute_metric_rows_matches_run_pipeline(tmp_path):
 def test_compute_metric_rows_empty():
     rows = compute_metric_rows([], default_profile(age=40, hrrest=60, sex="M"))
     assert rows == []
+
+
+def test_end_to_end_emits_strength_duration(tmp_path):
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    strength_days = {a.date for a in acts if a.sport == "strength"}
+    assert strength_days
+    db = tmp_path / "metrics_strength.db"
+    run_pipeline(acts, default_profile(age=40, hrrest=60, sex="M"), str(db))
+    store = MetricStore(str(db))
+    rows = store.read_metric("volume.duration_strength")
+    assert rows, "volume.duration_strength missing despite strength activities"
+    assert all(r["value"] > 0 for r in rows)
+    # weekly duration hours sum to the strength activities' total hours
+    total_h = sum(a.duration_s for a in acts if a.sport == "strength") / 3600.0
+    assert sum(r["value"] for r in rows) == pytest.approx(total_h)
+    # duration-only: strength never contributes HR load
+    assert not store.read_metric("load.banister_strength")
+    assert not store.read_metric("load.edwards_strength")
+    for row in store.read_metric("load.banister"):
+        assert pd.Timestamp(row["date"]).date() not in strength_days or pd.Timestamp(
+            row["date"]
+        ).date() in {a.date for a in acts if a.sport != "strength" and a.avg_hr is not None}, (
+            f"load.banister row on {row['date']} driven by strength-only day"
+        )
+    store.close()

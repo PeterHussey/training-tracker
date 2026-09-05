@@ -95,6 +95,11 @@ def e2e_checks(
             d = pd.Timestamp(row["date"]).date()
             if d not in load_days:
                 failures.append(f"{name} row on {row['date']} has no HR-load activity")
+    strength_days = {a.date for a in activities if a.sport == "strength"}
+    if strength_days and not metrics.get("volume.duration_strength"):
+        failures.append(
+            f"missing volume.duration_strength despite {len(strength_days)} strength days"
+        )
     cross_days = {a.date for a in activities if a.sport == "cross"}
     if cross_days:
         for name in ("load.banister_cross", "load.edwards_cross"):
