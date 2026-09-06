@@ -20,6 +20,7 @@ def compute_metric_rows(
     lt_payload: dict | None = None,
     race_payload: dict | list | None = None,
     vo2max_payload: list[dict] | None = None,
+    series_by_id: dict | None = None,
 ) -> list[dict]:
     """Compute every metric row for a session view. Pure: no DB, no network.
 
@@ -228,29 +229,56 @@ def compute_metric_rows(
                     flags={"error_class": "garmin_race_pred_maybe_optimistic"},
                 )
 
-    # Rolling LT fallback (30-day) — computed when Garmin LT payload missing
+    # Best-effort LTHR anchors — emitted when Garmin LT payload missing
     has_lt_hr = lt_payload is not None and threshold.parse_lt(lt_payload).hr is not None
     has_lt_pace = lt_payload is not None and threshold.parse_lt(lt_payload).speed_m_s is not None
-    if not has_lt_hr:
-        lt_hr_rolling = threshold.rolling_lt_hr(activities, profile)
-        if not lt_hr_rolling.empty:
-            rows += rows_from_series(
-                "load.lt_hr_rolling",
-                lt_hr_rolling,
-                "computed",
-                params={"unit": "bpm", "window_days": 30, "basis": "sustained_hr_85pct"},
-                flags={"anchored": "hr", "error_class": "rolling_estimate"},
-            )
-    if not has_lt_pace:
-        lt_pace_rolling = threshold.rolling_lt_pace(activities)
-        if not lt_pace_rolling.empty:
-            rows += rows_from_series(
-                "load.lt_pace_rolling",
-                lt_pace_rolling,
-                "computed",
-                params={"unit": "m/s", "window_days": 45, "basis": "approx_cs_1609"},
-                flags={"anchored": "no", "error_class": "rolling_estimate"},
-            )
+    if series_by_id is not None:
+        anchors = threshold.best_effort_anchors(activities, series_by_id)
+        if not has_lt_hr:
+            for anchor_key, emit_key, w_s, factor in [
+                ("w20", "best20", 1200, 0.95),
+                ("w30", "best30", 1800, 0.97),
+            ]:
+                anchor = anchors[anchor_key]
+                if anchor is not None:
+                    dt = pd.Timestamp(anchor["date"])
+                    rows += rows_from_series(
+                        f"load.lt_hr_{emit_key}",
+                        pd.Series([anchor["proxy_hr"]], index=pd.DatetimeIndex([dt])),
+                        "computed",
+                        params={"unit": "bpm", "window_s": w_s, "factor": factor, "basis": "best_window_outdoor_running"},
+                        flags={"activity_id": anchor["activity_id"], "error_class": "best_effort_estimate"},
+                    )
+                    rows += rows_from_series(
+                        f"load.lt_pace_{emit_key}",
+                        pd.Series([anchor["pace"]], index=pd.DatetimeIndex([dt])),
+                        "computed",
+                        params={"unit": "m/s", "window_s": w_s, "factor": factor, "basis": "best_window_outdoor_running"},
+                        flags={"activity_id": anchor["activity_id"], "error_class": "best_effort_estimate"},
+                    )
+        if not has_lt_pace:
+            # Pace dots are emitted even when Garmin pace is present?  No —
+            # best-effort pace anchors are only relevant when Garmin pace is
+            # missing.  But the dots themselves are informational (scatter of
+            # qualifying efforts).  Emit them unconditionally when series_by_id
+            # is provided so the dashboard can show the effort cloud.
+            pass
+        for dots_key, hr_key, pace_key in [
+            ("dots20", "load.lt_effort_dots20_hr", "load.lt_effort_dots20_pace"),
+            ("dots30", "load.lt_effort_dots30_hr", "load.lt_effort_dots30_pace"),
+        ]:
+            dots = anchors[dots_key]
+            if dots:
+                hr_series = pd.Series(
+                    [d["hr"] for d in dots],
+                    index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
+                )
+                pace_series = pd.Series(
+                    [d["pace"] for d in dots],
+                    index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
+                )
+                rows += rows_from_series(hr_key, hr_series, "computed", params={"unit": "bpm", "basis": "best_window_outdoor_running"})
+                rows += rows_from_series(pace_key, pace_series, "computed", params={"unit": "m/s", "basis": "best_window_outdoor_running"})
 
     return rows
 
@@ -262,6 +290,7 @@ def persist_session_metrics(
     lt_payload: dict | None = None,
     race_payload: dict | list | None = None,
     vo2max_payload: list[dict] | None = None,
+    series_by_id: dict | None = None,
 ) -> int:
     """Compute the session metric rows and persist them to an open store.
 
@@ -270,7 +299,7 @@ def persist_session_metrics(
     therefore race_* for direct DB readers) empty. Call this after the view
     is built so the store mirrors what the UI shows. Returns rows written.
     """
-    rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload)
+    rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload, series_by_id)
     store.save_metric_rows(rows)
     return len(rows)
 
@@ -282,11 +311,12 @@ def run_pipeline(
     lt_payload: dict | None = None,
     race_payload: dict | list | None = None,
     vo2max_payload: list[dict] | None = None,
+    series_by_id: dict | None = None,
 ) -> dict[str, int]:
     store = MetricStore(out_db)
     store.save_runner_profile(profile)
     store.save_activities(activities)
-    rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload)
+    rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload, series_by_id)
     store.save_metric_rows(rows)
     store.close()
     return {"metrics_written": len(rows), "activities": len(activities)}

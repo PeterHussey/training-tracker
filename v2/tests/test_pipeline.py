@@ -161,6 +161,103 @@ def test_end_to_end_emits_cross_training_hr_load(tmp_path):
     store.close()
 
 
+def _make_synthetic_details(n_samples: int, base_hr: float, base_speed: float):
+    """Build a minimal Garmin details-style dict with per-sample HR and speed."""
+    return {
+        "metrics": [
+            {"heartRate": base_hr + (i % 10) * 0.5, "speed": base_speed + (i % 10) * 0.01}
+            for i in range(n_samples)
+        ]
+    }
+
+
+def test_pipeline_emits_best_not_rolling():
+    """When lt_payload=None and series_by_id is provided, best-effort keys
+    replace the old rolling keys."""
+    from metrics.threshold import parse_details_series
+
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    profile = default_profile(age=40, hrrest=60, sex="M")
+
+    # Build series_by_id for two qualifying outdoor running activities
+    # 24087730763: 4232s (>= 1800s for w30), 24135895959: 2082s (>= 1200s for w20)
+    series_by_id = {}
+    for act_id, n, hr_b, spd_b in [
+        (24087730763, 2000, 150.0, 4.0),
+        (24135895959, 2000, 148.0, 3.8),
+    ]:
+        det = _make_synthetic_details(n, hr_b, spd_b)
+        hr_list, spd_list = parse_details_series(det)
+        series_by_id[act_id] = (hr_list, spd_list)
+
+    rows = compute_metric_rows(acts, profile, lt_payload=None, series_by_id=series_by_id)
+    metrics = {r["metric"] for r in rows}
+
+    # Best-effort anchors present
+    assert "load.lt_hr_best20" in metrics, "lt_hr_best20 missing"
+    assert "load.lt_hr_best30" in metrics, "lt_hr_best30 missing"
+    assert "load.lt_pace_best20" in metrics, "lt_pace_best20 missing"
+    assert "load.lt_pace_best30" in metrics, "lt_pace_best30 missing"
+    assert "load.lt_effort_dots20_hr" in metrics, "dots20_hr missing"
+    assert "load.lt_effort_dots20_pace" in metrics, "dots20_pace missing"
+    assert "load.lt_effort_dots30_hr" in metrics, "dots30_hr missing"
+    assert "load.lt_effort_dots30_pace" in metrics, "dots30_pace missing"
+
+    # Old rolling keys absent
+    assert "load.lt_hr_rolling" not in metrics, "old rolling HR still present"
+    assert "load.lt_pace_rolling" not in metrics, "old rolling pace still present"
+
+    # Verify anchor flags contain activity_id
+    for r in rows:
+        if r["metric"] == "load.lt_hr_best20":
+            flags = json.loads(r["flags"])
+            assert "activity_id" in flags
+            assert flags["error_class"] == "best_effort_estimate"
+            break
+
+
+def test_pipeline_no_series_by_id_no_best_effort():
+    """When series_by_id is None (pure-activities path), no best-effort rows emitted."""
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    profile = default_profile(age=40, hrrest=60, sex="M")
+    rows = compute_metric_rows(acts, profile, lt_payload=None, series_by_id=None)
+    metrics = {r["metric"] for r in rows}
+    assert not any("best" in m for m in metrics), "best-effort rows emitted without series_by_id"
+    assert not any("dots" in m for m in metrics), "dots rows emitted without series_by_id"
+    # Rolling keys should also be absent (rolling functions removed)
+    assert "load.lt_hr_rolling" not in metrics
+    assert "load.lt_pace_rolling" not in metrics
+
+
+def test_pipeline_garmin_lt_suppresses_best_effort():
+    """When Garmin LT payload has hr+pace, best-effort rows are NOT emitted."""
+    from metrics.threshold import parse_details_series
+
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    profile = default_profile(age=40, hrrest=60, sex="M")
+    lt = json.loads((Path(__file__).parent / "fixtures" / "lactate_threshold.json").read_text())
+
+    series_by_id = {}
+    for act_id, n, hr_b, spd_b in [
+        (24087730763, 2000, 150.0, 4.0),
+        (24135895959, 2000, 148.0, 3.8),
+    ]:
+        det = _make_synthetic_details(n, hr_b, spd_b)
+        hr_list, spd_list = parse_details_series(det)
+        series_by_id[act_id] = (hr_list, spd_list)
+
+    rows = compute_metric_rows(acts, profile, lt_payload=lt, series_by_id=series_by_id)
+    metrics = {r["metric"] for r in rows}
+    # Garmin LT present → best-effort should NOT be emitted
+    assert "load.lt_hr_best20" not in metrics
+    assert "load.lt_hr_best30" not in metrics
+    # But Garmin's own LT should be there
+    assert "load.lt_hr" in metrics
+
+
 def test_rows_from_series_keys():
     s = pd.Series([1.0, 2.5], index=pd.to_datetime(["2026-04-01", "2026-04-02"]))
     rows = rows_from_series("x", s, "computed", params={"a": 1}, flags={"b": 2})
