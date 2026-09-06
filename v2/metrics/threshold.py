@@ -128,6 +128,114 @@ def best_window(
     return best_result
 
 
+def best_effort_lthr(
+    activities: list[Activity],
+    series_by_id: dict[int, tuple[list[float | None], list[float | None]]],
+    window_s: int,
+    factor: float,
+) -> dict | None:
+    """Find the single best sustained window across all qualifying outdoor-running activities.
+
+    Qualifying filters:
+    - ``a.sport == "running"`` (outdoor only — no treadmill, cross, strength)
+    - ``a.duration_s >= window_s``
+    - ``a.avg_hr is not None``
+    - ``a.activity_id in series_by_id``
+
+    For each qualifying activity, ``best_window`` is called on its HR/speed
+    series.  The activity with the highest ``mean_speed`` wins.
+
+    Returns:
+        ``{proxy_hr, raw_hr, pace, date, activity_id, window_s, factor}`` for
+        the best effort, or ``None`` if no qualifying activity has a valid
+        window.
+    """
+    best_speed = -1.0
+    best_result: dict | None = None
+
+    for a in activities:
+        if a.sport != "running":
+            continue
+        if a.duration_s < window_s:
+            continue
+        if a.avg_hr is None:
+            continue
+        if a.activity_id not in series_by_id:
+            continue
+
+        hr_series, speed_series = series_by_id[a.activity_id]
+        bw = best_window(hr_series, speed_series, window_s)
+        if bw is None:
+            continue
+
+        if bw["mean_speed"] > best_speed:
+            best_speed = bw["mean_speed"]
+            best_result = {
+                "proxy_hr": bw["mean_hr"] * factor,
+                "raw_hr": bw["mean_hr"],
+                "pace": 1.0 / bw["mean_speed"],
+                "date": a.date,
+                "activity_id": a.activity_id,
+                "window_s": window_s,
+                "factor": factor,
+            }
+
+    return best_result
+
+
+def best_effort_anchors(
+    activities: list[Activity],
+    series_by_id: dict[int, tuple[list[float | None], list[float | None]]],
+    factor_20: float = 0.95,
+    factor_30: float = 0.97,
+) -> dict:
+    """Compute best-effort LTHR anchors for 20-min and 30-min windows.
+
+    Returns:
+        ``{"w20": ..., "w30": ..., "dots20": [...], "dots30": [...]}`` where
+        each anchor is the result of :func:`best_effort_lthr` (or ``None``) and
+        each dot is ``{hr, pace, date, activity_id}`` for every qualifying
+        activity at that window length.
+    """
+    dots20: list[dict] = []
+    dots30: list[dict] = []
+
+    for a in activities:
+        if a.sport != "running":
+            continue
+        if a.avg_hr is None:
+            continue
+        if a.activity_id not in series_by_id:
+            continue
+
+        hr_series, speed_series = series_by_id[a.activity_id]
+
+        if a.duration_s >= 1200:
+            bw = best_window(hr_series, speed_series, 1200)
+            if bw is not None:
+                dots20.append({
+                    "hr": bw["mean_hr"],
+                    "pace": 1.0 / bw["mean_speed"],
+                    "date": a.date,
+                    "activity_id": a.activity_id,
+                })
+
+        if a.duration_s >= 1800:
+            bw = best_window(hr_series, speed_series, 1800)
+            if bw is not None:
+                dots30.append({
+                    "hr": bw["mean_hr"],
+                    "pace": 1.0 / bw["mean_speed"],
+                    "date": a.date,
+                    "activity_id": a.activity_id,
+                })
+
+    w20 = best_effort_lthr(activities, series_by_id, 1200, factor_20)
+    w30 = best_effort_lthr(activities, series_by_id, 1800, factor_30)
+
+    return {"w20": w20, "w30": w30, "dots20": dots20, "dots30": dots30}
+
+
 @dataclass
 class LTData:
     hr: int | None

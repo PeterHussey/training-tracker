@@ -5,6 +5,8 @@ import pytest
 
 from metrics.threshold import (
     approx_cs_1609,
+    best_effort_anchors,
+    best_effort_lthr,
     best_window,
     parse_details_series,
     parse_lt,
@@ -161,3 +163,110 @@ def test_best_window_gap_exceeding_tolerance_rejected():
     hr[602] = None  # 6 s gap > 5 s tolerance
     w = best_window(hr, speed, window_s=1200, max_gap_s=5.0)
     assert w is None
+
+
+# --- best-effort cross-activity anchor ---
+
+
+def _make_series(n: int, hr_val: float, speed_val: float) -> tuple[list[float], list[float]]:
+    """Helper: create uniform hr/speed lists of length n."""
+    return [hr_val] * n, [speed_val] * n
+
+
+def test_best_effort_outdoor_only_and_factor():
+    """Treadmill + cross + short + hr-less candidates excluded; fastest outdoor 20-min wins; proxy = raw * 0.95."""
+    d1, d2, d3, d4, d5 = (date(2026, 4, i) for i in range(1, 6))
+
+    # Outdoor running, 20 min, HR 165, speed 3.5 — the winner
+    a1 = Activity(10, "running", d1, 0, 5000.0, 1200.0, 1200.0, 165.0, 180.0, {})
+    # Outdoor running, 20 min, HR 158, speed 3.2 — slower
+    a2 = Activity(20, "running", d2, 0, 5000.0, 1200.0, 1200.0, 158.0, 175.0, {})
+    # Treadmill — excluded
+    a3 = Activity(30, "treadmill", d3, 0, 5000.0, 1200.0, 1200.0, 162.0, 178.0, {})
+    # Cross-training — excluded
+    a4 = Activity(40, "cross", d4, 0, 5000.0, 1200.0, 1200.0, 160.0, 176.0, {})
+    # Outdoor running, but only 10 min — too short for 20-min window
+    a5 = Activity(50, "running", d5, 0, 5000.0, 600.0, 600.0, 170.0, 185.0, {})
+    # Outdoor running, 20 min, but no HR — excluded
+    a6 = Activity(60, "running", date(2026, 4, 6), 0, 5000.0, 1200.0, 1200.0, None, None, {})
+
+    activities = [a1, a2, a3, a4, a5, a6]
+
+    # Series: only for the outdoor running activities that qualify by duration+HR
+    series_by_id = {
+        10: _make_series(1200, 165.0, 3.5),  # winner
+        20: _make_series(1200, 158.0, 3.2),
+        30: _make_series(1200, 162.0, 3.4),  # treadmill — ignored
+        40: _make_series(1200, 160.0, 3.3),  # cross — ignored
+        # 50: no series (doesn't matter, too short)
+        # 60: no series (doesn't matter, no HR)
+    }
+
+    anchor = best_effort_lthr(activities, series_by_id, window_s=1200, factor=0.95)
+    assert anchor is not None
+    assert anchor["raw_hr"] == pytest.approx(165.0)
+    assert anchor["proxy_hr"] == pytest.approx(165.0 * 0.95)
+    assert anchor["pace"] == pytest.approx(1.0 / 3.5)  # pace = 1/speed
+    assert anchor["activity_id"] == 10
+    assert anchor["window_s"] == 1200
+    assert anchor["factor"] == pytest.approx(0.95)
+
+
+def test_best_effort_30min_factor():
+    """30-min window uses factor 0.97."""
+    d1 = date(2026, 5, 1)
+    a1 = Activity(1, "running", d1, 0, 10000.0, 1800.0, 1800.0, 160.0, 180.0, {})
+    a2 = Activity(2, "running", date(2026, 5, 2), 0, 10000.0, 1800.0, 1800.0, 155.0, 178.0, {})
+
+    series_by_id = {
+        1: _make_series(1800, 160.0, 3.0),
+        2: _make_series(1800, 155.0, 3.2),  # faster but lower HR
+    }
+
+    anchor = best_effort_lthr(activities=[a1, a2], series_by_id=series_by_id, window_s=1800, factor=0.97)
+    assert anchor is not None
+    assert anchor["activity_id"] == 2  # higher speed wins
+    assert anchor["raw_hr"] == pytest.approx(155.0)
+    assert anchor["proxy_hr"] == pytest.approx(155.0 * 0.97)
+
+
+def test_best_effort_no_qualifying_returns_none():
+    """No qualifying activities returns None."""
+    a1 = Activity(1, "treadmill", date(2026, 1, 1), 0, 5000.0, 1200.0, 1200.0, 160.0, 175.0, {})
+    anchor = best_effort_lthr([a1], {1: _make_series(1200, 160.0, 3.0)}, window_s=1200, factor=0.95)
+    assert anchor is None
+
+
+def test_best_effort_anchors_dots():
+    """best_effort_anchors returns dots for every qualifying activity."""
+    acts = [
+        Activity(1, "running", date(2026, 6, 1), 0, 5000.0, 1200.0, 1200.0, 165.0, 180.0, {}),
+        Activity(2, "running", date(2026, 6, 2), 0, 5000.0, 1200.0, 1200.0, 158.0, 175.0, {}),
+        Activity(3, "running", date(2026, 6, 3), 0, 8000.0, 1800.0, 1800.0, 160.0, 178.0, {}),
+        Activity(4, "treadmill", date(2026, 6, 4), 0, 5000.0, 1200.0, 1200.0, 162.0, 176.0, {}),
+    ]
+    series = {
+        1: _make_series(1200, 165.0, 3.5),
+        2: _make_series(1200, 158.0, 3.2),
+        3: _make_series(1800, 160.0, 2.9),
+        4: _make_series(1200, 162.0, 3.4),
+    }
+
+    result = best_effort_anchors(acts, series)
+
+    # 20-min: three qualifying outdoor activities (IDs 1, 2, 3 — activity 3 is 30 min so also qualifies)
+    assert result["w20"] is not None
+    assert result["w20"]["activity_id"] == 1
+    assert len(result["dots20"]) == 3
+    dot_ids_20 = {d["activity_id"] for d in result["dots20"]}
+    assert dot_ids_20 == {1, 2, 3}
+
+    # 30-min: one qualifying outdoor activity (ID 3)
+    assert result["w30"] is not None
+    assert result["w30"]["activity_id"] == 3
+    assert len(result["dots30"]) == 1
+    assert result["dots30"][0]["activity_id"] == 3
+
+    # Each dot has the required keys
+    for dot in result["dots20"] + result["dots30"]:
+        assert set(dot.keys()) == {"hr", "pace", "date", "activity_id"}
