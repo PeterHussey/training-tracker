@@ -53,9 +53,7 @@ def test_approx_cs_from_fastest_mile():
 
 
 def _act_hr(d: date, sport: str, dur_s: float, hr: float, split: float = None) -> Activity:
-    return Activity(
-        1, sport, d, 0, 5000.0, dur_s, dur_s, hr, 170.0, {}, fastest_split_1609=split
-    )
+    return Activity(1, sport, d, 0, 5000.0, dur_s, dur_s, hr, 170.0, {}, fastest_split_1609=split)
 
 
 def test_rolling_lt_hr_requires_sustained_efforts():
@@ -86,8 +84,22 @@ def test_rolling_lt_hr_includes_treadmill_and_cross():
 def test_rolling_lt_pace_from_critical_speed():
     d = date(2026, 4, 1)
     acts = [
-        Activity(1, "running", d, 0, 5000.0, 1800.0, 1800.0, 150.0, 170.0, {}, fastest_split_1609=320.1),
-        Activity(2, "running", date(2026, 4, 3), 0, 5000.0, 1800.0, 1800.0, 150.0, 170.0, {}, fastest_split_1609=310.0),
+        Activity(
+            1, "running", d, 0, 5000.0, 1800.0, 1800.0, 150.0, 170.0, {}, fastest_split_1609=320.1
+        ),
+        Activity(
+            2,
+            "running",
+            date(2026, 4, 3),
+            0,
+            5000.0,
+            1800.0,
+            1800.0,
+            150.0,
+            170.0,
+            {},
+            fastest_split_1609=310.0,
+        ),
     ]
     s = rolling_lt_pace(acts)
     assert len(s) == 2
@@ -98,8 +110,32 @@ def test_rolling_lt_pace_from_critical_speed():
 
 def test_rolling_lt_pace_includes_treadmill():
     acts = [
-        Activity(1, "running", date(2026, 4, 1), 0, 5000.0, 1800.0, 1800.0, 150.0, 170.0, {}, fastest_split_1609=320.1),
-        Activity(2, "treadmill", date(2026, 4, 3), 0, 5000.0, 1800.0, 1800.0, 150.0, 170.0, {}, fastest_split_1609=310.0),
+        Activity(
+            1,
+            "running",
+            date(2026, 4, 1),
+            0,
+            5000.0,
+            1800.0,
+            1800.0,
+            150.0,
+            170.0,
+            {},
+            fastest_split_1609=320.1,
+        ),
+        Activity(
+            2,
+            "treadmill",
+            date(2026, 4, 3),
+            0,
+            5000.0,
+            1800.0,
+            1800.0,
+            150.0,
+            170.0,
+            {},
+            fastest_split_1609=310.0,
+        ),
     ]
     s = rolling_lt_pace(acts)
     assert len(s) == 2
@@ -223,7 +259,9 @@ def test_best_effort_30min_factor():
         2: _make_series(1800, 155.0, 3.2),  # faster but lower HR
     }
 
-    anchor = best_effort_lthr(activities=[a1, a2], series_by_id=series_by_id, window_s=1800, factor=0.97)
+    anchor = best_effort_lthr(
+        activities=[a1, a2], series_by_id=series_by_id, window_s=1800, factor=0.97
+    )
     assert anchor is not None
     assert anchor["activity_id"] == 2  # higher speed wins
     assert anchor["raw_hr"] == pytest.approx(155.0)

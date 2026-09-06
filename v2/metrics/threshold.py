@@ -213,22 +213,26 @@ def best_effort_anchors(
         if a.duration_s >= 1200:
             bw = best_window(hr_series, speed_series, 1200)
             if bw is not None:
-                dots20.append({
-                    "hr": bw["mean_hr"],
-                    "pace": 1.0 / bw["mean_speed"],
-                    "date": a.date,
-                    "activity_id": a.activity_id,
-                })
+                dots20.append(
+                    {
+                        "hr": bw["mean_hr"],
+                        "pace": 1.0 / bw["mean_speed"],
+                        "date": a.date,
+                        "activity_id": a.activity_id,
+                    }
+                )
 
         if a.duration_s >= 1800:
             bw = best_window(hr_series, speed_series, 1800)
             if bw is not None:
-                dots30.append({
-                    "hr": bw["mean_hr"],
-                    "pace": 1.0 / bw["mean_speed"],
-                    "date": a.date,
-                    "activity_id": a.activity_id,
-                })
+                dots30.append(
+                    {
+                        "hr": bw["mean_hr"],
+                        "pace": 1.0 / bw["mean_speed"],
+                        "date": a.date,
+                        "activity_id": a.activity_id,
+                    }
+                )
 
     w20 = best_effort_lthr(activities, series_by_id, 1200, factor_20)
     w30 = best_effort_lthr(activities, series_by_id, 1800, factor_30)
@@ -264,8 +268,9 @@ def approx_cs_1609(activities: list[Activity]) -> pd.Series:
     return s.groupby(s.index).last().sort_index()
 
 
-def _sustained_efforts(activities: list[Activity], profile, min_duration_s: float = 1200.0,
-                       min_hr_pct: float = 0.85) -> list[Activity]:
+def _sustained_efforts(
+    activities: list[Activity], profile, min_duration_s: float = 1200.0, min_hr_pct: float = 0.85
+) -> list[Activity]:
     """Filter activities for sustained efforts at high HR intensity.
 
     Args:
@@ -279,8 +284,7 @@ def _sustained_efforts(activities: list[Activity], profile, min_duration_s: floa
     threshold_hr = profile.hrmax * min_hr_pct
     out = []
     for a in activities:
-        if (a.duration_s >= min_duration_s and a.avg_hr is not None
-                and a.avg_hr >= threshold_hr):
+        if a.duration_s >= min_duration_s and a.avg_hr is not None and a.avg_hr >= threshold_hr:
             out.append(a)
     return out
 
@@ -296,8 +300,7 @@ def rolling_lt_hr(activities: list[Activity], profile, window_days: int = 30) ->
 
     # Filter to load sports with HR data
     load_sports = {"running", "treadmill", "cross"}
-    acts = [a for a in activities
-            if a.sport in load_sports and a.avg_hr is not None]
+    acts = [a for a in activities if a.sport in load_sports and a.avg_hr is not None]
     if not acts:
         return pd.Series([], dtype=float)
 
@@ -309,8 +312,7 @@ def rolling_lt_hr(activities: list[Activity], profile, window_days: int = 30) ->
     results = []
     for _i, d in enumerate(dates):
         window_start = d - timedelta(days=window_days)
-        window_acts = [acts_by_date[dd] for dd in dates
-                       if window_start <= dd <= d]
+        window_acts = [acts_by_date[dd] for dd in dates if window_start <= dd <= d]
         sustained = _sustained_efforts(window_acts, profile)
         if len(sustained) >= 2:  # require at least 2 sustained efforts
             avg_hr = sum(a.avg_hr for a in sustained) / len(sustained)
@@ -318,7 +320,9 @@ def rolling_lt_hr(activities: list[Activity], profile, window_days: int = 30) ->
 
     if not results:
         return pd.Series([], dtype=float)
-    return pd.Series([v for _, v in results], index=pd.DatetimeIndex([d for d, _ in results])).sort_index()
+    return pd.Series(
+        [v for _, v in results], index=pd.DatetimeIndex([d for d, _ in results])
+    ).sort_index()
 
 
 def rolling_lt_pace(activities: list[Activity], window_days: int = 45) -> pd.Series:
@@ -331,8 +335,7 @@ def rolling_lt_pace(activities: list[Activity], window_days: int = 45) -> pd.Ser
         return pd.Series([], dtype=float)
 
     load_sports = {"running", "treadmill"}
-    acts = [a for a in activities
-            if a.sport in load_sports and a.fastest_split_1609 is not None]
+    acts = [a for a in activities if a.sport in load_sports and a.fastest_split_1609 is not None]
     if not acts:
         return pd.Series([], dtype=float)
 
@@ -344,8 +347,7 @@ def rolling_lt_pace(activities: list[Activity], window_days: int = 45) -> pd.Ser
     results = []
     for d in dates:
         window_start = d - timedelta(days=window_days)
-        window_acts = [acts_by_date[dd] for dd in dates
-                       if window_start <= dd <= d]
+        window_acts = [acts_by_date[dd] for dd in dates if window_start <= dd <= d]
         cs = approx_cs_1609(window_acts)
         if not cs.empty:
             # Use the most recent CS value in the window
@@ -353,4 +355,6 @@ def rolling_lt_pace(activities: list[Activity], window_days: int = 45) -> pd.Ser
 
     if not results:
         return pd.Series([], dtype=float)
-    return pd.Series([v for _, v in results], index=pd.DatetimeIndex([d for d, _ in results])).sort_index()
+    return pd.Series(
+        [v for _, v in results], index=pd.DatetimeIndex([d for d, _ in results])
+    ).sort_index()
