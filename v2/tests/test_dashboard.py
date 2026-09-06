@@ -208,3 +208,17 @@ def test_race_time_ticks_narrow_span_uses_minutes():
 
 def test_race_time_ticks_empty():
     assert race_time_ticks([]) == ([], [])
+
+
+def test_render_fitness_tab_no_rolling_threshes():
+    """The old rolling 45-day LT fallback block must be removed.
+
+    Task 5 replaces it with best-effort anchor cards + qualifier dots.
+    If this test fails, someone re-introduced the dead code path.
+    """
+    import inspect
+
+    src = inspect.getsource(d.render_fitness_tab)
+    assert "rolling_threshes" not in src, (
+        "render_fitness_tab still references rolling_threshes — expected removed by Task 5"
+    )

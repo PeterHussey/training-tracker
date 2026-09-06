@@ -406,6 +406,84 @@ def _fmt_pace_min(v: float, units: str) -> str:
     return f"{m}:{s:02d} {unit}"
 
 
+def _anchor_cards(windowed, view, units) -> None:
+    """Render best-effort LTHR anchor cards with qualifier dot scatters."""
+    anchors = [
+        (
+            "load.lt_hr_best20",
+            "load.lt_pace_best20",
+            "load.lt_effort_dots20_hr",
+            "load.lt_effort_dots20_pace",
+            "20-min",
+        ),
+        (
+            "load.lt_hr_best30",
+            "load.lt_pace_best30",
+            "load.lt_effort_dots30_hr",
+            "load.lt_effort_dots30_pace",
+            "30-min",
+        ),
+    ]
+    has_any = False
+    for hr_key, pace_key, dots_hr_key, dots_pace_key, label in anchors:
+        hr_s = windowed.get(hr_key)
+        if hr_s is None or hr_s.empty:
+            continue
+        has_any = True
+        proxy_hr = float(hr_s.iloc[-1])
+        meta = view.context.get(hr_key, {})
+        params = meta.get("params", {})
+        raw_hr = proxy_hr / params.get("factor", 1.0) if params.get("factor") else proxy_hr
+        pace_s = windowed.get(pace_key)
+        pace_val = float(pace_s.iloc[-1]) if pace_s is not None and not pace_s.empty else None
+        pace_str = _fmt_pace_min(pace_val * 60, units) if pace_val else "—"
+        dt = hr_s.index[-1]
+        date_str = dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else str(dt)
+
+        card_text = f"{proxy_hr:.0f} bpm ({raw_hr:.0f} raw @ {pace_str}, {date_str})"
+        st.metric(f"LTHR anchor {label}", card_text)
+
+        # Qualifier dots: faint scatter of all qualifying efforts
+        dots_hr = windowed.get(dots_hr_key)
+        dots_pace = windowed.get(dots_pace_key)
+        if (
+            dots_hr is not None
+            and not dots_hr.empty
+            and dots_pace is not None
+            and not dots_pace.empty
+        ):
+            y = pace_min_per_unit(dots_pace, units) if dots_pace.mean() > 10 else dots_pace.values
+            labels = [
+                _fmt_pace_min(v, units) if dots_pace.mean() > 10 else f"{v:.0f} bpm" for v in y
+            ]
+            fig = go.Figure(
+                go.Scatter(
+                    x=dots_hr.index,
+                    y=y,
+                    mode="markers",
+                    name=f"{label} efforts",
+                    text=labels,
+                    hovertemplate="%{x}<br>%{text}",
+                    opacity=0.35,
+                )
+            )
+            fig.update_layout(
+                title=f"Qualifier dots — {label} window",
+                yaxis_title=f"min per {units}" if dots_pace.mean() > 10 else "bpm",
+                hovermode="x unified",
+                showlegend=False,
+            )
+            apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption(context_line(view, dots_hr_key))
+
+    if not has_any:
+        st.write(
+            "LT heart rate / pace require a measured lactate threshold in "
+            "the Garmin payload (appears after a Refresh)."
+        )
+
+
 def race_time_ticks(values, count: int = 6) -> tuple[list[float], list[str]]:
     """Evenly spaced H:MM:SS y-axis ticks covering `values` (seconds).
 
@@ -626,50 +704,8 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
         st.plotly_chart(fig, use_container_width=True)
         st.caption(context_line(view, key))
 
-    # Rolling LT fallback charts (45-day) — shown when Garmin LT missing
-    rolling_threshes = [
-        ("load.lt_hr_rolling", "LT heart rate (rolling 45d)", {"unit": "bpm"}),
-        ("load.lt_pace_rolling", "LT pace (rolling 45d)", {"unit": "m/s"}),
-    ]
-    has_garmin_lt = (
-        windowed.get("load.lt_hr") is not None and not windowed.get("load.lt_hr").empty
-    ) or (windowed.get("load.lt_pace") is not None and not windowed.get("load.lt_pace").empty)
-    has_rolling = False
-    for key, name, params in rolling_threshes:
-        s = windowed.get(key)
-        if s is None or s.empty:
-            continue
-        has_rolling = True
-        if params and params.get("unit") == "m/s":
-            y = pace_min_per_unit(s, units)
-            labels = [_fmt_pace_min(v, units) for v in y]
-        else:
-            y = s.values
-            labels = [_fmt(v, params or {"unit": "s"}, units) for v in y]
-        fig = go.Figure(
-            go.Scatter(
-                x=s.index,
-                y=y,
-                mode="lines+markers",
-                name=name,
-                text=labels,
-                hovertemplate="%{x}<br>%{text}",
-            )
-        )
-        fig.update_layout(
-            title=name,
-            yaxis_title=("bpm" if params and params.get("unit") != "m/s" else f"min per {units}"),
-            hovermode="x unified",
-        )
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption(context_line(view, key))
-    if not has_garmin_lt and not has_rolling:
-        st.write(
-            "LT heart rate / pace require a measured lactate threshold in "
-            "the Garmin payload (appears after a Refresh), or sufficient "
-            "sustained HR efforts for rolling 45-day estimate."
-        )
+    # Best-effort LTHR anchor cards + qualifier dots
+    _anchor_cards(windowed, view, units)
 
     preds = {d: windowed.get(f"race_{d}") for d in ("5k", "10k", "half", "full")}
     if any(p is not None and len(p) for p in preds.values()):

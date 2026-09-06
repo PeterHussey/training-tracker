@@ -184,3 +184,37 @@ def test_run_with_timeout_propagates_exception():
 
     with pytest.raises(ValueError, match="nope"):
         run_with_timeout(boom, timeout=1.0)
+
+
+def test_session_context_has_best_keys():
+    """When series_by_id is provided and Garmin LT is absent,
+    best-effort LTHR anchor keys must appear in view.series."""
+    acts = _acts()
+    profile = default_profile(age=40, hrrest=60, sex="M")
+    # Build a fake series_by_id: HR + speed samples for the first qualifying
+    # outdoor-running activity (duration >= 1200 s, has avg_hr).
+    qual = [
+        a for a in acts if a.sport == "running" and a.duration_s >= 1200 and a.avg_hr is not None
+    ]
+    assert qual, "need at least one qualifying activity in fixtures"
+    target = qual[0]
+    # 2400 samples at 1 Hz, HR ~150, speed ~4 m/s (pace ~4:10/km)
+    n = int(target.duration_s)
+    hr = [150.0] * n
+    spd = [4.0] * n
+    series_by_id = {target.activity_id: (hr, spd)}
+
+    view = build_session_view(
+        acts,
+        profile,
+        lt_payload=None,
+        race_payload=None,
+        vo2max_payload=None,
+        series_by_id=series_by_id,
+    )
+
+    assert "load.lt_hr_best20" in view.series, (
+        f"expected load.lt_hr_best20 in series, got: {sorted(view.series)}"
+    )
+    assert "load.lt_pace_best20" in view.series
+    assert "load.lt_effort_dots20_hr" in view.series
