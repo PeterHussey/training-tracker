@@ -5,3 +5,6 @@
 # Environment files
 .env*
 !.env.example
+
+# Local opencode tool install (node_modules, agent packages)
+.opencode/
