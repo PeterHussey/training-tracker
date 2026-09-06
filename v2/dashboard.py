@@ -225,6 +225,7 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
 
 DETAILS_TOP_K = 40
 DETAILS_TIMEOUT_S = 8
+DETAILS_TOTAL_TIMEOUT_S = 60
 
 
 def fetch_details_for_lthr(
@@ -268,7 +269,7 @@ def fetch_details_for_lthr(
             )
             hr, spd = parse_details_series(details)
             series_by_id[a.activity_id] = (hr, spd)
-        except (TimeoutError, Exception):
+        except (TimeoutError, OSError, json.JSONDecodeError, KeyError):
             pass
     return series_by_id
 
@@ -1023,8 +1024,11 @@ def main() -> None:
             # Fan out to fetch activity details for best-effort LTHR anchors.
             gw = GarminGateway(cache_dir=APP_CACHE_DIR)
             activities_for_details = st.session_state["activities"]
-            st.session_state["series_by_id"] = fetch_details_for_lthr(
-                gw, activities_for_details
+            st.session_state["series_by_id"] = run_with_timeout(
+                fetch_details_for_lthr,
+                timeout=DETAILS_TOTAL_TIMEOUT_S,
+                gw=gw,
+                activities=activities_for_details,
             )
             if fetch_mode == "historical":
                 msg = f"Historical fetch: {len(acts)} activities fetched"
