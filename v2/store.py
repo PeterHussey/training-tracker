@@ -63,6 +63,9 @@ class MetricStore:
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(activities)").fetchall()}
         if "name" not in cols:
             self.conn.execute("ALTER TABLE activities ADD COLUMN name TEXT")
+        # Best-effort LTHR anchors replaced the rolling-mean fallback: prune
+        # the dead keys so stale rows don't linger in old databases.
+        self.prune_legacy_keys(["load.lt_hr_rolling", "load.lt_pace_rolling"])
         self.conn.commit()
 
     def save_runner_profile(self, profile) -> None:
@@ -256,6 +259,15 @@ class MetricStore:
             hrmax_source=hrmax_meta.get("source", "configured"),
             selected_race=data.get("selected_race", "5k"),
         )
+
+    def prune_legacy_keys(self, keys: list[str]) -> int:
+        """Delete metric_series rows for the given metric keys. Returns rows deleted."""
+        if not keys:
+            return 0
+        placeholders = ",".join("?" for _ in keys)
+        cur = self.conn.execute(f"DELETE FROM metric_series WHERE metric IN ({placeholders})", keys)
+        self.conn.commit()
+        return cur.rowcount
 
     def close(self) -> None:
         self.conn.close()

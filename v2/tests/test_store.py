@@ -245,3 +245,51 @@ def test_latest_activity_date_none_when_empty(tmp_path):
     store = MetricStore(str(tmp_path / "t.db"))
     assert store.latest_activity_date() is None
     store.close()
+
+
+def _legacy_row(metric: str) -> dict:
+    return {
+        "metric": metric,
+        "date": "2026-04-01",
+        "value": 160.0,
+        "source": "computed",
+        "params": "{}",
+        "flags": "{}",
+    }
+
+
+def test_prune_legacy_keys_deletes_only_listed(tmp_path):
+    store = MetricStore(str(tmp_path / "t.db"))
+    store.save_metric_rows(
+        [
+            _legacy_row("load.lt_hr_rolling"),
+            _legacy_row("load.lt_pace_rolling"),
+            _legacy_row("load.lt_hr_best20"),
+            _legacy_row("load.banister"),
+        ]
+    )
+    deleted = store.prune_legacy_keys(["load.lt_hr_rolling", "load.lt_pace_rolling"])
+    assert deleted == 2
+    assert store.read_metric("load.lt_hr_rolling") == []
+    assert store.read_metric("load.lt_pace_rolling") == []
+    assert len(store.read_metric("load.lt_hr_best20")) == 1
+    assert len(store.read_metric("load.banister")) == 1
+    store.close()
+
+
+def test_prune_legacy_keys_empty_is_noop(tmp_path):
+    store = MetricStore(str(tmp_path / "t.db"))
+    assert store.prune_legacy_keys([]) == 0
+    store.close()
+
+
+def test_migrate_prunes_rolling_keys_on_reopen(tmp_path):
+    db = str(tmp_path / "t.db")
+    store = MetricStore(db)
+    store.save_metric_rows([_legacy_row("load.lt_hr_rolling"), _legacy_row("load.lt_hr_best20")])
+    store.close()
+    # Reopening triggers _migrate, which prunes the dead rolling keys.
+    reopened = MetricStore(db)
+    assert reopened.read_metric("load.lt_hr_rolling") == []
+    assert len(reopened.read_metric("load.lt_hr_best20")) == 1
+    reopened.close()
