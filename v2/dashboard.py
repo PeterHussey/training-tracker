@@ -433,7 +433,8 @@ def _anchor_cards(windowed, view, units) -> None:
         proxy_hr = float(hr_s.iloc[-1])
         meta = view.context.get(hr_key, {})
         params = meta.get("params", {})
-        raw_hr = proxy_hr / params.get("factor", 1.0) if params.get("factor") else proxy_hr
+        factor = params.get("factor")
+        raw_hr = proxy_hr / factor if factor and factor != 0 else proxy_hr
         pace_s = windowed.get(pace_key)
         pace_val = float(pace_s.iloc[-1]) if pace_s is not None and not pace_s.empty else None
         pace_str = _fmt_pace_min(pace_val * 60, units) if pace_val else "—"
@@ -452,24 +453,43 @@ def _anchor_cards(windowed, view, units) -> None:
             and dots_pace is not None
             and not dots_pace.empty
         ):
-            y = pace_min_per_unit(dots_pace, units) if dots_pace.mean() > 10 else dots_pace.values
-            labels = [
-                _fmt_pace_min(v, units) if dots_pace.mean() > 10 else f"{v:.0f} bpm" for v in y
-            ]
-            fig = go.Figure(
+            hr_vals = dots_hr.values
+            hr_labels = [f"{v:.0f} bpm" for v in hr_vals]
+            pace_vals = pace_min_per_unit(dots_pace, units)
+            pace_labels = [_fmt_pace_min(v, units) for v in pace_vals]
+            fig = go.Figure()
+            fig.add_trace(
                 go.Scatter(
                     x=dots_hr.index,
-                    y=y,
+                    y=hr_vals,
                     mode="markers",
-                    name=f"{label} efforts",
-                    text=labels,
+                    name=f"{label} HR",
+                    text=hr_labels,
                     hovertemplate="%{x}<br>%{text}",
                     opacity=0.35,
+                    yaxis="y",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=dots_pace.index,
+                    y=pace_vals,
+                    mode="markers",
+                    name=f"{label} pace",
+                    text=pace_labels,
+                    hovertemplate="%{x}<br>%{text}",
+                    opacity=0.35,
+                    yaxis="y2",
                 )
             )
             fig.update_layout(
                 title=f"Qualifier dots — {label} window",
-                yaxis_title=f"min per {units}" if dots_pace.mean() > 10 else "bpm",
+                yaxis_title="bpm",
+                yaxis2={
+                    "overlaying": "y",
+                    "side": "right",
+                    "title": f"min per {units}",
+                },
                 hovermode="x unified",
                 showlegend=False,
             )

@@ -218,3 +218,8 @@ def test_session_context_has_best_keys():
     )
     assert "load.lt_pace_best20" in view.series
     assert "load.lt_effort_dots20_hr" in view.series
+    assert "load.lt_effort_dots20_pace" in view.series
+    assert "load.lt_hr_best30" in view.series
+    assert "load.lt_pace_best30" in view.series
+    assert "load.lt_effort_dots30_hr" in view.series
+    assert "load.lt_effort_dots30_pace" in view.series
