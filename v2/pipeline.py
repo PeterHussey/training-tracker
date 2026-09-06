@@ -271,24 +271,26 @@ def compute_metric_rows(
                         params=pace_params,
                         flags=flags,
                     )
-        for dots_key, hr_key, pace_key in [
-            ("dots20", "load.lt_effort_dots20_hr", "load.lt_effort_dots20_pace"),
-            ("dots30", "load.lt_effort_dots30_hr", "load.lt_effort_dots30_pace"),
-        ]:
-            dots = anchors[dots_key]
-            if dots:
-                hr_series = pd.Series(
-                    [d["hr"] for d in dots],
-                    index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
-                )
-                pace_series = pd.Series(
-                    [d["pace"] for d in dots],
-                    index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
-                )
-                dots_params_hr = {"unit": "bpm", "basis": "best_window_outdoor_running"}
-                dots_params_pace = {"unit": "m/s", "basis": "best_window_outdoor_running"}
-                rows += rows_from_series(hr_key, hr_series, "computed", params=dots_params_hr)
-                rows += rows_from_series(pace_key, pace_series, "computed", params=dots_params_pace)
+            for dots_key, hr_key, pace_key in [
+                ("dots20", "load.lt_effort_dots20_hr", "load.lt_effort_dots20_pace"),
+                ("dots30", "load.lt_effort_dots30_hr", "load.lt_effort_dots30_pace"),
+            ]:
+                dots = anchors[dots_key]
+                if dots:
+                    hr_series = pd.Series(
+                        [d["hr"] for d in dots],
+                        index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
+                    )
+                    pace_series = pd.Series(
+                        [d["pace"] for d in dots],
+                        index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
+                    )
+                    dots_params_hr = {"unit": "bpm", "basis": "best_window_outdoor_running"}
+                    dots_params_pace = {"unit": "m/s", "basis": "best_window_outdoor_running"}
+                    rows += rows_from_series(hr_key, hr_series, "computed", params=dots_params_hr)
+                    rows += rows_from_series(
+                        pace_key, pace_series, "computed", params=dots_params_pace
+                    )
 
     return rows
 
