@@ -231,7 +231,6 @@ def compute_metric_rows(
 
     # Best-effort LTHR anchors — emitted when Garmin LT payload missing
     has_lt_hr = lt_payload is not None and threshold.parse_lt(lt_payload).hr is not None
-    has_lt_pace = lt_payload is not None and threshold.parse_lt(lt_payload).speed_m_s is not None
     if series_by_id is not None:
         anchors = threshold.best_effort_anchors(activities, series_by_id)
         if not has_lt_hr:
@@ -242,27 +241,36 @@ def compute_metric_rows(
                 anchor = anchors[anchor_key]
                 if anchor is not None:
                     dt = pd.Timestamp(anchor["date"])
+                    params = {
+                        "unit": "bpm",
+                        "window_s": w_s,
+                        "factor": factor,
+                        "basis": "best_window_outdoor_running",
+                    }
+                    flags = {
+                        "activity_id": anchor["activity_id"],
+                        "error_class": "best_effort_estimate",
+                    }
                     rows += rows_from_series(
                         f"load.lt_hr_{emit_key}",
                         pd.Series([anchor["proxy_hr"]], index=pd.DatetimeIndex([dt])),
                         "computed",
-                        params={"unit": "bpm", "window_s": w_s, "factor": factor, "basis": "best_window_outdoor_running"},
-                        flags={"activity_id": anchor["activity_id"], "error_class": "best_effort_estimate"},
+                        params=params,
+                        flags=flags,
                     )
+                    pace_params = {
+                        "unit": "m/s",
+                        "window_s": w_s,
+                        "factor": factor,
+                        "basis": "best_window_outdoor_running",
+                    }
                     rows += rows_from_series(
                         f"load.lt_pace_{emit_key}",
                         pd.Series([anchor["pace"]], index=pd.DatetimeIndex([dt])),
                         "computed",
-                        params={"unit": "m/s", "window_s": w_s, "factor": factor, "basis": "best_window_outdoor_running"},
-                        flags={"activity_id": anchor["activity_id"], "error_class": "best_effort_estimate"},
+                        params=pace_params,
+                        flags=flags,
                     )
-        if not has_lt_pace:
-            # Pace dots are emitted even when Garmin pace is present?  No —
-            # best-effort pace anchors are only relevant when Garmin pace is
-            # missing.  But the dots themselves are informational (scatter of
-            # qualifying efforts).  Emit them unconditionally when series_by_id
-            # is provided so the dashboard can show the effort cloud.
-            pass
         for dots_key, hr_key, pace_key in [
             ("dots20", "load.lt_effort_dots20_hr", "load.lt_effort_dots20_pace"),
             ("dots30", "load.lt_effort_dots30_hr", "load.lt_effort_dots30_pace"),
@@ -277,8 +285,10 @@ def compute_metric_rows(
                     [d["pace"] for d in dots],
                     index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
                 )
-                rows += rows_from_series(hr_key, hr_series, "computed", params={"unit": "bpm", "basis": "best_window_outdoor_running"})
-                rows += rows_from_series(pace_key, pace_series, "computed", params={"unit": "m/s", "basis": "best_window_outdoor_running"})
+                dots_params_hr = {"unit": "bpm", "basis": "best_window_outdoor_running"}
+                dots_params_pace = {"unit": "m/s", "basis": "best_window_outdoor_running"}
+                rows += rows_from_series(hr_key, hr_series, "computed", params=dots_params_hr)
+                rows += rows_from_series(pace_key, pace_series, "computed", params=dots_params_pace)
 
     return rows
 
@@ -297,9 +307,11 @@ def persist_session_metrics(
     The dashboard builds its in-memory view via compute_metric_rows but
     historically never wrote those rows back, leaving metric_series (and
     therefore race_* for direct DB readers) empty. Call this after the view
-    is built so the store mirrors what the UI shows. Returns rows written.
+    is built so the store mirrors what the UI shows.     Returns rows written.
     """
-    rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload, series_by_id)
+    rows = compute_metric_rows(
+        activities, profile, lt_payload, race_payload, vo2max_payload, series_by_id
+    )
     store.save_metric_rows(rows)
     return len(rows)
 
@@ -316,7 +328,9 @@ def run_pipeline(
     store = MetricStore(out_db)
     store.save_runner_profile(profile)
     store.save_activities(activities)
-    rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload, series_by_id)
+    rows = compute_metric_rows(
+        activities, profile, lt_payload, race_payload, vo2max_payload, series_by_id
+    )
     store.save_metric_rows(rows)
     store.close()
     return {"metrics_written": len(rows), "activities": len(activities)}
