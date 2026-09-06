@@ -819,6 +819,66 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         st.write("No elevation data in this window.")
 
 
+def render_repetitions(activities, activity_id: int, units: str) -> None:
+    """Comparison table + chart for every repetition of the selected workout.
+
+    The selected activity's 80/20 plan code (e.g. 'RF24') is the grouping key;
+    the table and line chart show all repetitions with that same code, oldest
+    first. Activities without a code show a hint instead.
+    """
+    target = next((a for a in activities if a.activity_id == activity_id), None)
+    if target is None or target.code is None:
+        st.caption(
+            "This activity has no 80/20 plan workout code in its name "
+            "(e.g. 'Winnetka - RF24 (Foundation Run)'), so there is nothing to compare."
+        )
+        return
+    code = target.code
+    reps = [a for a in activities if a.code == code]
+    reps.sort(key=lambda a: a.date)
+    if len(reps) < 2:
+        st.caption(f"Only one repetition of **{code}** found — add more to compare.")
+        return
+    table = []
+    for a in reps:
+        m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
+        pace = m_per_unit / a.avg_speed if a.avg_speed else None
+        table.append(
+            {
+                "date": a.date.isoformat(),
+                "distance": _fmt(a.distance_km, {"unit": "km"}, units),
+                "pace": _fmt(pace, {"unit": "s"}, units) if pace else "—",
+                "avg HR": f"{a.avg_hr:.0f}" if a.avg_hr is not None else "—",
+                "max HR": f"{a.max_hr:.0f}" if a.max_hr is not None else "—",
+                "aerob. TE": f"{a.aerobic_te:.1f}" if a.aerobic_te is not None else "—",
+                "anaerob. TE": f"{a.anaerobic_te:.1f}" if a.anaerobic_te is not None else "—",
+                "elev gain": _fmt(a.ele_gain_m, {"unit": "m"}, units)
+                if a.ele_gain_m is not None
+                else "—",
+            }
+        )
+    st.subheader(f"Repeated workout **{code}**")
+    st.dataframe(table, use_container_width=True, hide_index=True)
+
+    xs = [a.date for a in reps]
+    m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
+    paces = [m_per_unit / a.avg_speed / 60.0 if a.avg_speed else None for a in reps]
+    hrs = [a.avg_hr for a in reps]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=xs, y=paces, mode="lines+markers", name="avg pace (min/unit)"))
+    fig.add_trace(
+        go.Scatter(x=xs, y=hrs, mode="lines+markers", name="avg HR (bpm)", yaxis="y2"),
+    )
+    fig.update_layout(
+        title=f"Performance over repetitions — {code}",
+        hovermode="x unified",
+        yaxis_title=f"min / {'mi' if units not in ('km', 'metric') else 'km'}",
+        yaxis2={"overlaying": "y", "side": "right", "title": "bpm"},
+        legend={"orientation": "h", "y": 1.12},
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def render_activities(activities, since, until, units) -> None:
     rows = []
     for a in activities:
@@ -832,6 +892,7 @@ def render_activities(activities, since, until, units) -> None:
             {
                 "date": a.date.isoformat(),
                 "sport": a.sport,
+                "name": a.name or "—",
                 "distance": _fmt(a.distance_km, {"unit": "km"}, units),
                 "duration": _fmt(a.duration_s, {"unit": "s"}, units),
                 "pace": _fmt(pace, {"unit": "s"}, units) if pace else "—",
@@ -841,13 +902,26 @@ def render_activities(activities, since, until, units) -> None:
                 "elev gain": _fmt(a.ele_gain_m, {"unit": "m"}, units)
                 if a.ele_gain_m is not None
                 else "—",
+                "activity_id": a.activity_id,
             }
         )
     df = pd.DataFrame(rows)
     if df.empty:
         st.write("No activities in this window.")
         return
-    st.dataframe(df.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
+    df = df.sort_values("date", ascending=False).reset_index(drop=True)
+    st.caption("Select a row to compare repeated workouts (same 80/20 plan code).")
+    sel = st.dataframe(
+        df.drop(columns=["activity_id"]),
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="activities_table",
+    )
+    if sel.selection.rows:
+        selected_id = int(df.iloc[sel.selection.rows[0]]["activity_id"])
+        render_repetitions(activities, selected_id, units)
 
 
 def main() -> None:

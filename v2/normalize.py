@@ -1,5 +1,6 @@
 """Raw Garmin JSON -> validated Activity model. Pure: no network."""
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
@@ -7,6 +8,22 @@ from typing import Any
 RUNNING_KEYS = {"running"}
 TREADMILL_KEYS = {"treadmill_running"}
 STRENGTH_KEYS = {"strength_training"}
+
+
+WORKOUT_CODE_RE = re.compile(r"-\s*([A-Z]+\d{1,2})\s*\(")
+
+
+def workout_code(name: str | None) -> str | None:
+    """Extract the 80/20 plan workout code (e.g. 'RF24') from an activity name.
+
+    Matches the code between '<location> - ' and ' (' in Garmin workout names
+    like 'Winnetka - RF24 (Foundation Run)'. Returns None for unlabeled
+    activities (e.g. 'Treadmill Running').
+    """
+    if not name:
+        return None
+    m = WORKOUT_CODE_RE.search(name)
+    return m.group(1) if m else None
 
 
 def sport_of(summary: dict) -> str:
@@ -49,6 +66,7 @@ class Activity:
     location: str | None = None
     lat: float | None = None
     lon: float | None = None
+    name: str | None = None
     raw: dict = field(default_factory=dict, repr=False)
 
     @property
@@ -58,6 +76,11 @@ class Activity:
     @property
     def duration_min(self) -> float:
         return round(self.duration_s / 60.0, 6)
+
+    @property
+    def code(self) -> str | None:
+        """80/20 plan workout code from `name`, or None when not labeled."""
+        return workout_code(self.name)
 
 
 def from_summary(summary: dict) -> Activity:
@@ -95,5 +118,6 @@ def from_summary(summary: dict) -> Activity:
         location=_f(summary, "locationName"),
         lat=_f(summary, "startLatitude"),
         lon=_f(summary, "startLongitude"),
+        name=_f(summary, "activityName"),
         raw=summary,
     )

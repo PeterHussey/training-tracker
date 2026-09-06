@@ -3,7 +3,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-from normalize import from_summary, sport_of
+from normalize import from_summary, sport_of, workout_code
 
 FIXTURE = Path(__file__).parent / "fixtures" / "activities_sample.json"
 DATA = json.loads(FIXTURE.read_text())
@@ -18,6 +18,26 @@ def test_sport_classification():
     assert sport_of(_first("treadmill_running")) == "treadmill"
     assert sport_of(_first("indoor_cycling")) == "cross"
     assert sport_of(_first("strength_training")) == "strength"
+
+
+def test_from_summary_maps_activity_name():
+    a = from_summary(_first("running"))
+    assert a.name == "Lincoln - RHR22 (Hill Repetitions Run)"
+
+
+def test_workout_code_extracts_plan_code():
+    assert workout_code("Lincoln - RHR22 (Hill Repetitions Run)") == "RHR22"
+    assert workout_code("Winnetka - RF24 (Foundation Run)") == "RF24"
+    assert workout_code("West Lafayette - ER6 (Endurance Run)") == "ER6"
+    assert workout_code("Lincoln - RFR4 (Fartlek Run)") == "RFR4"
+
+
+def test_workout_code_none_for_unlabeled_activities():
+    assert workout_code("Treadmill Running") is None
+    assert workout_code("Indoor Cycling") is None
+    assert workout_code("Strength") is None
+    assert workout_code(None) is None
+    assert workout_code("") is None
 
 
 def test_from_summary_maps_core_fields():

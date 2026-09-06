@@ -187,6 +187,52 @@ def window_series(s: pd.Series, since: date, until: date, weekly: bool = False) 
     return s[mask]
 
 
+def build_repetitions(activities) -> dict[str, list]:
+    """Group activities by their 80/20 plan workout code, keyed oldest-first.
+
+    Only activities with a recognizable code (e.g. 'RF24' in
+    'Winnetka - RF24 (Foundation Run)') are included; unlabeled activities
+    (treadmill, strength, indoor cycling) are omitted.
+    """
+    groups: dict[str, list] = {}
+    for a in activities:
+        code = a.code
+        if code:
+            groups.setdefault(code, []).append(a)
+    for code in groups:
+        groups[code].sort(key=lambda a: (a.date, a.activity_id))
+    return groups
+
+
+def repetition_rows(activities, code: str) -> list[dict]:
+    """Per-repetition comparison rows for one workout code, oldest first.
+
+    Each row carries the fields the dashboard plots/musters for a single
+    repetition (pace is kept as m/s in avg_speed and distance as km, so the
+    view owns unit formatting).
+    """
+    rows = []
+    for a in activities:
+        if a.code != code:
+            continue
+        rows.append(
+            {
+                "activity_id": a.activity_id,
+                "date": a.date.isoformat(),
+                "name": a.name,
+                "distance_km": a.distance_km,
+                "duration_s": a.duration_s,
+                "avg_speed": a.avg_speed,
+                "avg_hr": a.avg_hr,
+                "max_hr": a.max_hr,
+                "aerobic_te": a.aerobic_te,
+                "anaerobic_te": a.anaerobic_te,
+                "ele_gain_m": a.ele_gain_m,
+            }
+        )
+    return sorted(rows, key=lambda r: r["date"])
+
+
 def run_with_timeout(fn, timeout: float, **kwargs):
     """Run fn on a daemon thread, bounding it to a hard wall-clock timeout.
 

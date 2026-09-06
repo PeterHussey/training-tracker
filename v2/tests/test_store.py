@@ -94,6 +94,30 @@ def test_load_activities_roundtrip(tmp_path):
     assert second.vo2max is None
 
 
+def test_activity_name_roundtrip(tmp_path):
+    db = tmp_path / "t.db"
+    store = MetricStore(str(db))
+    named = Activity(
+        activity_id=77,
+        sport="running",
+        date=date(2026, 8, 19),
+        ts_ms=0,
+        distance_m=5684.0,
+        duration_s=2148.0,
+        elapsed_s=2249.0,
+        avg_hr=137.0,
+        max_hr=151.0,
+        zone_s={},
+        name="Winnetka - RF24 (Foundation Run)",
+    )
+    store.save_activities([named])
+    loaded = store.load_activities()
+    store.close()
+    assert len(loaded) == 1
+    assert loaded[0].name == "Winnetka - RF24 (Foundation Run)"
+    assert loaded[0].code == "RF24"
+
+
 def test_load_activities_empty(tmp_path):
     store = MetricStore(str(tmp_path / "t.db"))
     assert store.load_activities() == []

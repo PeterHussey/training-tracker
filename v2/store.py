@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS activities (
   avg_speed          REAL,
   fastest_split_1609 REAL,
   zone_s             TEXT NOT NULL DEFAULT '{}',
-  route              TEXT NOT NULL DEFAULT '{}'
+  route              TEXT NOT NULL DEFAULT '{}',
+  name               TEXT
 );
 CREATE TABLE IF NOT EXISTS metric_series (
   metric TEXT NOT NULL,
@@ -50,6 +51,19 @@ class MetricStore:
         # connection must not be implicitly bound to a single thread.
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """In-place migrations for stores created before a schema change.
+
+        `CREATE TABLE IF NOT EXISTS` leaves existing tables untouched, so a new
+        column must be added via ALTER TABLE. Idempotent on already-migrated
+        databases.
+        """
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(activities)").fetchall()}
+        if "name" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN name TEXT")
+        self.conn.commit()
 
     def save_runner_profile(self, profile) -> None:
         rows = [
@@ -101,14 +115,15 @@ class MetricStore:
                     {"lat": a.lat, "lon": a.lon, "location": a.location, "device_id": a.device_id},
                     sort_keys=True,
                 ),
+                a.name,
             )
             for a in activities
         ]
         self.conn.executemany(
             "INSERT OR REPLACE INTO activities (activity_id, activity_date, sport, "
             "distance_m, duration_s, ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, "
-            "anaerobic_te, avg_speed, fastest_split_1609, zone_s, route) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "anaerobic_te, avg_speed, fastest_split_1609, zone_s, route, name) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         self.conn.commit()
@@ -160,7 +175,7 @@ class MetricStore:
         rows = self.conn.execute(
             "SELECT activity_id, activity_date, sport, distance_m, duration_s, "
             "ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, anaerobic_te, "
-            "avg_speed, fastest_split_1609, zone_s FROM activities "
+            "avg_speed, fastest_split_1609, zone_s, name FROM activities "
             "ORDER BY activity_date, activity_id"
         ).fetchall()
         return [self._activity_from_row(r) for r in rows]
@@ -182,6 +197,7 @@ class MetricStore:
             avg_speed,
             fastest_split_1609,
             zone_s,
+            name,
         ) = row
         zones: dict[int, float] = {}
         if zone_s:
@@ -206,6 +222,7 @@ class MetricStore:
             anaerobic_te=anaerobic_te,
             avg_speed=avg_speed,
             fastest_split_1609=fastest_split_1609,
+            name=name,
         )
 
     def load_runner_profile(self) -> RunnerProfile | None:
