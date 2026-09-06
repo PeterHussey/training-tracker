@@ -13,6 +13,127 @@ import pandas as pd
 from normalize import Activity
 
 
+def parse_details_series(
+    details: dict, sample_s: float = 1.0
+) -> tuple[list[float | None], list[float | None]]:
+    """Extract aligned HR and speed lists from a Garmin activity-details payload.
+
+    Args:
+        details: Raw details dict with a ``metrics`` list of per-sample dicts.
+            Each sample may contain ``heartRate`` and ``speed`` (both float | None).
+        sample_s: Nominal interval between samples in seconds. Assumed 1 Hz when
+            ``maxChartSize=2000`` downsampling is uniform — caller is responsible
+            for passing the correct value if the source uses a different rate.
+
+    Returns:
+        ``(hr, speed)`` — two lists of equal length. ``None`` values represent
+        optical HR dropouts or GPS gaps.
+    """
+    metrics = details.get("metrics") or []
+    hr: list[float | None] = []
+    speed: list[float | None] = []
+    for m in metrics:
+        hr.append(m.get("heartRate"))
+        speed.append(m.get("speed"))
+    return hr, speed
+
+
+def best_window(
+    hr: list[float | None],
+    speed: list[float | None],
+    window_s: int,
+    sample_s: float = 1.0,
+    max_gap_s: float = 5.0,
+) -> dict | None:
+    """Find the fastest contiguous window of a given duration.
+
+    Slides a window of ``window_s`` seconds over the sample lists, tracking
+    contiguous valid samples (no ``None`` in either HR or speed). A gap longer
+    than ``max_gap_s`` seconds (consecutive ``None`` samples) breaks contiguity.
+
+    Args:
+        hr: Per-sample heart rate (may contain None for dropouts).
+        speed: Per-sample speed in m/s (may contain None for gaps).
+        window_s: Desired window duration in seconds.
+        sample_s: Seconds per sample (default 1.0 for 1 Hz).
+        max_gap_s: Maximum allowed gap (consecutive None samples × sample_s)
+            before a window is considered invalid.
+
+    Returns:
+        ``{mean_speed, mean_hr, start_idx}`` for the fastest valid window, or
+        ``None`` if no fully-covered contiguous window exists.
+    """
+    n = len(hr)
+    if n != len(speed) or n == 0:
+        return None
+
+    win = int(window_s / sample_s)
+    max_gap = int(max_gap_s / sample_s)
+    if max_gap < 1:
+        max_gap = 1
+
+    valid = [h is not None and s is not None for h, s in zip(hr, speed, strict=True)]
+
+    best_speed = -1.0
+    best_result: dict | None = None
+
+    # Track contiguity in the sliding window.
+    # gap_count counts consecutive invalid samples currently inside the window.
+    # valid_count counts valid samples currently inside the window.
+    gap_count = 0
+    valid_count = 0
+    # We also need to know the run of trailing None's to detect when a gap
+    # enters/exits the window. Store the validity of each position for that.
+    gap_streak = 0  # current streak of consecutive None at the tail of window
+
+    for i in range(n):
+        # Add new element at right edge of window
+        if valid[i]:
+            gap_streak = 0
+            valid_count += 1
+        else:
+            gap_streak += 1
+            if gap_streak <= max_gap:
+                gap_count += 1  # gap still within tolerance
+
+        # Once we have a full window, evaluate it
+        if i >= win - 1:
+            start = i - win + 1
+            # A window is valid only if:
+            # 1. It has enough valid samples (all valid, no overflow gaps)
+            # 2. No gap inside exceeds max_gap_s
+            if valid_count == win and gap_count == 0:
+                seg_speed = speed[start : start + win]
+                seg_hr = hr[start : start + win]
+                mean_s = sum(v for v in seg_speed if v is not None) / win
+                mean_h = sum(v for v in seg_hr if v is not None) / win
+                if mean_s > best_speed:
+                    best_speed = mean_s
+                    best_result = {
+                        "mean_speed": mean_s,
+                        "mean_hr": mean_h,
+                        "start_idx": start,
+                    }
+
+            # Recount for next iteration: recompute gap streaks over
+            # [start+1 .. i+1]. O(win) per step; fine for n ≤ 2000.
+            new_start = start + 1
+            valid_count = 0
+            gap_count = 0
+            streak = 0
+            for j in range(new_start, i + 1):
+                if valid[j]:
+                    valid_count += 1
+                    streak = 0
+                else:
+                    streak += 1
+                    if streak <= max_gap:
+                        gap_count += 1
+            gap_streak = streak
+
+    return best_result
+
+
 @dataclass
 class LTData:
     hr: int | None

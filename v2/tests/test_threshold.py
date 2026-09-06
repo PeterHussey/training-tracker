@@ -3,7 +3,14 @@ from profile import default_profile
 
 import pytest
 
-from metrics.threshold import approx_cs_1609, parse_lt, rolling_lt_hr, rolling_lt_pace
+from metrics.threshold import (
+    approx_cs_1609,
+    best_window,
+    parse_details_series,
+    parse_lt,
+    rolling_lt_hr,
+    rolling_lt_pace,
+)
 from normalize import Activity
 
 LT_PAYLOAD = {
@@ -95,3 +102,35 @@ def test_rolling_lt_pace_includes_treadmill():
     s = rolling_lt_pace(acts)
     assert len(s) == 2
     assert s.iloc[1] == pytest.approx(1609.0 / 310.0)
+
+
+# --- details-series parser + best-window ---
+
+
+def test_parse_details_series_extracts_hr_and_speed():
+    details = {
+        "metrics": [
+            {"heartRate": 150.0, "speed": 2.8, "distance": 0.0},
+            {"heartRate": None, "speed": 3.0, "distance": 3.0},
+            {"heartRate": 172.0, "speed": 3.8, "distance": 6.8},
+        ]
+    }
+    hr, speed = parse_details_series(details)
+    assert hr == [150.0, None, 172.0]
+    assert speed == [2.8, 3.0, 3.8]
+
+
+def test_best_window_picks_fastest_contiguous_segment():
+    hr = [150.0] * 600 + [172.0] * 1200 + [150.0] * 600
+    speed = [2.8] * 600 + [3.8] * 1200 + [2.8] * 600
+    w = best_window(hr, speed, window_s=1200)
+    assert w["mean_speed"] == pytest.approx(3.8)
+    assert w["mean_hr"] == pytest.approx(172.0)
+
+
+def test_best_window_gap_breaks_contiguity():
+    hr = [172.0] * 1200
+    speed = [3.8] * 1200
+    hr[600] = None  # optical gap > max_gap_s at 1Hz
+    w = best_window(hr, speed, window_s=1200, max_gap_s=0.5)
+    assert w is None
