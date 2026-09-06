@@ -47,9 +47,10 @@ def best_window(
 ) -> dict | None:
     """Find the fastest contiguous window of a given duration.
 
-    Slides a window of ``window_s`` seconds over the sample lists, tracking
-    contiguous valid samples (no ``None`` in either HR or speed). A gap longer
-    than ``max_gap_s`` seconds (consecutive ``None`` samples) breaks contiguity.
+    Slides a window of ``window_s`` seconds over the sample lists.  Gaps
+    (consecutive ``None`` samples) up to ``max_gap_s`` seconds are tolerated;
+    only the valid (non-``None``) samples are used for mean speed / HR
+    calculation.  A gap exceeding ``max_gap_s`` seconds invalidates the window.
 
     Args:
         hr: Per-sample heart rate (may contain None for dropouts).
@@ -61,7 +62,7 @@ def best_window(
 
     Returns:
         ``{mean_speed, mean_hr, start_idx}`` for the fastest valid window, or
-        ``None`` if no fully-covered contiguous window exists.
+        ``None`` if no valid window exists.
     """
     n = len(hr)
     if n != len(speed) or n == 0:
@@ -69,67 +70,60 @@ def best_window(
 
     win = int(window_s / sample_s)
     max_gap = int(max_gap_s / sample_s)
-    if max_gap < 1:
-        max_gap = 1
 
     valid = [h is not None and s is not None for h, s in zip(hr, speed, strict=True)]
+
+    # Prefix sums — O(n) build, O(1) per window query.
+    prefix_valid = [0] * (n + 1)
+    prefix_speed = [0.0] * (n + 1)
+    prefix_hr = [0.0] * (n + 1)
+    for i in range(n):
+        prefix_valid[i + 1] = prefix_valid[i] + (1 if valid[i] else 0)
+        prefix_speed[i + 1] = prefix_speed[i] + (speed[i] if valid[i] else 0.0)
+        prefix_hr[i + 1] = prefix_hr[i] + (hr[i] if valid[i] else 0.0)
 
     best_speed = -1.0
     best_result: dict | None = None
 
-    # Track contiguity in the sliding window.
-    # gap_count counts consecutive invalid samples currently inside the window.
-    # valid_count counts valid samples currently inside the window.
-    gap_count = 0
-    valid_count = 0
-    # We also need to know the run of trailing None's to detect when a gap
-    # enters/exits the window. Store the validity of each position for that.
-    gap_streak = 0  # current streak of consecutive None at the tail of window
+    for start in range(n - win + 1):
+        end = start + win
+        vc = prefix_valid[end] - prefix_valid[start]
 
-    for i in range(n):
-        # Add new element at right edge of window
-        if valid[i]:
-            gap_streak = 0
-            valid_count += 1
-        else:
-            gap_streak += 1
-            if gap_streak <= max_gap:
-                gap_count += 1  # gap still within tolerance
+        # No valid samples at all → skip immediately.
+        if vc == 0:
+            continue
 
-        # Once we have a full window, evaluate it
-        if i >= win - 1:
-            start = i - win + 1
-            # A window is valid only if:
-            # 1. It has enough valid samples (all valid, no overflow gaps)
-            # 2. No gap inside exceeds max_gap_s
-            if valid_count == win and gap_count == 0:
-                seg_speed = speed[start : start + win]
-                seg_hr = hr[start : start + win]
-                mean_s = sum(v for v in seg_speed if v is not None) / win
-                mean_h = sum(v for v in seg_hr if v is not None) / win
-                if mean_s > best_speed:
-                    best_speed = mean_s
-                    best_result = {
-                        "mean_speed": mean_s,
-                        "mean_hr": mean_h,
-                        "start_idx": start,
-                    }
+        # Check max consecutive-None streak inside the window.  Scan the
+        # ``valid`` slice; the window length is bounded by the caller's
+        # sample count and is typically ≤ 1200.
+        max_gap_here = 0
+        streak = 0
+        for j in range(start, end):
+            if valid[j]:
+                streak = 0
+            else:
+                streak += 1
+                if streak > max_gap_here:
+                    max_gap_here = streak
+                    if max_gap_here > max_gap:
+                        break
 
-            # Recount for next iteration: recompute gap streaks over
-            # [start+1 .. i+1]. O(win) per step; fine for n ≤ 2000.
-            new_start = start + 1
-            valid_count = 0
-            gap_count = 0
-            streak = 0
-            for j in range(new_start, i + 1):
-                if valid[j]:
-                    valid_count += 1
-                    streak = 0
-                else:
-                    streak += 1
-                    if streak <= max_gap:
-                        gap_count += 1
-            gap_streak = streak
+        if max_gap_here > max_gap:
+            continue
+
+        # Window is valid — compute means over valid samples only.
+        seg_speed_sum = prefix_speed[end] - prefix_speed[start]
+        seg_hr_sum = prefix_hr[end] - prefix_hr[start]
+        mean_s = seg_speed_sum / vc
+        mean_h = seg_hr_sum / vc
+
+        if mean_s > best_speed:
+            best_speed = mean_s
+            best_result = {
+                "mean_speed": mean_s,
+                "mean_hr": mean_h,
+                "start_idx": start,
+            }
 
     return best_result
 

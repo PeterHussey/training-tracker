@@ -134,3 +134,30 @@ def test_best_window_gap_breaks_contiguity():
     hr[600] = None  # optical gap > max_gap_s at 1Hz
     w = best_window(hr, speed, window_s=1200, max_gap_s=0.5)
     assert w is None
+
+
+def test_best_window_gap_within_tolerance_accepted():
+    """A 3-sample gap (3 s) with max_gap_s=5.0 should be accepted."""
+    hr: list[float | None] = [172.0] * 1200
+    speed: list[float | None] = [3.8] * 1200
+    hr[599] = None
+    hr[600] = None
+    hr[601] = None  # 3 s gap ≤ 5 s tolerance
+    w = best_window(hr, speed, window_s=1200, max_gap_s=5.0)
+    assert w is not None
+    assert w["mean_speed"] == pytest.approx(3.8)
+    assert w["mean_hr"] == pytest.approx(172.0)
+
+
+def test_best_window_gap_exceeding_tolerance_rejected():
+    """A 6-sample gap (6 s) with max_gap_s=5.0 should still return None."""
+    hr: list[float | None] = [172.0] * 1200
+    speed: list[float | None] = [3.8] * 1200
+    hr[597] = None
+    hr[598] = None
+    hr[599] = None
+    hr[600] = None
+    hr[601] = None
+    hr[602] = None  # 6 s gap > 5 s tolerance
+    w = best_window(hr, speed, window_s=1200, max_gap_s=5.0)
+    assert w is None
