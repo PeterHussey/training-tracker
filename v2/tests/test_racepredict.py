@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from metrics.racepredict import DISTANCE_KEYS, parse_predictions
+from metrics.racepredict import DISTANCE_KEYS, daily_predictions_from_trend, parse_predictions
 
 FIXTURE = Path(__file__).parent / "fixtures" / "race_predictions.json"
 
@@ -41,3 +41,38 @@ def test_live_schema_flat_seconds():
     }
     out = parse_predictions(payload)
     assert out == {"5k": 1405, "10k": 3076, "half": 7420, "full": 17179}
+
+
+def test_daily_trend_builds_per_distance_series():
+    trend = [
+        {"calendarDate": "2026-08-28", "time5K": 1405, "time10K": 3076},
+        {
+            "calendarDate": "2026-09-03",
+            "time5K": 1413,
+            "time10K": 3100,
+            "timeHalfMarathon": 7460,
+            "timeMarathon": 17267,
+        },
+    ]
+    out = daily_predictions_from_trend(trend)
+    assert set(out) == {"5k", "10k", "half", "full"}
+    assert out["5k"]["2026-08-28"] == 1405
+    assert out["5k"]["2026-09-03"] == 1413
+    # missing keys on a day stay missing (no forward-fill across days)
+    assert len(out["half"]) == 1
+    assert out["full"]["2026-09-03"] == 17267
+
+
+def test_daily_trend_empty_returns_empty_series():
+    out = daily_predictions_from_trend([])
+    assert set(out) == {"5k", "10k", "half", "full"}
+    assert all(len(s) == 0 for s in out.values())
+
+
+def test_daily_trend_duplicate_dates_keep_last():
+    trend = [
+        {"calendarDate": "2026-08-28", "time5K": 1405},
+        {"calendarDate": "2026-08-28", "time5K": 1413},
+    ]
+    out = daily_predictions_from_trend(trend)
+    assert out["5k"]["2026-08-28"] == 1413

@@ -115,13 +115,20 @@ def test_load_runner_profile_roundtrip(tmp_path):
     assert loaded.birth_year == p.birth_year
     assert loaded.hr_zones == p.hr_zones
     assert loaded.units == "metric"
+    assert loaded.selected_race == "5k"  # default when not persisted
 
 
 def test_load_runner_profile_configured_roundtrip(tmp_path):
     db = tmp_path / "t.db"
     store = MetricStore(str(db))
     p = RunnerProfile(
-        hrmax=185, hrrest=62, sex="F", birth_year=1990, lthr_manual=168, hrmax_source="configured"
+        hrmax=185,
+        hrrest=62,
+        sex="F",
+        birth_year=1990,
+        lthr_manual=168,
+        hrmax_source="configured",
+        selected_race="half",
     )
     store.save_runner_profile(p)
     loaded = store.load_runner_profile()
@@ -132,6 +139,7 @@ def test_load_runner_profile_configured_roundtrip(tmp_path):
     assert loaded.sex == "F"
     assert loaded.birth_year == 1990
     assert loaded.lthr_manual == 168
+    assert loaded.selected_race == "half"
 
 
 def test_load_runner_profile_none(tmp_path):

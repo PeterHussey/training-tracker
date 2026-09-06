@@ -219,7 +219,7 @@ def build_session_view(
     activities,
     profile: RunnerProfile,
     lt_payload: dict | None = None,
-    race_payload: dict | None = None,
+    race_payload: dict | list | None = None,
     vo2max_payload: list[dict] | None = None,
 ) -> SessionView:
     rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload)

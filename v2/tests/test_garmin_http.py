@@ -271,3 +271,36 @@ def test_fetch_vo2max_trend_hits_daily_endpoint(tokenstore, monkeypatch):
     assert "maxmet/daily/2026-08-01/2026-08-27" in calls["url"]
     assert "maxmet/latest" not in calls["url"]
     assert out[0]["generic"]["vo2MaxPreciseValue"] == 46.5
+
+
+def test_fetch_race_predictions_trend_hits_daily_endpoint(tokenstore, monkeypatch):
+    """Race history must come from /racepredictions/daily/{name} (NOT /latest).
+
+    /latest returns a single current snapshot, which is why the store held
+    only one race point. The daily endpoint returns one snapshot per day in
+    range (same flat time5K/calendarDate schema as latest).
+    """
+    calls = {}
+
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        calls["url"] = url
+        calls["params"] = params
+        r = mock.Mock(status_code=200)
+        r.json.return_value = [
+            {"calendarDate": "2026-08-28", "time5K": 1405},
+            {"calendarDate": "2026-09-03", "time5K": 1413},
+        ]
+        return r
+
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    gh = GarminHttp(tokenstore)
+    gh._display_name = "test-user"
+    out = gh.fetch_race_predictions_trend("2026-08-28", "2026-09-03")
+    assert "racepredictions/daily/test-user" in calls["url"]
+    assert "racepredictions/latest" not in calls["url"]
+    assert calls["params"] == {
+        "fromCalendarDate": "2026-08-28",
+        "toCalendarDate": "2026-09-03",
+    }
+    assert len(out) == 2
+    assert out[0]["time5K"] == 1405

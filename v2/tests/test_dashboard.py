@@ -13,7 +13,13 @@ from unittest import mock
 import pytest
 
 import dashboard as d
-from dashboard import DEFAULT_WINDOW_DAYS, FETCH_DAYS, compute_fetch_start, period_bounds
+from dashboard import (
+    DEFAULT_WINDOW_DAYS,
+    FETCH_DAYS,
+    compute_fetch_start,
+    period_bounds,
+    race_time_ticks,
+)
 
 
 def test_compute_fetch_start_full_window_when_empty():
@@ -49,7 +55,9 @@ def test_refresh_garmin_narrows_window_when_store_has_activities(monkeypatch):
     fake_gw = mock.Mock()
     fake_gw.fetch_activities.return_value = [{"activityId": 1}]
     fake_gw.fetch_lactate_threshold.return_value = {"speed_and_heart_rate": {}, "power": {}}
-    fake_gw.fetch_race_predictions.return_value = {"maybeMap": {}}
+    fake_gw.fetch_race_predictions_trend.return_value = [
+        {"calendarDate": "2026-08-29", "time5K": 1405}
+    ]
     fake_gw.fetch_vo2max_trend.return_value = [{"generic": {"calendarDate": "2026-08-29"}}]
     monkeypatch.setattr("dashboard.GarminGateway", lambda **kw: fake_gw)
     monkeypatch.setattr("dashboard.date", mock.Mock(today=mock.Mock(return_value=end)))
@@ -66,6 +74,12 @@ def test_refresh_garmin_narrows_window_when_store_has_activities(monkeypatch):
     assert vo2_args[0] == (end - timedelta(days=FETCH_DAYS)).isoformat()
     assert vo2_args[1] == end.isoformat()
     assert vo2[0]["generic"]["calendarDate"] == "2026-08-29"
+    # Race trend likewise ALWAYS uses the full window (daily history endpoint,
+    # not the /latest single snapshot), so the chart has a real time series.
+    race_args = fake_gw.fetch_race_predictions_trend.call_args.args
+    assert race_args[0] == (end - timedelta(days=FETCH_DAYS)).isoformat()
+    assert race_args[1] == end.isoformat()
+    assert race[0]["time5K"] == 1405
 
 
 def test_refresh_garmin_full_window_when_store_empty(monkeypatch):
@@ -80,7 +94,9 @@ def test_refresh_garmin_full_window_when_store_empty(monkeypatch):
     fake_gw = mock.Mock()
     fake_gw.fetch_activities.return_value = [{"activityId": 1}]
     fake_gw.fetch_lactate_threshold.return_value = {"speed_and_heart_rate": {}, "power": {}}
-    fake_gw.fetch_race_predictions.return_value = {"maybeMap": {}}
+    fake_gw.fetch_race_predictions_trend.return_value = [
+        {"calendarDate": "2026-08-29", "time5K": 1405}
+    ]
     fake_gw.fetch_vo2max_trend.return_value = []
     monkeypatch.setattr("dashboard.GarminGateway", lambda **kw: fake_gw)
 
@@ -110,7 +126,9 @@ def test_refresh_garmin_no_activities_is_noop_when_store_has_data(monkeypatch):
     fake_gw = mock.Mock()
     fake_gw.fetch_activities.return_value = []  # API legitimately empty
     fake_gw.fetch_lactate_threshold.return_value = {"speed_and_heart_rate": {}, "power": {}}
-    fake_gw.fetch_race_predictions.return_value = {"maybeMap": {}}
+    fake_gw.fetch_race_predictions_trend.return_value = [
+        {"calendarDate": "2026-08-29", "time5K": 1405}
+    ]
     fake_gw.fetch_vo2max_trend.return_value = [{"generic": {"calendarDate": "2026-08-31"}}]
     monkeypatch.setattr("dashboard.GarminGateway", lambda **kw: fake_gw)
     monkeypatch.setattr("dashboard.date", mock.Mock(today=mock.Mock(return_value=end)))
@@ -169,3 +187,24 @@ def test_period_bounds_independent_of_today():
     min_d, since, end = period_bounds(dates)
     assert end == date(2026, 8, 30)
     assert min_d == date(2026, 1, 5)
+
+
+def test_race_time_ticks_cover_values_as_hmmss():
+    vals, texts = race_time_ticks([1413.0, 3100.0, 7460.0, 17267.0])
+    assert vals[0] <= 1413.0
+    assert vals[-1] >= 17267.0
+    assert len(vals) <= 8
+    assert texts[0] == "0:30:00" or ":" in texts[0]
+    assert all(":" in t for t in texts)
+    assert [float(v) for v in vals] == sorted(vals)
+
+
+def test_race_time_ticks_narrow_span_uses_minutes():
+    vals, texts = race_time_ticks([1405.0, 1413.0])
+    assert vals[0] <= 1405.0
+    assert vals[-1] >= 1413.0
+    assert all(":" in t for t in texts)
+
+
+def test_race_time_ticks_empty():
+    assert race_time_ticks([]) == ([], [])

@@ -78,9 +78,7 @@ _DEFAULT_TOKENSTORE = Path.home() / ".garmin-mcp" / "v2_tokenstore.json"
 
 
 class GarminTokenStore:
-    def __init__(
-        self, path: Path = _DEFAULT_TOKENSTORE, timeout: float = 15.0
-    ):
+    def __init__(self, path: Path = _DEFAULT_TOKENSTORE, timeout: float = 15.0):
         self.path = Path(path)
         self.timeout = timeout
         self._data: dict = {}
@@ -302,6 +300,21 @@ class GarminHttp:
         name = self._resolve_display_name()
         return self.get_json(f"/metrics-service/metrics/racepredictions/latest/{name}")
 
+    def fetch_race_predictions_trend(self, start_date: str, end_date: str) -> list[dict]:
+        """Fetch daily race-prediction history for a date range.
+
+        Uses /metrics-service/metrics/racepredictions/daily/{name} which
+        returns one snapshot per day (unlike 'latest' which returns only the
+        current snapshot). Each entry uses the flat live schema (time5K,
+        calendarDate, ...). Range must span at most ~366 days.
+        """
+        name = self._resolve_display_name()
+        payload = self.get_json(
+            f"/metrics-service/metrics/racepredictions/daily/{name}",
+            params={"fromCalendarDate": start_date, "toCalendarDate": end_date},
+        )
+        return payload if isinstance(payload, list) else []
+
     def fetch_vo2max_trend(self, start_date: str, end_date: str) -> list[dict]:
         """Fetch daily VO2max trend for a date range.
 
@@ -309,7 +322,5 @@ class GarminHttp:
         historical daily values (unlike 'latest' which always returns current).
         Returns a list of daily objects with 'generic' (running) VO2max data.
         """
-        payload = self.get_json(
-            f"/metrics-service/metrics/maxmet/daily/{start_date}/{end_date}"
-        )
+        payload = self.get_json(f"/metrics-service/metrics/maxmet/daily/{start_date}/{end_date}")
         return payload if isinstance(payload, list) else []

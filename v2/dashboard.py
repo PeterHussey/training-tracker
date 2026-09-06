@@ -139,7 +139,7 @@ def _persist_selected_fields(store: MetricStore, selected_race: str) -> None:
 
 def load_cached_trends(
     cache_dir: Path = APP_CACHE_DIR,
-) -> tuple[dict | None, dict | None, list | None]:
+) -> tuple[dict | None, dict | list | None, list | None]:
     """Rehydrate the last-fetched Garmin trend payloads from the gateway cache.
 
     The gateway persists each fetch to cache/app_cache/ (race_predictions.json,
@@ -152,14 +152,13 @@ def load_cached_trends(
     if not cache.is_dir():
         return None, None, None
     lt = _load_json_file(cache / "lactate_threshold.json")
-    # race payload: the pipeline expects a dict (with "asOfDate"/"calendarDate"
-    # keys); the trend file is a list. Prefer the dict form, fall back to the
-    # list only if no dict is cached (pipeline will then skip race rows).
-    race_dict = _load_json_file(cache / "race_predictions.json")
-    race: dict | list | None = race_dict if isinstance(race_dict, dict) else None
+    # race payload: prefer the daily-trend file (a list) — that's what the
+    # chart now plots. Fall back to the legacy latest-snapshot dict if no
+    # trend file exists yet (a dict is still valid for the pipeline).
+    race: dict | list | None = _latest_json_file(cache, "race_predictions_trend_*.json")
     if race is None:
-        race_list = _latest_json_file(cache, "race_predictions_trend_*.json")
-        race = race_list if isinstance(race_list, (dict, list)) else None
+        latest = _load_json_file(cache / "race_predictions.json")
+        race = latest if isinstance(latest, (dict, list)) else None
     vo2: list | None = None
     try:
         candidates = [p for p in cache.glob("vo2max_trend_*.json") if p.is_file()]
@@ -172,8 +171,12 @@ def load_cached_trends(
     return lt, race, vo2
 
 
-def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, list[dict]]:
+def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, list]:
     """Fetch activities from Garmin.
+
+    Returns (activities, lt_payload, race_trend, vo2max_trend). race_trend is
+    the full-window daily list from /racepredictions/daily (not the single
+    /latest snapshot), so the predictions chart plots a real time series.
 
     Args:
         fetch_mode: "incremental" to fetch only activities newer than the latest
@@ -203,7 +206,7 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
     # Race uses the daily history endpoint (not /latest, which is a single
     # current snapshot) so the predictions chart has a real trend.
     trend_start = end - timedelta(days=FETCH_DAYS)
-    race_predictions = gw.fetch_race_predictions() or {}  # dict - for pipeline
+    race = gw.fetch_race_predictions_trend(trend_start.isoformat(), end.isoformat()) or []
     vo2 = gw.fetch_vo2max_trend(trend_start.isoformat(), end.isoformat()) or []
     # An empty incremental window is normal: compute_fetch_start only asks for
     # activities newer than the latest persisted one, so "nothing new since the
@@ -215,9 +218,9 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
         if fetch_mode == "historical":
             raise RuntimeError("No older activities found in this date range")
         # Incremental mode with no new activities is a normal no-op.
-        return [], lt, race_predictions, vo2
+        return [], lt, race, vo2
     acts = [from_summary(a) for a in raw]
-    return acts, lt, race_predictions, vo2
+    return acts, lt, race, vo2
 
 
 def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> RunnerProfile:
@@ -229,10 +232,11 @@ def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> 
     hrrest = st.sidebar.number_input(
         "Resting HR (bpm)", min_value=30, max_value=120, value=p.hrrest
     )
+    HRMAX_SOURCE_INDEX = {"configured": 0, "observed": 1, "age_predicted": 2}
     src = st.sidebar.radio(
         "HRmax source",
         ("manual", "estimate from workouts", "age-predicted"),
-        index=0 if p.hrmax_source == "configured" else 2,
+        index=HRMAX_SOURCE_INDEX.get(p.hrmax_source, 2),
     )
     selected_race = st.sidebar.selectbox(
         "Race distance",
@@ -349,6 +353,33 @@ def _fmt_pace_min(v: float, units: str) -> str:
     m, s = divmod(int(total_sec), 60)
     unit = "/mi" if units in ("miles", "imperial") else "/km"
     return f"{m}:{s:02d} {unit}"
+
+
+def race_time_ticks(values, count: int = 6) -> tuple[list[float], list[str]]:
+    """Evenly spaced H:MM:SS y-axis ticks covering `values` (seconds).
+
+    Plotly has no duration tick formatter, so the race chart passes raw
+    seconds as y values and labels the axis explicitly via tickvals/ticktext.
+    Steps snap to whole minutes/hours so labels stay round; the first tick is
+    at or below the minimum value and the last at or above the maximum.
+    """
+    import math
+
+    vals = [float(v) for v in values if v is not None and v == v]
+    if not vals:
+        return [], []
+    lo, hi = min(vals), max(vals)
+    if hi <= lo:
+        lo = max(0.0, hi - 60.0)
+    raw_step = (hi - lo) / max(count - 1, 1)
+    step = 7200.0
+    for nice in (60.0, 300.0, 600.0, 900.0, 1800.0, 3600.0, 7200.0):
+        if nice >= raw_step:
+            step = nice
+            break
+    first = math.floor(lo / step) * step
+    ticks = [first + i * step for i in range(int(math.ceil((hi - first) / step)) + 1)]
+    return ticks, [_fmt(t, {"unit": "s"}, "km") for t in ticks]
 
 
 def apply_yaxis_mode(fig: go.Figure, mode: str) -> go.Figure:
@@ -492,7 +523,7 @@ def render_load_tab(view, windowed, units) -> None:
         )
 
 
-def render_fitness_tab(view, windowed, units) -> None:
+def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None:
     vo2 = windowed.get("fitness.vo2max")
     if vo2 is None or vo2.empty:
         st.write(
@@ -591,11 +622,27 @@ def render_fitness_tab(view, windowed, units) -> None:
 
     preds = {d: windowed.get(f"race_{d}") for d in ("5k", "10k", "half", "full")}
     if any(p is not None and len(p) for p in preds.values()):
+        race_dist = st.segmented_control(
+            "Race distance",
+            ("5k", "10k", "half", "full"),
+            default=selected_race,
+            format_func=lambda d: {"5k": "5K", "10k": "10K", "half": "Half", "full": "Full"}[d],
+            key="race_distance_selector",
+        )
+        if race_dist is not None and race_dist != selected_race:
+            profile = get_store().load_runner_profile()
+            if profile is not None and profile.selected_race != race_dist:
+                get_store().save_runner_profile(replace(profile, selected_race=race_dist))
+        focus = race_dist or selected_race
         fig = go.Figure()
+        plotted_vals: list[float] = []
         for dist, s in preds.items():
             if s is None or len(s) == 0:
                 continue
             labels = [_fmt(v, {"unit": "s"}, units) for v in s.values]
+            plotted_vals.extend(float(v) for v in s.values)
+            opacity = 1.0 if dist == focus else 0.25
+            width = 3 if dist == focus else 1
             fig.add_trace(
                 go.Scatter(
                     x=s.index,
@@ -603,16 +650,25 @@ def render_fitness_tab(view, windowed, units) -> None:
                     mode="lines+markers",
                     line_shape="hv",
                     name=f"{dist} race",
+                    opacity=opacity,
+                    line={"width": width},
                     text=labels,
                     hovertemplate="%{x}<br>%{text}",
                 )
             )
+        tickvals, ticktext = race_time_ticks(plotted_vals)
         fig.update_layout(
-            title="Garmin race predictions", hovermode="x unified", yaxis_title="seconds"
+            title="Garmin race predictions",
+            hovermode="x unified",
+            yaxis_title="predicted time",
+            yaxis={"tickvals": tickvals, "ticktext": ticktext},
         )
         apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
+            "Daily history from `/racepredictions/daily` — each distance "
+            "trends over the year, so a single refresh shows the prediction "
+            "time series, not just today's snapshot. "
             "5K/10K/half are the trustworthy end; marathon is the least trustworthy prediction."
         )
     else:
@@ -806,13 +862,8 @@ def main() -> None:
         cached_lt, cached_race, cached_vo2 = load_cached_trends()
         if cached_lt is not None:
             st.session_state["lt_payload"] = cached_lt
-        # race payload: ensure it's a dict (fallback to None if only trend list cached)
         if cached_race is not None:
-            if isinstance(cached_race, dict):
-                st.session_state["race_payload"] = cached_race
-            elif isinstance(cached_race, list) and st.session_state.get("race_payload") is None:
-                # Use trend payload only for chart; pipeline needs a dict, leave as None
-                st.session_state["race_payload"] = None
+            st.session_state["race_payload"] = cached_race
         if cached_vo2 is not None:
             st.session_state["vo2max_payload"] = cached_vo2
 
@@ -949,7 +1000,7 @@ def main() -> None:
     with tab_load:
         render_load_tab(view, windowed, units)
     with tab_fitness:
-        render_fitness_tab(view, windowed, units)
+        render_fitness_tab(view, windowed, units, profile.selected_race)
     with tab_volume:
         render_volume_tab(activities, view, windowed, units)
     with tab_acts:

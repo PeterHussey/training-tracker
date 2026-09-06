@@ -63,7 +63,16 @@ class MetricStore:
                 json.dumps({str(k): list(v) for k, v in sorted(profile.hr_zones.items())}),
                 {},
             ),
-            ("units", profile.units, {}),
+            (
+                "units",
+                profile.units,
+                {},
+            ),
+            (
+                "selected_race",
+                profile.selected_race,
+                {},
+            ),
         ]
         self.conn.executemany(
             "INSERT OR REPLACE INTO runner_profile (key, value, meta) VALUES (?, ?, ?)",
@@ -228,6 +237,7 @@ class MetricStore:
             hr_zones=zones,
             units=data.get("units", "metric"),
             hrmax_source=hrmax_meta.get("source", "configured"),
+            selected_race=data.get("selected_race", "5k"),
         )
 
     def close(self) -> None:

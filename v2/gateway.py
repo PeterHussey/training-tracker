@@ -223,6 +223,16 @@ class GarminGateway:
         self._cache("race_predictions.json", payload)
         return payload
 
+    def fetch_race_predictions_trend(self, start: str, end: str) -> list[dict]:
+        """Fetch daily race-prediction history for a date range.
+
+        Returns a list of per-day snapshots in the flat live schema.
+        Caches to race_predictions_trend_{start}_{end}.json.
+        """
+        payload = self._require_http().fetch_race_predictions_trend(start, end)
+        self._cache(f"race_predictions_trend_{start}_{end}.json", payload)
+        return payload
+
     def fetch_vo2max_trend(self, start: str, end: str) -> list[dict]:
         """Fetch daily VO2max trend for a date range.
 

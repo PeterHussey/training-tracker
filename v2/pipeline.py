@@ -18,7 +18,7 @@ def compute_metric_rows(
     activities: list[Activity],
     profile: RunnerProfile,
     lt_payload: dict | None = None,
-    race_payload: dict | None = None,
+    race_payload: dict | list | None = None,
     vo2max_payload: list[dict] | None = None,
 ) -> list[dict]:
     """Compute every metric row for a session view. Pure: no DB, no network.
@@ -199,21 +199,34 @@ def compute_metric_rows(
             )
 
     if race_payload:
-        as_of = (
-            race_payload.get("asOfDate")
-            or race_payload.get("calendarDate")
-            or pd.Timestamp.today().strftime("%Y-%m-%d")
-        )
-        for dist, secs in racepredict.parse_predictions(race_payload).items():
-            if secs is None:
-                continue
-            rows += rows_from_series(
-                f"race_{dist}",
-                pd.Series([float(secs)], index=pd.DatetimeIndex([pd.Timestamp(as_of)])),
-                "garmin_ingested",
-                params={"unit": "s", "distance": dist},
-                flags={"error_class": "garmin_race_pred_maybe_optimistic"},
+        if isinstance(race_payload, list):
+            # Daily history from /racepredictions/daily: one row per day present.
+            for dist, series in racepredict.daily_predictions_from_trend(race_payload).items():
+                if series.empty:
+                    continue
+                rows += rows_from_series(
+                    f"race_{dist}",
+                    series,
+                    "garmin_ingested",
+                    params={"unit": "s", "distance": dist},
+                    flags={"error_class": "garmin_race_pred_maybe_optimistic"},
+                )
+        else:
+            as_of = (
+                race_payload.get("asOfDate")
+                or race_payload.get("calendarDate")
+                or pd.Timestamp.today().strftime("%Y-%m-%d")
             )
+            for dist, secs in racepredict.parse_predictions(race_payload).items():
+                if secs is None:
+                    continue
+                rows += rows_from_series(
+                    f"race_{dist}",
+                    pd.Series([float(secs)], index=pd.DatetimeIndex([pd.Timestamp(as_of)])),
+                    "garmin_ingested",
+                    params={"unit": "s", "distance": dist},
+                    flags={"error_class": "garmin_race_pred_maybe_optimistic"},
+                )
 
     # Rolling LT fallback (30-day) — computed when Garmin LT payload missing
     has_lt_hr = lt_payload is not None and threshold.parse_lt(lt_payload).hr is not None
@@ -247,7 +260,7 @@ def persist_session_metrics(
     activities: list[Activity],
     profile: RunnerProfile,
     lt_payload: dict | None = None,
-    race_payload: dict | None = None,
+    race_payload: dict | list | None = None,
     vo2max_payload: list[dict] | None = None,
 ) -> int:
     """Compute the session metric rows and persist them to an open store.
@@ -267,7 +280,7 @@ def run_pipeline(
     profile: RunnerProfile,
     out_db,
     lt_payload: dict | None = None,
-    race_payload: dict | None = None,
+    race_payload: dict | list | None = None,
     vo2max_payload: list[dict] | None = None,
 ) -> dict[str, int]:
     store = MetricStore(out_db)

@@ -76,7 +76,7 @@ def e2e_checks(
     metrics: dict[str, list[dict]],
     metrics_written: int,
     lt_payload: dict | None,
-    race_payload: dict | None,
+    race_payload: dict | list | None,
     vo2max_payload: list[dict] | None = None,
 ) -> list[str]:
     failures: list[str] = []
@@ -125,9 +125,14 @@ def e2e_checks(
         if lt.hr is not None and lt.date and not metrics.get("load.lt_hr"):
             failures.append("missing load.lt_hr despite lt payload")
     if race_payload:
-        preds = racepredict.parse_predictions(race_payload)
-        if any(v is not None for v in preds.values()) and not metrics.get("race_5k"):
-            failures.append("missing race_5k despite race payload")
+        if isinstance(race_payload, list):
+            trend = racepredict.daily_predictions_from_trend(race_payload)
+            if any(not s.empty for s in trend.values()) and not metrics.get("race_5k"):
+                failures.append("missing race_5k despite race trend payload")
+        else:
+            preds = racepredict.parse_predictions(race_payload)
+            if any(v is not None for v in preds.values()) and not metrics.get("race_5k"):
+                failures.append("missing race_5k despite race payload")
     if vo2max_payload:
         from metrics.vo2max import daily_vo2max_from_trend
 
@@ -236,7 +241,7 @@ def _load_live(fetch_from: str | None, fetch_to: str | None, cache_dir=Path("cac
         raise RuntimeError("live fetch returned no activities")
     acts = [from_summary(a) for a in raw]
     lt = gw.fetch_lactate_threshold() or {}
-    race = gw.fetch_race_predictions() or {}
+    race = gw.fetch_race_predictions_trend(start, end) or []
     vo2 = gw.fetch_vo2max_trend(start, end) or []
     return acts, lt, race, vo2, {"source": "live", "auth": gw.auth_path}
 
@@ -339,7 +344,9 @@ def _main(argv: list[str] | None = None, out=None) -> int:
     )
     args = parser.parse_args(argv)
 
-    acts, lt, race, vo2, meta = load_data(args.data, Path(args.fixtures), args.fetch_from, args.fetch_to)
+    acts, lt, race, vo2, meta = load_data(
+        args.data, Path(args.fixtures), args.fetch_from, args.fetch_to
+    )
     max_d = max(a.date for a in acts)
     since = date.fromisoformat(args.since) if args.since else max_d - timedelta(days=args.days)
     print(

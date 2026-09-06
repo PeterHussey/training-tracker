@@ -48,6 +48,7 @@
 
 - **Sport classification** is `typeKey`-only in `normalize.py`: `running` | `treadmill_running` | `strength_training` → `strength` | else `cross`. No `sportTypeId` fallback. Strength is duration-only (no HR load).
 - **PMC/ACWR metrics** use outdoor-running activities only. Cross-training load is its own series, never double-counted.
+- **Race predictions come from the daily-history endpoint** `/metrics-service/metrics/racepredictions/daily/{name}?fromCalendarDate=&toCalendarDate=` (full window, ~365 entries), NOT `/latest` (single snapshot). `gateway.fetch_race_predictions_trend` caches to `race_predictions_trend_{start}_{end}.json`; the chart plots per-distance time series and `store.load_runner_profile` persists the race-distance selector via `selected_race`.
 - **Metrics are dotscored**: `volume.distance_total`, `load.banister`, `pmc.ctl`, etc.
 - **Test fixtures** live in `v2/tests/fixtures/` (activities_sample.json, lactate_threshold.json, race_predictions.json, vo2max_trend.json).
 - **Python 3.11+** required (uses `X | Y` union syntax, `match` if needed).

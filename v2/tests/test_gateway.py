@@ -213,11 +213,13 @@ def _fake_http(monkeypatch, fetch_results=None):
             "activities": [],
             "lactate": {"speed_and_heart_rate": {}, "power": {}},
             "race": {"maybeMap": {}},
+            "race_trend": [{"calendarDate": "2026-08-29", "time5K": 1405}],
             "vo2max": [],
         }
     fh.fetch_activities.return_value = fetch_results["activities"]
     fh.fetch_lactate_threshold.return_value = fetch_results["lactate"]
     fh.fetch_race_predictions.return_value = fetch_results["race"]
+    fh.fetch_race_predictions_trend.return_value = fetch_results["race_trend"]
     fh.fetch_vo2max_trend.return_value = fetch_results["vo2max"]
     return fh
 
@@ -247,10 +249,12 @@ def test_gateway_fetch_delegates(monkeypatch, tmp_path):
     gw.fetch_activities("a", "b")
     gw.fetch_lactate_threshold()
     gw.fetch_race_predictions()
+    gw.fetch_race_predictions_trend("a", "b")
     gw.fetch_vo2max_trend("a", "b")
     fh.fetch_activities.assert_called_once_with("a", "b")
     fh.fetch_lactate_threshold.assert_called_once()
     fh.fetch_race_predictions.assert_called_once()
+    fh.fetch_race_predictions_trend.assert_called_once_with("a", "b")
     fh.fetch_vo2max_trend.assert_called_once_with("a", "b")
 
 
