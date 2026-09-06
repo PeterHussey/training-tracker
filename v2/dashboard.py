@@ -634,31 +634,37 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             if profile is not None and profile.selected_race != race_dist:
                 get_store().save_runner_profile(replace(profile, selected_race=race_dist))
         focus = race_dist or selected_race
-        fig = go.Figure()
-        plotted_vals: list[float] = []
-        for dist, s in preds.items():
-            if s is None or len(s) == 0:
-                continue
-            labels = [_fmt(v, {"unit": "s"}, units) for v in s.values]
-            plotted_vals.extend(float(v) for v in s.values)
-            opacity = 1.0 if dist == focus else 0.25
-            width = 3 if dist == focus else 1
-            fig.add_trace(
-                go.Scatter(
-                    x=s.index,
-                    y=s.values,
-                    mode="lines+markers",
-                    line_shape="hv",
-                    name=f"{dist} race",
-                    opacity=opacity,
-                    line={"width": width},
-                    text=labels,
-                    hovertemplate="%{x}<br>%{text}",
-                )
+        s = preds.get(focus)
+        if s is None or len(s) == 0:
+            s = next(
+                (
+                    ps
+                    for d in ("5k", "10k", "half", "full")
+                    if (ps := preds.get(d)) is not None and len(ps)
+                ),
+                None,
             )
-        tickvals, ticktext = race_time_ticks(plotted_vals)
+        if s is None or len(s) == 0:
+            st.write(
+                "Race predictions appear after a Refresh (requires new Garmin "
+                "predictions in the payload)."
+            )
+            return
+        labels = [_fmt(v, {"unit": "s"}, units) for v in s.values]
+        fig = go.Figure(
+            go.Scatter(
+                x=s.index,
+                y=s.values,
+                mode="lines+markers",
+                line_shape="hv",
+                name=f"{focus} race",
+                text=labels,
+                hovertemplate="%{x}<br>%{text}",
+            )
+        )
+        tickvals, ticktext = race_time_ticks([float(v) for v in s.values])
         fig.update_layout(
-            title="Garmin race predictions",
+            title=f"Garmin race predictions — {focus}",
             hovermode="x unified",
             yaxis_title="predicted time",
             yaxis={"tickvals": tickvals, "ticktext": ticktext},
