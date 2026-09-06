@@ -223,6 +223,56 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
     return acts, lt, race, vo2
 
 
+DETAILS_TOP_K = 40
+DETAILS_TIMEOUT_S = 8
+
+
+def fetch_details_for_lthr(
+    gw: GarminGateway,
+    activities: list,
+    top_k: int = DETAILS_TOP_K,
+    timeout_s: float = DETAILS_TIMEOUT_S,
+) -> dict[int, tuple]:
+    """Fetch activity details for the top-k outdoor running activities.
+
+    Checks disk cache first. For cache misses, fetches with per-request timeout.
+    Never blocks the refresh — skips on failure.
+
+    Returns:
+        {activity_id: (hr_list, speed_list)} for successfully fetched activities.
+    """
+    from metrics.threshold import parse_details_series
+
+    candidates = [
+        a
+        for a in activities
+        if a.sport == "running" and a.duration_s >= 1200 and a.avg_hr is not None
+    ]
+    candidates.sort(key=lambda a: a.avg_speed or 0, reverse=True)
+    candidates = candidates[:top_k]
+
+    series_by_id: dict[int, tuple] = {}
+    for a in candidates:
+        cache_path = gw.cache_dir / f"activity_details_{a.activity_id}.json"
+        if cache_path.exists():
+            try:
+                details = json.loads(cache_path.read_text())
+                hr, spd = parse_details_series(details)
+                series_by_id[a.activity_id] = (hr, spd)
+            except (json.JSONDecodeError, OSError):
+                pass
+            continue
+        try:
+            details = run_with_timeout(
+                gw.fetch_activity_details, timeout=timeout_s, activity_id=a.activity_id
+            )
+            hr, spd = parse_details_series(details)
+            series_by_id[a.activity_id] = (hr, spd)
+        except (TimeoutError, Exception):
+            pass
+    return series_by_id
+
+
 def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> RunnerProfile:
     p = persisted or default_profile()
     sex = st.sidebar.selectbox("Sex", ("M", "F"), index=0 if p.sex == "M" else 1)
@@ -970,6 +1020,12 @@ def main() -> None:
             st.session_state["lt_payload"] = lt
             st.session_state["race_payload"] = race
             st.session_state["vo2max_payload"] = vo2
+            # Fan out to fetch activity details for best-effort LTHR anchors.
+            gw = GarminGateway(cache_dir=APP_CACHE_DIR)
+            activities_for_details = st.session_state["activities"]
+            st.session_state["series_by_id"] = fetch_details_for_lthr(
+                gw, activities_for_details
+            )
             if fetch_mode == "historical":
                 msg = f"Historical fetch: {len(acts)} activities fetched"
             else:
@@ -1047,6 +1103,7 @@ def main() -> None:
         st.session_state.get("lt_payload"),
         st.session_state.get("race_payload"),
         st.session_state.get("vo2max_payload"),
+        st.session_state.get("series_by_id"),
     )
     if st.session_state.get("_view_sig") != compute_sig:
         st.session_state["view"] = build_session_view(
@@ -1055,6 +1112,7 @@ def main() -> None:
             st.session_state.get("lt_payload"),
             st.session_state.get("race_payload"),
             st.session_state.get("vo2max_payload"),
+            st.session_state.get("series_by_id"),
         )
         st.session_state["_view_sig"] = compute_sig
         # Mirror the computed rows (including ingested race predictions) into
@@ -1066,6 +1124,7 @@ def main() -> None:
             st.session_state.get("lt_payload"),
             st.session_state.get("race_payload"),
             st.session_state.get("vo2max_payload"),
+            st.session_state.get("series_by_id"),
         )
     view = st.session_state["view"]
     windowed = view.windowed(since, until)

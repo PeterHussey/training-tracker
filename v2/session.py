@@ -267,8 +267,11 @@ def build_session_view(
     lt_payload: dict | None = None,
     race_payload: dict | list | None = None,
     vo2max_payload: list[dict] | None = None,
+    series_by_id: dict | None = None,
 ) -> SessionView:
-    rows = compute_metric_rows(activities, profile, lt_payload, race_payload, vo2max_payload)
+    rows = compute_metric_rows(
+        activities, profile, lt_payload, race_payload, vo2max_payload, series_by_id
+    )
     series: dict[str, pd.Series] = {}
     context: dict[str, dict] = {}
     for metric in sorted({r["metric"] for r in rows}):
