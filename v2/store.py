@@ -27,9 +27,10 @@ CREATE TABLE IF NOT EXISTS activities (
   anaerobic_te       REAL,
   avg_speed          REAL,
   fastest_split_1609 REAL,
-  zone_s             TEXT NOT NULL DEFAULT '{}',
-  route              TEXT NOT NULL DEFAULT '{}',
-  name               TEXT
+   zone_s             TEXT NOT NULL DEFAULT '{}',
+   route              TEXT NOT NULL DEFAULT '{}',
+   name               TEXT,
+   has_intervals      INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS metric_series (
   metric TEXT NOT NULL,
@@ -63,8 +64,13 @@ class MetricStore:
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(activities)").fetchall()}
         if "name" not in cols:
             self.conn.execute("ALTER TABLE activities ADD COLUMN name TEXT")
+        if "has_intervals" not in cols:
+            self.conn.execute(
+                "ALTER TABLE activities ADD COLUMN has_intervals INTEGER NOT NULL DEFAULT 0"
+            )
         # Best-effort LTHR anchors replaced the rolling-mean fallback: prune
-        # the dead keys so stale rows don't linger in old databases.
+        # the dead keys so stale rows don't linger in old databases. These
+        # keys are never written again, so unconditional pruning is safe.
         self.prune_legacy_keys(["load.lt_hr_rolling", "load.lt_pace_rolling"])
         self.conn.commit()
 
@@ -119,14 +125,15 @@ class MetricStore:
                     sort_keys=True,
                 ),
                 a.name,
+                1 if a.has_intervals else 0,
             )
             for a in activities
         ]
         self.conn.executemany(
             "INSERT OR REPLACE INTO activities (activity_id, activity_date, sport, "
             "distance_m, duration_s, ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, "
-            "anaerobic_te, avg_speed, fastest_split_1609, zone_s, route, name) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "anaerobic_te, avg_speed, fastest_split_1609, zone_s, route, name, has_intervals) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         self.conn.commit()
@@ -178,7 +185,7 @@ class MetricStore:
         rows = self.conn.execute(
             "SELECT activity_id, activity_date, sport, distance_m, duration_s, "
             "ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, anaerobic_te, "
-            "avg_speed, fastest_split_1609, zone_s, name FROM activities "
+            "avg_speed, fastest_split_1609, zone_s, name, has_intervals FROM activities "
             "ORDER BY activity_date, activity_id"
         ).fetchall()
         return [self._activity_from_row(r) for r in rows]
@@ -201,6 +208,7 @@ class MetricStore:
             fastest_split_1609,
             zone_s,
             name,
+            has_intervals,
         ) = row
         zones: dict[int, float] = {}
         if zone_s:
@@ -226,6 +234,7 @@ class MetricStore:
             avg_speed=avg_speed,
             fastest_split_1609=fastest_split_1609,
             name=name,
+            has_intervals=bool(has_intervals),
         )
 
     def load_runner_profile(self) -> RunnerProfile | None:

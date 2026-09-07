@@ -289,9 +289,9 @@ FIELD_REGISTRY = (
         "hasIntensityIntervals",
         "activity_list",
         "bool",
-        "Whether the session contains structured intervals",
+        "Whether the session is a structured workout with steps",
         ("trimp_banister", "decoupling"),
-        "Interval sessions are excluded from decoupling (not sustained effort); Banister TRIMP uses details HR series when available to handle them.",
+        "True for every structured 80/20 workout including easy foundation runs — it marks workout structure, not physiological interval intensity, so it cannot drive interval/sustained classification. Interval sessions are excluded from decoupling (not sustained effort); Banister TRIMP uses details HR series when available to handle them.",
     ),
     GarminField(
         "lapCount",

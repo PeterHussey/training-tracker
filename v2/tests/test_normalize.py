@@ -62,3 +62,17 @@ def test_missing_optional_fields_become_none():
 def test_zone_seconds_default_zero():
     a = from_summary(_first("strength_training"))
     assert a.zone_s[1] >= 0 and a.zone_s[5] >= 0
+
+
+def test_has_intervals_maps_flag():
+    flagged = dict(_first("running"))
+    flagged["hasIntensityIntervals"] = True
+    assert from_summary(flagged).has_intervals is True
+    flagged["hasIntensityIntervals"] = False
+    assert from_summary(flagged).has_intervals is False
+
+
+def test_has_intervals_absent_defaults_false():
+    summary = dict(_first("running"))
+    summary.pop("hasIntensityIntervals", None)
+    assert from_summary(summary).has_intervals is False

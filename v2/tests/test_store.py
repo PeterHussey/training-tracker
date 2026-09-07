@@ -283,6 +283,23 @@ def test_prune_legacy_keys_empty_is_noop(tmp_path):
     store.close()
 
 
+def test_has_intervals_roundtrip(tmp_path):
+    from dataclasses import replace
+
+    db = str(tmp_path / "t.db")
+    store = MetricStore(db)
+    store.save_activities([ACT, replace(SECOND_ACT, has_intervals=True)])
+    loaded = {a.activity_id: a for a in store.load_activities()}
+    store.close()
+    assert loaded[1].has_intervals is False
+    assert loaded[2].has_intervals is True
+    # Reopening a migrated DB preserves the flag.
+    reopened = MetricStore(db)
+    reloaded = {a.activity_id: a for a in reopened.load_activities()}
+    reopened.close()
+    assert reloaded[2].has_intervals is True
+
+
 def test_migrate_prunes_rolling_keys_on_reopen(tmp_path):
     db = str(tmp_path / "t.db")
     store = MetricStore(db)

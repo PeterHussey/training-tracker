@@ -62,6 +62,7 @@ class Activity:
     avg_speed: float | None = None
     fastest_split_1609: float | None = None
     avg_cadence: float | None = None
+    has_intervals: bool = False
     device_id: int | None = None
     location: str | None = None
     lat: float | None = None
@@ -114,6 +115,7 @@ def from_summary(summary: dict) -> Activity:
         avg_speed=_f(summary, "averageSpeed"),
         fastest_split_1609=_f(summary, "fastestSplit_1609"),
         avg_cadence=_f(summary, "averageRunningCadenceInStepsPerMinute"),
+        has_intervals=bool(summary.get("hasIntensityIntervals", False)),
         device_id=_f(summary, "deviceId"),
         location=_f(summary, "locationName"),
         lat=_f(summary, "startLatitude"),

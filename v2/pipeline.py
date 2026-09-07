@@ -277,14 +277,9 @@ def compute_metric_rows(
             ]:
                 dots = anchors[dots_key]
                 if dots:
-                    hr_series = pd.Series(
-                        [d["hr"] for d in dots],
-                        index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
-                    )
-                    pace_series = pd.Series(
-                        [d["speed_m_s"] for d in dots],
-                        index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
-                    )
+                    idx = pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots])
+                    hr_series = pd.Series([d["hr"] for d in dots], index=idx)
+                    pace_series = pd.Series([d["speed_m_s"] for d in dots], index=idx)
                     dots_params_hr = {"unit": "bpm", "basis": "best_window_outdoor_running"}
                     dots_params_pace = {"unit": "m/s", "basis": "best_window_outdoor_running"}
                     rows += rows_from_series(hr_key, hr_series, "computed", params=dots_params_hr)

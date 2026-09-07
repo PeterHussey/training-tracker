@@ -471,7 +471,10 @@ def _anchor_cards(windowed, view, units) -> None:
         card_text = f"{pt['proxy_hr']:.0f} bpm ({pt['raw_hr']:.0f} raw @ {pace_str}, {pt['date']})"
         st.metric(f"LTHR anchor {label}", card_text)
 
-        # Qualifier dots: faint scatter of all qualifying efforts
+        # Qualifier dots: faint scatter of all qualifying efforts.
+        # (Interval/sustained encoding was tried and reverted: the device
+        # flag marks every structured workout including easy foundation
+        # runs, and window-speed variability doesn't separate them either.)
         dots_hr = windowed.get(dots_hr_key)
         dots_pace = windowed.get(dots_pace_key)
         if (
