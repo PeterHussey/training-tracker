@@ -409,8 +409,37 @@ def _fmt_pace_min(v: float, units: str) -> str:
     return f"{m}:{s:02d} {unit}"
 
 
+def anchor_point(view, hr_key: str, pace_key: str) -> dict | None:
+    """Latest best-effort anchor from the UNFILTERED view series.
+
+    Anchors are single all-time-best points; period-windowing would drop
+    them whenever the best predates the selected window, so cards always
+    read the full series. Returns {proxy_hr, raw_hr, pace, date} or None.
+    """
+    hr_s = view.series.get(hr_key)
+    if hr_s is None or hr_s.empty:
+        return None
+    proxy_hr = float(hr_s.iloc[-1])
+    meta = view.context.get(hr_key, {})
+    factor = meta.get("params", {}).get("factor")
+    raw_hr = proxy_hr / factor if factor and factor != 0 else proxy_hr
+    pace_s = view.series.get(pace_key)
+    pace_val = float(pace_s.iloc[-1]) if pace_s is not None and not pace_s.empty else None
+    dt = hr_s.index[-1]
+    return {
+        "proxy_hr": proxy_hr,
+        "raw_hr": raw_hr,
+        "pace": pace_val,
+        "date": dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else str(dt),
+    }
+
+
 def _anchor_cards(windowed, view, units) -> None:
-    """Render best-effort LTHR anchor cards with qualifier dot scatters."""
+    """Render best-effort LTHR anchor cards with qualifier dot scatters.
+
+    Cards read the unfiltered view (anchors are all-time bests); dots read
+    the period-windowed series (in-window qualifier context).
+    """
     anchors = [
         (
             "load.lt_hr_best20",
@@ -429,22 +458,13 @@ def _anchor_cards(windowed, view, units) -> None:
     ]
     has_any = False
     for hr_key, pace_key, dots_hr_key, dots_pace_key, label in anchors:
-        hr_s = windowed.get(hr_key)
-        if hr_s is None or hr_s.empty:
+        pt = anchor_point(view, hr_key, pace_key)
+        if pt is None:
             continue
         has_any = True
-        proxy_hr = float(hr_s.iloc[-1])
-        meta = view.context.get(hr_key, {})
-        params = meta.get("params", {})
-        factor = params.get("factor")
-        raw_hr = proxy_hr / factor if factor and factor != 0 else proxy_hr
-        pace_s = windowed.get(pace_key)
-        pace_val = float(pace_s.iloc[-1]) if pace_s is not None and not pace_s.empty else None
-        pace_str = _fmt_pace_min(pace_val * 60, units) if pace_val else "—"
-        dt = hr_s.index[-1]
-        date_str = dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else str(dt)
+        pace_str = _fmt_pace_min(pt["pace"] * 60, units) if pt["pace"] else "—"
 
-        card_text = f"{proxy_hr:.0f} bpm ({raw_hr:.0f} raw @ {pace_str}, {date_str})"
+        card_text = f"{pt['proxy_hr']:.0f} bpm ({pt['raw_hr']:.0f} raw @ {pace_str}, {pt['date']})"
         st.metric(f"LTHR anchor {label}", card_text)
 
         # Qualifier dots: faint scatter of all qualifying efforts

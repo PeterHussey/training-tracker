@@ -222,3 +222,45 @@ def test_render_fitness_tab_no_rolling_threshes():
     assert "rolling_threshes" not in src, (
         "render_fitness_tab still references rolling_threshes — expected removed by Task 5"
     )
+
+
+def test_anchor_point_survives_period_windowing():
+    """Anchor cards read the unfiltered view: an all-time best that predates
+    the selected period must still resolve (dots alone don't count)."""
+    import json
+    from datetime import date as _date
+    from pathlib import Path
+    from profile import default_profile
+
+    from dashboard import anchor_point
+    from normalize import from_summary
+    from session import build_session_view
+
+    raw = json.loads((Path(__file__).parent / "fixtures" / "activities_sample.json").read_text())
+    acts = [from_summary(a) for a in raw]
+    qual = [
+        a for a in acts if a.sport == "running" and a.duration_s >= 1200 and a.avg_hr is not None
+    ]
+    assert qual, "need a qualifying activity in fixtures"
+    target = qual[0]
+    n = int(target.duration_s)
+    series_by_id = {
+        target.activity_id: (
+            [165.0] * n,
+            [3.5] * n,
+            [float(i * 1000) for i in range(n)],
+        )
+    }
+    view = build_session_view(
+        acts, default_profile(age=40, hrrest=60, sex="M"), None, None, None, series_by_id
+    )
+    assert "load.lt_hr_best20" in view.series
+    anchor_date = view.series["load.lt_hr_best20"].index[0].date()
+    # A window starting after the anchor date drops the single anchor point...
+    w = view.windowed(anchor_date + timedelta(days=1), _date(2026, 9, 6))
+    assert w.get("load.lt_hr_best20") is None or w["load.lt_hr_best20"].empty
+    # ...but the card helper resolves it from the full view anyway.
+    pt = anchor_point(view, "load.lt_hr_best20", "load.lt_pace_best20")
+    assert pt is not None
+    assert pt["proxy_hr"] == pytest.approx(165.0 * 0.95)
+    assert pt["date"] == anchor_date.isoformat()
