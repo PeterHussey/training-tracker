@@ -266,7 +266,7 @@ def compute_metric_rows(
                     }
                     rows += rows_from_series(
                         f"load.lt_pace_{emit_key}",
-                        pd.Series([anchor["pace"]], index=pd.DatetimeIndex([dt])),
+                        pd.Series([anchor["speed_m_s"]], index=pd.DatetimeIndex([dt])),
                         "computed",
                         params=pace_params,
                         flags=flags,
@@ -282,7 +282,7 @@ def compute_metric_rows(
                         index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
                     )
                     pace_series = pd.Series(
-                        [d["pace"] for d in dots],
+                        [d["speed_m_s"] for d in dots],
                         index=pd.DatetimeIndex([pd.Timestamp(d["date"]) for d in dots]),
                     )
                     dots_params_hr = {"unit": "bpm", "basis": "best_window_outdoor_running"}

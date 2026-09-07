@@ -227,6 +227,16 @@ def test_pipeline_emits_best_not_rolling():
             assert flags["error_class"] == "best_effort_estimate"
             break
 
+    # Pace rows are stored as speed in m/s (matching the unit param and the
+    # Garmin load.lt_pace convention) — not s/m. Synthetic best is ~4 m/s.
+    for r in rows:
+        if r["metric"] == "load.lt_pace_best20":
+            assert json.loads(r["params"])["unit"] == "m/s"
+            assert 2.0 < r["value"] < 7.0, f"pace value {r['value']} is not m/s-scale"
+            break
+    else:
+        raise AssertionError("load.lt_pace_best20 row missing")
+
 
 def test_pipeline_no_series_by_id_no_best_effort():
     """When series_by_id is None (pure-activities path), no best-effort rows emitted."""

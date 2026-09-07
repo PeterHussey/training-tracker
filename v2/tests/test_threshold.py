@@ -237,7 +237,7 @@ def test_best_effort_outdoor_only_and_factor():
     assert anchor is not None
     assert anchor["raw_hr"] == pytest.approx(165.0)
     assert anchor["proxy_hr"] == pytest.approx(165.0 * 0.95)
-    assert anchor["pace"] == pytest.approx(1.0 / 3.5)  # pace = 1/speed
+    assert anchor["speed_m_s"] == pytest.approx(3.5)  # stored as speed, m/s
     assert anchor["activity_id"] == 10
     assert anchor["window_s"] == 1200
     assert anchor["factor"] == pytest.approx(0.95)
@@ -302,4 +302,4 @@ def test_best_effort_anchors_dots():
 
     # Each dot has the required keys
     for dot in result["dots20"] + result["dots30"]:
-        assert set(dot.keys()) == {"hr", "pace", "date", "activity_id"}
+        assert set(dot.keys()) == {"hr", "speed_m_s", "date", "activity_id"}

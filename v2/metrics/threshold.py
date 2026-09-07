@@ -271,9 +271,10 @@ def best_effort_lthr(
     series.  The activity with the highest ``mean_speed`` wins.
 
     Returns:
-        ``{proxy_hr, raw_hr, pace, date, activity_id, window_s, factor}`` for
-        the best effort, or ``None`` if no qualifying activity has a valid
-        window.
+        ``{proxy_hr, raw_hr, speed_m_s, date, activity_id, window_s, factor}``
+        for the best effort, or ``None`` if no qualifying activity has a
+        valid window. Pace is stored as speed (m/s) to match the Garmin
+        ``load.lt_pace`` convention and the ``unit: m/s`` row params.
     """
     best_speed = -1.0
     best_result: dict | None = None
@@ -298,7 +299,7 @@ def best_effort_lthr(
             best_result = {
                 "proxy_hr": bw["mean_hr"] * factor,
                 "raw_hr": bw["mean_hr"],
-                "pace": 1.0 / bw["mean_speed"],
+                "speed_m_s": bw["mean_speed"],
                 "date": a.date,
                 "activity_id": a.activity_id,
                 "window_s": window_s,
@@ -319,8 +320,8 @@ def best_effort_anchors(
     Returns:
         ``{"w20": ..., "w30": ..., "dots20": [...], "dots30": [...]}`` where
         each anchor is the result of :func:`best_effort_lthr` (or ``None``) and
-        each dot is ``{hr, pace, date, activity_id}`` for every qualifying
-        activity at that window length.
+        each dot is ``{hr, speed_m_s, date, activity_id}`` for every
+        qualifying activity at that window length.
     """
     dots20: list[dict] = []
     dots30: list[dict] = []
@@ -341,7 +342,7 @@ def best_effort_anchors(
                 dots20.append(
                     {
                         "hr": bw["mean_hr"],
-                        "pace": 1.0 / bw["mean_speed"],
+                        "speed_m_s": bw["mean_speed"],
                         "date": a.date,
                         "activity_id": a.activity_id,
                     }
@@ -353,7 +354,7 @@ def best_effort_anchors(
                 dots30.append(
                     {
                         "hr": bw["mean_hr"],
-                        "pace": 1.0 / bw["mean_speed"],
+                        "speed_m_s": bw["mean_speed"],
                         "date": a.date,
                         "activity_id": a.activity_id,
                     }

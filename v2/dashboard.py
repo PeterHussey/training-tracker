@@ -424,12 +424,12 @@ def anchor_point(view, hr_key: str, pace_key: str) -> dict | None:
     factor = meta.get("params", {}).get("factor")
     raw_hr = proxy_hr / factor if factor and factor != 0 else proxy_hr
     pace_s = view.series.get(pace_key)
-    pace_val = float(pace_s.iloc[-1]) if pace_s is not None and not pace_s.empty else None
+    speed = float(pace_s.iloc[-1]) if pace_s is not None and not pace_s.empty else None
     dt = hr_s.index[-1]
     return {
         "proxy_hr": proxy_hr,
         "raw_hr": raw_hr,
-        "pace": pace_val,
+        "speed_m_s": speed,
         "date": dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else str(dt),
     }
 
@@ -462,7 +462,11 @@ def _anchor_cards(windowed, view, units) -> None:
         if pt is None:
             continue
         has_any = True
-        pace_str = _fmt_pace_min(pt["pace"] * 60, units) if pt["pace"] else "—"
+        if pt["speed_m_s"]:
+            m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
+            pace_str = _fmt_pace_min((m_per_unit / pt["speed_m_s"]) / 60.0, units)
+        else:
+            pace_str = "—"
 
         card_text = f"{pt['proxy_hr']:.0f} bpm ({pt['raw_hr']:.0f} raw @ {pace_str}, {pt['date']})"
         st.metric(f"LTHR anchor {label}", card_text)
