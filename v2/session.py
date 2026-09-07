@@ -50,6 +50,7 @@ CONDITIONAL_METRICS = {
     "load.edwards_running": "requires outdoor-running activities with HR data",
     "volume.duration_cross": "time-volume is populated whenever a cross-training activity exists (duration is distance-independent)",
     "volume.duration_strength": "time-volume is populated whenever a strength activity exists (duration is distance-independent)",
+    "gap.running": "requires outdoor-running activities with elevation data",
     "load.lt_hr": "requires a measured lactate threshold in the payload (live LT record was empty)",
     "load.lt_pace": "requires a measured lactate threshold in the payload (live LT record was empty)",
     "load.lt_hr_best20": "best-effort LTHR anchor from 20-min window (outdoor running, Garmin LT absent)",

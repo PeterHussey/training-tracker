@@ -32,6 +32,8 @@
 - race_5k / race_10k / race_half / race_full: ingested, marathon flagged.
 ### 2.2 Context-only
 - elevation.daily/rolling28d/gain_per_km (running) — route context, not a risk metric.
+- gap.running: grade-adjusted pace (m/s), outdoor running only. Compensates
+  for elevation gain/loss using a Minetti-inspired energy-cost model (K=0.7).
 ### 2.3 Conditional (aggregated)
 - decoupling: eligible runs (sport=running, elapsed>=5400s, gain<=25 m/km,
   route-matched), per-half HR/pace, aggregated >=6 sessions, trend only.
@@ -46,6 +48,8 @@
 - ACWR = mean(daily load, last acute calendar days) / mean(daily load, last chronic
   calendar days), coupled (chronic includes acute days); defaults acute=7, chronic=28.
   Average-normalized so a steady constant load reads 1.0.
+- Grade-Adjusted Pace (GAP) = actual speed × (1 + k × grade), where
+  grade = ele_gain_m / distance_m, k = 0.7 (Minetti-inspired; literature range 0.6–1.0).
 - Decoupling = (HR/pace)_2ndHalf / (HR/pace)_1stHalf - 1.
 
 ## 4. Parameters (config; defaults in RunnerProfile)
@@ -89,7 +93,7 @@
 ## 8. Registry metric keys
 
 ```
-volume, elevation, trimp_edwards, trimp_banister, ctl, atl,
+volume, elevation, gap, trimp_edwards, trimp_banister, ctl, atl,
 tsb, acwr, decoupling, vo2max, lt_hr, lt_pace, cs_approx,
 race_5k, race_10k, race_half, race_full, load_reference,
 cross_training

@@ -9,7 +9,7 @@ from profile import RunnerProfile
 import pandas as pd
 
 from metric_series import rows_from_series
-from metrics import acwr, elevation, injury, pmc, racepredict, threshold, trimp, vo2max, volume
+from metrics import acwr, elevation, gap, injury, pmc, racepredict, threshold, trimp, vo2max, volume
 from normalize import Activity
 from store import MetricStore
 
@@ -88,6 +88,15 @@ def compute_metric_rows(
         elevation.gain_per_km(activities, "running"),
         "computed",
         params={"unit": "m/km"},
+    )
+
+    # Grade-adjusted pace (running only) — energy-cost corrected speed
+    # accounting for elevation gain/loss (brief 4.2, Minetti 2002).
+    rows += rows_from_series(
+        "gap.running",
+        gap.gap_pace(activities),
+        "computed",
+        params={"unit": "m/s", "k": gap.K},
     )
 
     # Injury risk — longest safe run (single-run distance vs rolling 30d max).

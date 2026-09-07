@@ -11,6 +11,7 @@ METRICS = frozenset(
     {
         "volume",
         "elevation",
+        "gap",
         "trimp_edwards",
         "trimp_banister",
         "ctl",

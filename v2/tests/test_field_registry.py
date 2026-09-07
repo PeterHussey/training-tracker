@@ -11,7 +11,8 @@ ACTIVITY_LIST_FIELDS = {f.name for f in FIELD_REGISTRY if f.endpoint == "activit
 # ctl/atl/tsb are chronic/acute derived metrics computed by accumulating the
 # daily series (volume/trimp); they consume no raw Garmin field directly, so
 # they are intentionally absent from every field's metrics tuple.
-DERIVED_METRICS = {"ctl", "atl", "tsb"}
+# gap is grade-adjusted pace, derived from ele_gain_m, distance_m, and avg_speed.
+DERIVED_METRICS = {"ctl", "atl", "tsb", "gap"}
 
 # Fields that carry no limitation text by design (a limitation string would be
 # filler). Kept in sync with the registry so the units/limitations test stays

@@ -22,6 +22,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from gateway import GarminGateway
+from metrics.gap import K as GAP_K
 from normalize import from_summary
 from pipeline import persist_session_metrics
 from session import _fmt, build_session_view, run_with_timeout
@@ -1027,11 +1028,17 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
     for a in reps:
         m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
         pace = m_per_unit / a.avg_speed if a.avg_speed else None
+        gap_pace = None
+        if a.sport == "running" and a.avg_speed and a.ele_gain_m is not None and a.distance_m > 0:
+            grade = a.ele_gain_m / a.distance_m
+            gap_speed = a.avg_speed * (1.0 + GAP_K * grade)
+            gap_pace = m_per_unit / gap_speed if gap_speed > 0 else None
         table.append(
             {
                 "date": a.date.isoformat(),
                 "distance": _fmt(a.distance_km, {"unit": "km"}, units),
                 "pace": _fmt(pace, {"unit": "s"}, units) if pace else "—",
+                "GAP": _fmt(gap_pace, {"unit": "s"}, units) if gap_pace else "—",
                 "avg HR": f"{a.avg_hr:.0f}" if a.avg_hr is not None else "—",
                 "max HR": f"{a.max_hr:.0f}" if a.max_hr is not None else "—",
                 "aerob. TE": f"{a.aerobic_te:.1f}" if a.aerobic_te is not None else "—",
@@ -1047,9 +1054,21 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
     xs = [a.date for a in reps]
     m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
     paces = [m_per_unit / a.avg_speed / 60.0 if a.avg_speed else None for a in reps]
+    gap_paces = []
+    for a in reps:
+        if a.sport == "running" and a.avg_speed and a.ele_gain_m is not None and a.distance_m > 0:
+            grade = a.ele_gain_m / a.distance_m
+            gap_speed = a.avg_speed * (1.0 + GAP_K * grade)
+            gap_paces.append(m_per_unit / gap_speed / 60.0 if gap_speed > 0 else None)
+        else:
+            gap_paces.append(None)
     hrs = [a.avg_hr for a in reps]
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=xs, y=paces, mode="lines+markers", name="avg pace (min/unit)"))
+    fig.add_trace(
+        go.Scatter(x=xs, y=gap_paces, mode="lines+markers", name="GAP (min/unit)",
+                   line={"color": "#A23B72", "dash": "dot"}),
+    )
     fig.add_trace(
         go.Scatter(x=xs, y=hrs, mode="lines+markers", name="avg HR (bpm)", yaxis="y2"),
     )
@@ -1068,10 +1087,13 @@ def render_activities(activities, since, until, units) -> None:
     for a in activities:
         if not (since <= a.date <= until):
             continue
-        pace = None
-        if a.avg_speed:
-            m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
-            pace = m_per_unit / a.avg_speed
+        m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
+        pace = m_per_unit / a.avg_speed if a.avg_speed else None
+        gap_pace = None
+        if a.sport == "running" and a.avg_speed and a.ele_gain_m is not None and a.distance_m > 0:
+            grade = a.ele_gain_m / a.distance_m
+            gap_speed = a.avg_speed * (1.0 + GAP_K * grade)
+            gap_pace = m_per_unit / gap_speed if gap_speed > 0 else None
         rows.append(
             {
                 "date": a.date.isoformat(),
@@ -1080,6 +1102,7 @@ def render_activities(activities, since, until, units) -> None:
                 "distance": _fmt(a.distance_km, {"unit": "km"}, units),
                 "duration": _fmt(a.duration_s, {"unit": "s"}, units),
                 "pace": _fmt(pace, {"unit": "s"}, units) if pace else "—",
+                "GAP": _fmt(gap_pace, {"unit": "s"}, units) if gap_pace else "—",
                 "avg HR": f"{a.avg_hr:.0f}" if a.avg_hr is not None else "—",
                 "max HR": f"{a.max_hr:.0f}" if a.max_hr is not None else "—",
                 "VO2max": f"{a.vo2max:.1f}" if a.vo2max is not None else "—",
