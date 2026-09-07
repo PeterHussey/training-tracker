@@ -701,6 +701,53 @@ def render_load_tab(view, windowed, units) -> None:
             "load. " + context_line(view, "load.acwr")
         )
 
+    max_ratio = windowed.get("injury.max_run_ratio")
+    if max_ratio is not None and not max_ratio.empty:
+        fig = go.Figure()
+        fig.add_hrect(y0=0.0, y1=1.1, fillcolor="lightgreen", opacity=0.15, line_width=0)
+        fig.add_hrect(y0=1.1, y1=1.3, fillcolor="orange", opacity=0.15, line_width=0)
+        fig.add_hrect(y0=1.3, y1=3.0, fillcolor="red", opacity=0.1, line_width=0)
+        fig.add_trace(
+            go.Scatter(
+                x=max_ratio.index,
+                y=max_ratio.values,
+                name="Max run ratio",
+                mode="lines+markers",
+                line={"color": "#2E86AB"},
+            )
+        )
+        fig.add_hline(y=1.1, line_dash="dash", line_color="orange", annotation_text="110%")
+        fig.add_hline(y=1.3, line_dash="dash", line_color="red", annotation_text="130%")
+        fig.update_layout(
+            title="Longest Safe Run — single run vs rolling 30-day max",
+            hovermode="x unified",
+            yaxis={"title": "Ratio", "range": [0, max(2.0, float(max_ratio.max()) * 1.1)]},
+            xaxis_title="Date",
+        )
+        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
+        st.plotly_chart(fig, use_container_width=True)
+        latest = max_ratio.iloc[-1]
+        if latest > 1.3:
+            st.error(
+                f"Latest run is {latest:.0%} of your 30-day longest — **high injury risk**. "
+                "Consider scaling back."
+            )
+        elif latest > 1.1:
+            st.warning(
+                f"Latest run is {latest:.0%} of your 30-day longest — **elevated risk**. "
+                "Keep an eye on cumulative load."
+            )
+        else:
+            st.success(
+                f"Latest run is {latest:.0%} of your 30-day longest — within safe range."
+            )
+        st.caption(
+            "Ratio = run distance / rolling 30-day max distance (running + treadmill). "
+            "Green < 110% = safe, orange 110-130% = elevated risk, red > 130% = high risk. "
+            "Study found 64% injury risk increase above 110%, roughly doubling at 2x. "
+            + context_line(view, "injury.max_run_ratio")
+        )
+
 
 def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None:
     vo2 = windowed.get("fitness.vo2max")

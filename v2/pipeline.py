@@ -9,7 +9,7 @@ from profile import RunnerProfile
 import pandas as pd
 
 from metric_series import rows_from_series
-from metrics import acwr, elevation, pmc, racepredict, threshold, trimp, vo2max, volume
+from metrics import acwr, elevation, injury, pmc, racepredict, threshold, trimp, vo2max, volume
 from normalize import Activity
 from store import MetricStore
 
@@ -89,6 +89,18 @@ def compute_metric_rows(
         "computed",
         params={"unit": "m/km"},
     )
+
+    # Injury risk — longest safe run (single-run distance vs rolling 30d max).
+    # Ratio > 1.10 = elevated risk, > 1.30 = high risk per injury study.
+    ratio = injury.max_run_ratio(activities)
+    if not ratio.empty:
+        rows += rows_from_series(
+            "injury.max_run_ratio",
+            ratio,
+            "computed",
+            params={"unit": "ratio", "window_days": 30, "min_baseline": 7},
+            flags={"basis": "running+treadmill"},
+        )
 
     # HR load + PMC + ACWR (brief 1.2, 1.3, 1.1)
     # R15 scope: outdoor running, treadmill, and cross-training activities ALL

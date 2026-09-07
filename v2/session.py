@@ -36,6 +36,7 @@ EXPECTED_METRICS = [
     "pmc.tsb",
     "fitness.vo2max",
     "load.cs_approx",
+    "injury.max_run_ratio",
 ]
 
 CONDITIONAL_METRICS = {
