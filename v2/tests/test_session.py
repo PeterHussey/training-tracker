@@ -198,11 +198,12 @@ def test_session_context_has_best_keys():
     ]
     assert qual, "need at least one qualifying activity in fixtures"
     target = qual[0]
-    # 2400 samples at 1 Hz, HR ~150, speed ~4 m/s (pace ~4:10/km)
+    # 1 Hz samples, HR ~150, speed ~4 m/s (pace ~4:10/km), with timestamps.
     n = int(target.duration_s)
     hr = [150.0] * n
     spd = [4.0] * n
-    series_by_id = {target.activity_id: (hr, spd)}
+    ts = [float(i * 1000) for i in range(n)]
+    series_by_id = {target.activity_id: (hr, spd, ts)}
 
     view = build_session_view(
         acts,

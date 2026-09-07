@@ -311,20 +311,20 @@ FIELD_REGISTRY = (
     ),
     # ---- activity details (activity-service/{id}/details) ----
     GarminField(
-        "metrics[].heartRate",
+        "activityDetailMetrics[].metrics[directHeartRate]",
         "activity_details",
         "bpm[]",
-        "Per-sample HR series",
+        "Per-sample HR series (column located via metricDescriptors)",
         ("trimp_banister", "decoupling"),
-        "One request per activity (rate-limit aware). Downsampled by maxChartSize; gaps possible when optical.",
+        "One request per activity (rate-limit aware). Downsampled by maxChartSize; irregular ~1-7 s spacing with directTimestamp per sample; gaps possible when optical. Values arrive pre-scaled.",
     ),
     GarminField(
-        "metrics[].speed",
+        "activityDetailMetrics[].metrics[directSpeed]",
         "activity_details",
         "m/s[]",
-        "Per-sample speed series",
+        "Per-sample speed series (column located via metricDescriptors)",
         ("decoupling", "cs_approx"),
-        "Speed vs distance series can misalign on GPS dropouts; resample to common timestamps.",
+        "Speed vs distance series can misalign on GPS dropouts; samples are irregularly spaced, use directTimestamp rather than assuming 1 Hz.",
     ),
     GarminField(
         "metrics[].distance",

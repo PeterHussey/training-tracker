@@ -52,17 +52,41 @@ def test_approx_cs_from_fastest_mile():
 # --- details-series parser + best-window ---
 
 
-def test_parse_details_series_extracts_hr_and_speed():
-    details = {
-        "metrics": [
-            {"heartRate": 150.0, "speed": 2.8, "distance": 0.0},
-            {"heartRate": None, "speed": 3.0, "distance": 3.0},
-            {"heartRate": 172.0, "speed": 3.8, "distance": 6.8},
-        ]
+def _live_shape_details(rows: list[tuple]) -> dict:
+    """Build a live-shape details payload: descriptors + column-indexed samples.
+
+    rows: list of (timestamp_ms, speed_m_s, hr_bpm); None allowed for hr/speed.
+    """
+    return {
+        "metricDescriptors": [
+            {"metricsIndex": 0, "key": "directTimestamp"},
+            {"metricsIndex": 1, "key": "directSpeed"},
+            {"metricsIndex": 2, "key": "directHeartRate"},
+        ],
+        "activityDetailMetrics": [{"metrics": [ts, spd, hr]} for ts, spd, hr in rows],
     }
-    hr, speed = parse_details_series(details)
+
+
+def test_parse_details_series_extracts_hr_speed_timestamps():
+    details = _live_shape_details(
+        [
+            (1_700_000_000_000.0, 2.8, 150.0),
+            (1_700_000_001_000.0, 3.0, None),
+            (1_700_000_008_000.0, 3.8, 172.0),
+        ]
+    )
+    hr, speed, ts = parse_details_series(details)
     assert hr == [150.0, None, 172.0]
     assert speed == [2.8, 3.0, 3.8]
+    assert ts == [1_700_000_000_000.0, 1_700_000_001_000.0, 1_700_000_008_000.0]
+
+
+def test_parse_details_series_missing_descriptor_returns_empty():
+    details = {
+        "metricDescriptors": [{"metricsIndex": 0, "key": "directSpeed"}],
+        "activityDetailMetrics": [{"metrics": [3.0]}],
+    }
+    assert parse_details_series(details) == ([], [], [])
 
 
 def test_best_window_picks_fastest_contiguous_segment():
@@ -108,12 +132,76 @@ def test_best_window_gap_exceeding_tolerance_rejected():
     assert w is None
 
 
+# --- time-domain best_window (irregular sampling) ---
+
+
+def _irregular_series(
+    segments: list[tuple[int, float, float]], step_ms: float = 4000.0, t0: float = 0.0
+) -> tuple[list[float], list[float], list[float]]:
+    """Build (hr, speed, ts_ms) with one sample per step_ms per segment.
+
+    segments: list of (n_samples, hr_val, speed_val).
+    """
+    hr: list[float] = []
+    speed: list[float] = []
+    ts: list[float] = []
+    t = t0
+    for n, h, s in segments:
+        for _ in range(n):
+            hr.append(h)
+            speed.append(s)
+            ts.append(t)
+            t += step_ms
+    return hr, speed, ts
+
+
+def test_best_window_time_domain_picks_fastest_span():
+    # 300 samples @ 4 s = 1200 s slow, then 300 @ 4 s fast, then 300 slow.
+    # The winning window starts at the fast segment; it also catches the
+    # boundary slow sample at exactly +1200 s (inclusive end).
+    hr, speed, ts = _irregular_series([(300, 150.0, 2.8), (300, 172.0, 3.8), (300, 150.0, 2.8)])
+    w = best_window(hr, speed, window_s=1200, ts_ms=ts)
+    assert w is not None
+    # Windows starting at 299 and 300 tie (1 slow + 300 fast either way);
+    # first strictly-greater wins, so 299.
+    assert w["start_idx"] in (299, 300)
+    assert w["mean_speed"] == pytest.approx((300 * 3.8 + 2.8) / 301)
+    assert w["mean_hr"] == pytest.approx((300 * 172.0 + 150.0) / 301)
+
+
+def test_best_window_time_domain_gap_rejects():
+    # A 60 s hole in the middle of an otherwise fast 1200 s span.
+    hr, speed, ts = _irregular_series([(150, 172.0, 3.8), (150, 172.0, 3.8)])
+    # Punch a 60 s gap: shift the second half forward.
+    ts = ts[:150] + [t + 60_000.0 for t in ts[150:]]
+    w = best_window(hr, speed, window_s=1200, ts_ms=ts, max_gap_s=5.0)
+    assert w is None
+
+
+def test_best_window_time_domain_short_span_returns_none():
+    # Only 100 s of data can never fill a 1200 s window.
+    hr, speed, ts = _irregular_series([(25, 172.0, 3.8)])
+    assert best_window(hr, speed, window_s=1200, ts_ms=ts) is None
+
+
+def test_best_window_time_domain_sparse_sampling_accepted():
+    # Live data arrives ~9 s apart with no dropouts; the gap tolerance
+    # adapts to the sampling rate instead of rejecting every window.
+    hr, speed, ts = _irregular_series([(140, 172.0, 3.8)], step_ms=9000.0)  # 140 x 9 s = 1260 s
+    w = best_window(hr, speed, window_s=1200, ts_ms=ts, max_gap_s=5.0)
+    assert w is not None
+    assert w["mean_speed"] == pytest.approx(3.8)
+    assert w["mean_hr"] == pytest.approx(172.0)
+
+
 # --- best-effort cross-activity anchor ---
 
 
-def _make_series(n: int, hr_val: float, speed_val: float) -> tuple[list[float], list[float]]:
-    """Helper: create uniform hr/speed lists of length n."""
-    return [hr_val] * n, [speed_val] * n
+def _make_series(
+    n: int, hr_val: float, speed_val: float
+) -> tuple[list[float], list[float], list[float]]:
+    """Helper: create uniform (hr, speed, ts_ms) 1 Hz series of length n."""
+    return [hr_val] * n, [speed_val] * n, [float(i * 1000) for i in range(n)]
 
 
 def test_best_effort_outdoor_only_and_factor():

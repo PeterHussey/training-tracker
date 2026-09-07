@@ -162,12 +162,23 @@ def test_end_to_end_emits_cross_training_hr_load(tmp_path):
 
 
 def _make_synthetic_details(n_samples: int, base_hr: float, base_speed: float):
-    """Build a minimal Garmin details-style dict with per-sample HR and speed."""
+    """Build a live-shape details dict with per-sample HR, speed, timestamps (1 Hz)."""
     return {
-        "metrics": [
-            {"heartRate": base_hr + (i % 10) * 0.5, "speed": base_speed + (i % 10) * 0.01}
+        "metricDescriptors": [
+            {"metricsIndex": 0, "key": "directTimestamp"},
+            {"metricsIndex": 1, "key": "directSpeed"},
+            {"metricsIndex": 2, "key": "directHeartRate"},
+        ],
+        "activityDetailMetrics": [
+            {
+                "metrics": [
+                    float(i * 1000),
+                    base_speed + (i % 10) * 0.01,
+                    base_hr + (i % 10) * 0.5,
+                ]
+            }
             for i in range(n_samples)
-        ]
+        ],
     }
 
 
@@ -188,8 +199,8 @@ def test_pipeline_emits_best_not_rolling():
         (24135895959, 2000, 148.0, 3.8),
     ]:
         det = _make_synthetic_details(n, hr_b, spd_b)
-        hr_list, spd_list = parse_details_series(det)
-        series_by_id[act_id] = (hr_list, spd_list)
+        hr_list, spd_list, ts_list = parse_details_series(det)
+        series_by_id[act_id] = (hr_list, spd_list, ts_list)
 
     rows = compute_metric_rows(acts, profile, lt_payload=None, series_by_id=series_by_id)
     metrics = {r["metric"] for r in rows}
@@ -246,8 +257,8 @@ def test_pipeline_garmin_lt_suppresses_best_effort():
         (24135895959, 2000, 148.0, 3.8),
     ]:
         det = _make_synthetic_details(n, hr_b, spd_b)
-        hr_list, spd_list = parse_details_series(det)
-        series_by_id[act_id] = (hr_list, spd_list)
+        hr_list, spd_list, ts_list = parse_details_series(det)
+        series_by_id[act_id] = (hr_list, spd_list, ts_list)
 
     rows = compute_metric_rows(acts, profile, lt_payload=lt, series_by_id=series_by_id)
     metrics = {r["metric"] for r in rows}

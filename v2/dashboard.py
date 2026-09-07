@@ -240,7 +240,8 @@ def fetch_details_for_lthr(
     Never blocks the refresh — skips on failure.
 
     Returns:
-        {activity_id: (hr_list, speed_list)} for successfully fetched activities.
+        {activity_id: (hr_list, speed_list, ts_ms_list)} for successfully
+        fetched activities with a parseable series. Empty parses are skipped.
     """
     from metrics.threshold import parse_details_series
 
@@ -258,8 +259,9 @@ def fetch_details_for_lthr(
         if cache_path.exists():
             try:
                 details = json.loads(cache_path.read_text())
-                hr, spd = parse_details_series(details)
-                series_by_id[a.activity_id] = (hr, spd)
+                parsed = parse_details_series(details)
+                if parsed[0]:
+                    series_by_id[a.activity_id] = parsed
             except (json.JSONDecodeError, OSError):
                 pass
             continue
@@ -267,8 +269,9 @@ def fetch_details_for_lthr(
             details = run_with_timeout(
                 gw.fetch_activity_details, timeout=timeout_s, activity_id=a.activity_id
             )
-            hr, spd = parse_details_series(details)
-            series_by_id[a.activity_id] = (hr, spd)
+            parsed = parse_details_series(details)
+            if parsed[0]:
+                series_by_id[a.activity_id] = parsed
         except (TimeoutError, OSError, json.JSONDecodeError, KeyError):
             pass
     return series_by_id
