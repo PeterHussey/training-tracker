@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backfill activity sports from live Garmin data. Usage (from v2/):
+"""Backfill activity sports from live Garmin data. Usage (from root):
 
     ../.venv/bin/python backfill_sports.py [--db PATH] [--start YYYY-MM-DD]
         [--end YYYY-MM-DD] [--apply]

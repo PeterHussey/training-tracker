@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backfill activity names from live Garmin data. Usage (from v2/):
+"""Backfill activity names from live Garmin data. Usage (from root):
 
     ../.venv/bin/python backfill_names.py [--db PATH] [--start YYYY-MM-DD]
         [--end YYYY-MM-DD] [--apply]

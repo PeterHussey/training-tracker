@@ -1,6 +1,6 @@
 """Training Tracker — interactive dashboard (Streamlit).
 
-Run from v2/:
+Run from root:
 
     ../.venv/bin/streamlit run dashboard.py
 

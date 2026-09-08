@@ -8,3 +8,7 @@
 
 # Local opencode tool install (node_modules, agent packages)
 .opencode/
+# Python bytecode cache
+__pycache__/
+.mypy_cache/
+.pytest_cache/
