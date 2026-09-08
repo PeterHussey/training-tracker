@@ -13,8 +13,8 @@ from e2e_report import (
 from session import in_period, week_start
 
 FIXTURES = Path(__file__).parent / "fixtures"
+PYTHON = Path(__file__).parent.parent / ".venv" / "bin" / "python"
 V2 = Path(__file__).parent.parent
-PYTHON = Path(__file__).parent.parent.parent / ".venv" / "bin" / "python"
 
 
 def _offline_data():

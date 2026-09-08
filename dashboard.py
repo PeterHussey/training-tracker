@@ -2,7 +2,7 @@
 
 Run from root:
 
-    ../.venv/bin/streamlit run dashboard.py
+    .venv/bin/streamlit run dashboard.py
 
 Reads a persistent SQLite history DB (activities + runner profile), fetches
 fresh data from Garmin on demand, and renders every emitted metric with

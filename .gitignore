@@ -8,7 +8,23 @@
 
 # Local opencode tool install (node_modules, agent packages)
 .opencode/
+
 # Python bytecode cache
 __pycache__/
 .mypy_cache/
 .pytest_cache/
+*.pyc
+
+# Data and cache (gitignored per AGENTS.md)
+data/
+cache/
+
+# Garmin auth tokens
+oauth*.json
+*.token*
+
+# OS files
+.DS_Store
+
+# Virtual environment
+.venv/

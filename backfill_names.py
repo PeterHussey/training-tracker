@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Backfill activity names from live Garmin data. Usage (from root):
 
-    ../.venv/bin/python backfill_names.py [--db PATH] [--start YYYY-MM-DD]
+    .venv/bin/python backfill_names.py [--db PATH] [--start YYYY-MM-DD]
         [--end YYYY-MM-DD] [--apply]
 
 Re-fetches the Garmin activity list over the store's full date range (in

@@ -2,7 +2,7 @@
 """E2E metric report: run the full measurement pipeline and report every metric
 for a recent period. Usage (from root):
 
-    ../.venv/bin/python e2e_report.py [--data auto|live|offline] [--since YYYY-MM-DD]
+    .venv/bin/python e2e_report.py [--data auto|live|offline] [--since YYYY-MM-DD]
         [--days N] [--fetch-from YYYY-MM-DD] [--fetch-to YYYY-MM-DD]
         [--units km|miles] [--hrmax estimate|BPM] [--out DB]
 
