@@ -222,7 +222,7 @@ mkdir -p v2/tests/fixtures
 ../.venv/bin/python - <<'PY'
 import json
 from pathlib import Path
-raw = json.loads(Path("../v1/cache/garmin_raw.json").read_text())
+# v1 cache removed — this was a historical reference
 if isinstance(raw, dict) and "data" in raw:
     raw = raw["data"]
 by_key = {}

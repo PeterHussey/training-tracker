@@ -2,7 +2,6 @@
 
 ## Repository layout
 
-- **`v1/`** — Legacy Streamlit app. Uses `garminconnect-mcp` (stdio JSON-RPC via bun). Not actively developed.
 - **`v2/`** — Active codebase. Own HTTP layer, metrics pipeline, Streamlit dashboard.
 - **`docs/`** — Specs, field mapping, research briefs. See `docs/v2/metrics-spec.md` for metric definitions and formulas.
 
