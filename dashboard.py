@@ -303,11 +303,6 @@ def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> 
         ("manual", "estimate from workouts", "age-predicted"),
         index=HRMAX_SOURCE_INDEX.get(p.hrmax_source, 2),
     )
-    selected_race = st.sidebar.selectbox(
-        "Race distance",
-        ("5k", "10k", "half", "full"),
-        index=("5k", "10k", "half", "full").index(p.selected_race) if p.selected_race else 0,
-    )
     hrmax_val, hrmax_src_label = get_hrmax_display(src, birth_year, hrrest, sex, p, activities)
     st.sidebar.caption(f"HRmax: {hrmax_val} · Source: {hrmax_src_label}")
     if src == "manual":
@@ -327,7 +322,6 @@ def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> 
                 birth_year=int(birth_year),
                 hrmax_source="configured",
             ),
-            selected_race=selected_race,
         )
     base = RunnerProfile.from_age(
         age=date.today().year - int(birth_year),
@@ -336,8 +330,8 @@ def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> 
         birth_year=int(birth_year),
     )
     if src == "estimate from workouts":
-        return replace(with_estimated_hrmax(base, activities), selected_race=selected_race)
-    return replace(base, selected_race=selected_race)
+        return replace(with_estimated_hrmax(base, activities))
+    return base
 
 
 def profile_sig(p: RunnerProfile) -> tuple:
