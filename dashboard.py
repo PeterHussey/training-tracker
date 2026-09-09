@@ -1181,6 +1181,8 @@ def main() -> None:
             st.session_state["race_payload"] = race
             st.session_state["vo2max_payload"] = vo2
             # Fan out to fetch activity details for best-effort LTHR anchors.
+            # Use the full date range (not the period-filtered range) so the
+            # detail cache covers all activities; dots are windowed downstream.
             gw = GarminGateway(cache_dir=APP_CACHE_DIR)
             activities_for_details = st.session_state["activities"]
             st.session_state["series_by_id"] = run_with_timeout(
@@ -1256,9 +1258,13 @@ def main() -> None:
     )
     st.sidebar.caption(f"Store range {min_d} → {max_d} · {len(activities)} activities")
     if isinstance(period, (tuple, list)):
-        since, until = period
+        period_since, period_until = period
     else:
-        since = until = period
+        period_since = period_until = period
+
+    # Ensure date objects for type safety (date_input may return datetime)
+    since = period_since.date() if hasattr(period_since, "date") else period_since
+    until = period_until.date() if hasattr(period_until, "date") else period_until
 
     compute_sig = (
         activities_sig(activities),
