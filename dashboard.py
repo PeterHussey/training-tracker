@@ -528,7 +528,6 @@ def _anchor_cards(windowed, view, units) -> None:
                 hovermode="x unified",
                 showlegend=False,
             )
-            apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
             st.plotly_chart(fig, use_container_width=True)
             st.caption(context_line(view, dots_hr_key))
 
@@ -564,20 +563,6 @@ def race_time_ticks(values, count: int = 6) -> tuple[list[float], list[str]]:
     first = math.floor(lo / step) * step
     ticks = [first + i * step for i in range(int(math.ceil((hi - first) / step)) + 1)]
     return ticks, [_fmt(t, {"unit": "s"}, "km") for t in ticks]
-
-
-def apply_yaxis_mode(fig: go.Figure, mode: str) -> go.Figure:
-    """Apply the user's y-axis scale preference to a Plotly figure.
-
-    mode: "auto" (Plotly picks the range from the data, the default) or
-    "fit to data" (same as auto; future option for fixed/manual ranges).
-    """
-    if mode == "fit to data":
-        # Plotly auto-fits by default; explicit range=None lets the data drive it.
-        for axis in ("yaxis", "yaxis2"):
-            if axis in fig.layout:
-                fig.layout[axis].range = None
-    return fig
 
 
 def render_kpis(windowed, view, units, selected_kpi_labels: list[str] | None = None) -> None:
@@ -627,7 +612,6 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis_title="Banister TRIMP",
             legend={"orientation": "h", "y": 1.12},
         )
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Stacked across running + treadmill + cross-training (HR intensity only). "
@@ -660,7 +644,6 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis2={"overlaying": "y", "side": "right", "title": "TSB"},
             legend={"orientation": "h", "y": 1.12},
         )
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "TSB = CTL - ATL; positive = fresh/form. Combined load windows. "
@@ -698,7 +681,6 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis={"range": [0, max(2.0, float(acwr.max()))]},
             legend={"orientation": "h", "y": 1.12},
         )
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Green 0.8-1.3 is a heuristic. ACWR measures load SWING, not "
@@ -729,7 +711,6 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis={"title": "Ratio", "range": [0, max(2.0, float(max_ratio.max()) * 1.1)]},
             xaxis_title="Date",
         )
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         latest = max_ratio.iloc[-1]
         if latest > 1.3:
@@ -762,7 +743,6 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
     else:
         fig = go.Figure(go.Scatter(x=vo2.index, y=vo2.values, mode="lines+markers", name="VO2max"))
         fig.update_layout(title="VO2max (Firstbeat estimate, daily trend)", hovermode="x unified")
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Daily trend from Garmin `/maxmet/daily` (vo2MaxPreciseValue). "
@@ -800,7 +780,6 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             yaxis_title=("bpm" if params and params.get("unit") != "m/s" else f"min per {units}"),
             hovermode="x unified",
         )
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(context_line(view, key))
 
@@ -856,7 +835,6 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             yaxis_title="predicted time",
             yaxis={"tickvals": tickvals, "ticktext": ticktext},
         )
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Daily history from `/racepredictions/daily` — each distance "
@@ -897,7 +875,6 @@ def render_volume_tab(activities, view, windowed, units) -> None:
                 }
             )
         fig.update_layout(title="Weekly distance", barmode="stack", hovermode="x unified")
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Stacked by sport. Cross-training has no distance and stacks "
@@ -936,7 +913,6 @@ def render_volume_tab(activities, view, windowed, units) -> None:
             hovermode="x unified",
             yaxis_title="hours",
         )
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "Time-anchored workload: running + treadmill + cross-training + strength. "
@@ -951,8 +927,7 @@ def render_volume_tab(activities, view, windowed, units) -> None:
             fig.update_layout(
                 title="Week-over-week duration change", hovermode="x unified", yaxis_title="%"
             )
-            apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
-        st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
 
     wow = windowed.get("volume.wow_pct_total")
     if wow is not None and len(wow):
@@ -961,7 +936,6 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         fig.update_layout(
             title="Week-over-week distance change", hovermode="x unified", yaxis_title="%"
         )
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
 
     gain = windowed.get("elevation.daily_gain_running")
@@ -999,7 +973,6 @@ def render_volume_tab(activities, view, windowed, units) -> None:
                 }
             )
         fig.update_layout(title="Elevation gain (running)", hovermode="x unified")
-        apply_yaxis_mode(fig, st.session_state.get("_yaxis_mode", "auto"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption("Elevation is route context, not a risk metric.")
     else:
@@ -1216,19 +1189,6 @@ def main() -> None:
     if st.session_state.get("_profile_sig") != psig:
         store.save_runner_profile(profile)
         st.session_state["_profile_sig"] = psig
-
-    st.sidebar.header("Chart axes")
-    yaxis_mode = st.sidebar.radio(
-        "Y-axis scale",
-        ("auto", "fit to data"),
-        index=0,
-        help=(
-            "auto: Plotly picks the range from the data (default). "
-            "fit to data: same as auto; future option for fixed/manual ranges."
-        ),
-        key="yaxis_mode",
-    )
-    st.session_state["_yaxis_mode"] = yaxis_mode
 
     st.sidebar.header("Selected KPI fields")
     all_kpi_labels = [label for _key, label in KPI_KEYS]
