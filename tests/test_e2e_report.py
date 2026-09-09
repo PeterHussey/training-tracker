@@ -1,5 +1,6 @@
 # tests/test_e2e_report.py
 import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -13,7 +14,8 @@ from e2e_report import (
 from session import in_period, week_start
 
 FIXTURES = Path(__file__).parent / "fixtures"
-PYTHON = Path(__file__).parent.parent / ".venv" / "bin" / "python"
+_venv_python = Path(__file__).parent.parent / ".venv" / "bin" / "python"
+PYTHON = _venv_python if _venv_python.exists() else Path(sys.executable)
 V2 = Path(__file__).parent.parent
 
 
