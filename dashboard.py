@@ -234,11 +234,17 @@ def fetch_details_for_lthr(
     activities: list,
     top_k: int = DETAILS_TOP_K,
     timeout_s: float = DETAILS_TIMEOUT_S,
+    since: "date | None" = None,
+    until: "date | None" = None,
 ) -> dict[int, tuple]:
     """Fetch activity details for the top-k outdoor running activities.
 
     Checks disk cache first. For cache misses, fetches with per-request timeout.
     Never blocks the refresh — skips on failure.
+
+    When *since*/*until* are provided, candidates are filtered to that date
+    range before the top-k selection, so dots reflect the fastest activities
+    within the visible window rather than globally.
 
     Returns:
         {activity_id: (hr_list, speed_list, ts_ms_list)} for successfully
@@ -251,6 +257,10 @@ def fetch_details_for_lthr(
         for a in activities
         if a.sport == "running" and a.duration_s >= 1200 and a.avg_hr is not None
     ]
+    if since is not None:
+        candidates = [a for a in candidates if a.date >= since]
+    if until is not None:
+        candidates = [a for a in candidates if a.date <= until]
     candidates.sort(key=lambda a: a.avg_speed or 0, reverse=True)
     candidates = candidates[:top_k]
 
@@ -1180,17 +1190,9 @@ def main() -> None:
             st.session_state["lt_payload"] = lt
             st.session_state["race_payload"] = race
             st.session_state["vo2max_payload"] = vo2
-            # Fan out to fetch activity details for best-effort LTHR anchors.
-            # Use the full date range (not the period-filtered range) so the
-            # detail cache covers all activities; dots are windowed downstream.
-            gw = GarminGateway(cache_dir=APP_CACHE_DIR)
-            activities_for_details = st.session_state["activities"]
-            st.session_state["series_by_id"] = run_with_timeout(
-                fetch_details_for_lthr,
-                timeout=DETAILS_TOTAL_TIMEOUT_S,
-                gw=gw,
-                activities=activities_for_details,
-            )
+            # Mark that a Garmin refresh happened so details get re-fetched
+            # with the current period window below.
+            st.session_state["_garmin_refreshed"] = True
             if fetch_mode == "historical":
                 msg = f"Historical fetch: {len(acts)} activities fetched"
             else:
@@ -1257,7 +1259,7 @@ def main() -> None:
         key=PERIOD_KEY,
     )
     st.sidebar.caption(f"Store range {min_d} → {max_d} · {len(activities)} activities")
-    if isinstance(period, (tuple, list)):
+    if isinstance(period, (list, tuple)) and len(period) == 2:
         period_since, period_until = period
     else:
         period_since = period_until = period
@@ -1265,6 +1267,26 @@ def main() -> None:
     # Ensure date objects for type safety (date_input may return datetime)
     since = period_since.date() if hasattr(period_since, "date") else period_since
     until = period_until.date() if hasattr(period_until, "date") else period_until
+
+    # Re-fetch activity details when the period changes or after a Garmin
+    # refresh.  The top-k is scoped to [since, until] so dots reflect the
+    # fastest qualifying efforts *within the visible window*.
+    _period_key = (since, until)
+    _need_details = (
+        st.session_state.pop("_garmin_refreshed", False)
+        or st.session_state.get("_details_period_key") != _period_key
+    )
+    if _need_details and activities:
+        gw = GarminGateway(cache_dir=APP_CACHE_DIR)
+        st.session_state["series_by_id"] = run_with_timeout(
+            fetch_details_for_lthr,
+            timeout=DETAILS_TOTAL_TIMEOUT_S,
+            gw=gw,
+            activities=activities,
+            since=since,
+            until=until,
+        )
+        st.session_state["_details_period_key"] = _period_key
 
     compute_sig = (
         activities_sig(activities),
