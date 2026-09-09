@@ -232,6 +232,7 @@ def test_gateway_uses_owned_http_path(monkeypatch, tmp_path):
     fh = _fake_http(monkeypatch)
     monkeypatch.setattr("gateway.GarminTokenStore", lambda p, timeout=None: ts)
     monkeypatch.setattr("gateway.GarminHttp", lambda ts: fh)
+    monkeypatch.setattr("gateway.choose_token_source", lambda *args, **kwargs: ("path", str(v2)))
     gw = GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=v2)
     assert gw.auth_path == "tokenstore"
     assert gw._http is fh
@@ -245,6 +246,7 @@ def test_gateway_fetch_delegates(monkeypatch, tmp_path):
     fh = _fake_http(monkeypatch)
     monkeypatch.setattr("gateway.GarminTokenStore", lambda p, timeout=None: ts)
     monkeypatch.setattr("gateway.GarminHttp", lambda ts: fh)
+    monkeypatch.setattr("gateway.choose_token_source", lambda *args, **kwargs: ("path", str(v2)))
     gw = GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=v2)
     gw.fetch_activities("a", "b")
     gw.fetch_lactate_threshold()

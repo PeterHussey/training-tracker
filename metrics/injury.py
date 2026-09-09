@@ -75,11 +75,7 @@ def max_run_ratio(
             continue
         # Count distinct running days in the *prior* window for baseline check
         window_start = a.date - timedelta(days=window_days)
-        running_days_prior = sum(
-            1
-            for r in runs
-            if window_start <= r.date < a.date
-        )
+        running_days_prior = sum(1 for r in runs if window_start <= r.date < a.date)
         if running_days_prior < min_baseline:
             continue  # not enough baseline — skip (NaN via absence)
         rows.append((d, a.distance_km / rmax))

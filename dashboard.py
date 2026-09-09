@@ -739,9 +739,7 @@ def render_load_tab(view, windowed, units) -> None:
                 "Keep an eye on cumulative load."
             )
         else:
-            st.success(
-                f"Latest run is {latest:.0%} of your 30-day longest — within safe range."
-            )
+            st.success(f"Latest run is {latest:.0%} of your 30-day longest — within safe range.")
         st.caption(
             "Ratio = run distance / rolling 30-day max distance (running + treadmill). "
             "Green < 110% = safe, orange 110-130% = elevated risk, red > 130% = high risk. "
@@ -1066,8 +1064,13 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=xs, y=paces, mode="lines+markers", name="avg pace (min/unit)"))
     fig.add_trace(
-        go.Scatter(x=xs, y=gap_paces, mode="lines+markers", name="GAP (min/unit)",
-                   line={"color": "#A23B72", "dash": "dot"}),
+        go.Scatter(
+            x=xs,
+            y=gap_paces,
+            mode="lines+markers",
+            name="GAP (min/unit)",
+            line={"color": "#A23B72", "dash": "dot"},
+        ),
     )
     fig.add_trace(
         go.Scatter(x=xs, y=hrs, mode="lines+markers", name="avg HR (bpm)", yaxis="y2"),

@@ -36,7 +36,11 @@ def eligible_activity(
         return False
     if a.elapsed_s < min_duration_s:
         return False
-    return not (a.ele_gain_m is not None and a.distance_m > 0 and a.ele_gain_m / (a.distance_m / 1000.0) > max_ele_per_km)
+    return not (
+        a.ele_gain_m is not None
+        and a.distance_m > 0
+        and a.ele_gain_m / (a.distance_m / 1000.0) > max_ele_per_km
+    )
 
 
 def route_key(a: Activity, grid: float = 0.01):
