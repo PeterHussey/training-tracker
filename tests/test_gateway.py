@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 import gateway
 from garmin_http import GarminHttp, GarminTokenStore
 from gateway import (
@@ -349,3 +351,27 @@ def test_no_top_level_garminconnect_import():
         if isinstance(n, ast.ImportFrom)
     )
     assert lazy or "garminconnect" not in src, "expected garminconnect import to be lazy"
+
+
+def test_gateway_includes_original_error_when_tokenstore_fails(tmp_path):
+    """When the tokenstore exists but cannot be loaded (e.g. PermissionError),
+    the RuntimeError must include the original error so the user sees the real
+    cause instead of the generic 'no tokenstore, no op creds, no env creds'."""
+    v2 = tmp_path / "v2_tokenstore.json"
+    v2.write_text("{}")  # exists but empty
+
+    class _FailingTS:
+        def __init__(self, p, timeout=None):
+            pass
+
+        def load(self):
+            raise PermissionError("[Errno 1] Operation not permitted")
+
+    with (
+        mock.patch("garminconnect.Garmin", side_effect=Exception("should not reach garminconnect")),
+        mock.patch("gateway.load_op_creds", return_value=(None, None)),
+        mock.patch("gateway.choose_token_source", return_value=("path", str(v2))),
+        mock.patch("gateway.GarminTokenStore", _FailingTS),
+        pytest.raises(RuntimeError, match="PermissionError"),
+    ):
+        GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=v2)

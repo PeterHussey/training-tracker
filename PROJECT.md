@@ -51,3 +51,4 @@ Personal training dashboard based on Garmin data, improving on free available me
 
 | Date | Type | Summary | File |
 |---|---|---|---|
+| 2026-09-10 | Status | 2 of 6 criteria verified; live Garmin refresh and interactive UI not probed | [docs/reviews/2026-09-10-status.md](docs/reviews/2026-09-10-status.md) |

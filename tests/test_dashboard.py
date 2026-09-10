@@ -264,3 +264,77 @@ def test_anchor_point_survives_period_windowing():
     assert pt is not None
     assert pt["proxy_hr"] == pytest.approx(165.0 * 0.95)
     assert pt["date"] == anchor_date.isoformat()
+
+
+def test_windowed_view_covers_all_expected_metrics():
+    """Criterion 3 proxy: windowing must apply uniformly to every metric in the
+    view. If a metric is present in the full view but missing from the windowed
+    output when its data falls inside the window, the dashboard chart would show
+    stale or empty data."""
+    import json
+    from pathlib import Path
+    from profile import default_profile
+
+    from normalize import from_summary
+    from session import build_session_view
+
+    raw = json.loads((Path(__file__).parent / "fixtures" / "activities_sample.json").read_text())
+    acts = [from_summary(a) for a in raw]
+    profile = default_profile(age=40, hrrest=60, sex="M")
+    view = build_session_view(acts, profile, None, None, None)
+
+    # Window covering the full fixture date range
+    dates = [a.date for a in acts]
+    since, until = min(dates), max(dates)
+    windowed = view.windowed(since, until)
+
+    # Every metric present in the full view must also appear in the windowed
+    # view (possibly empty if all its data points fall outside the window, but
+    # the key must exist so the dashboard chart renders without KeyError).
+    full_metrics = set(view.series.keys())
+    windowed_metrics = set(windowed.keys())
+    assert full_metrics == windowed_metrics, (
+        f"Metrics in full view but missing from windowed: {full_metrics - windowed_metrics}"
+    )
+
+
+def test_build_repetitions_groups_by_code():
+    """Criterion 4 proxy: build_repetitions must group activities by their 80/20
+    plan code, exclude activities without a code, and sort each group oldest-first."""
+    from datetime import date as _date
+
+    from normalize import Activity
+    from session import build_repetitions
+
+    acts = [
+        Activity(activity_id=1, sport="running", date=_date(2026, 8, 10), ts_ms=0,
+                 distance_m=5000, duration_s=1800, elapsed_s=1800, zone_s={},
+                 ele_gain_m=50, vo2max=None, avg_hr=150, max_hr=170,
+                 aerobic_te=None, anaerobic_te=None, avg_speed=2.78,
+                 fastest_split_1609=None, name="Run - RF24 (Foundation)", has_intervals=False),
+        Activity(activity_id=2, sport="running", date=_date(2026, 8, 17), ts_ms=0,
+                 distance_m=5000, duration_s=1750, elapsed_s=1750, zone_s={},
+                 ele_gain_m=40, vo2max=None, avg_hr=152, max_hr=172,
+                 aerobic_te=None, anaerobic_te=None, avg_speed=2.86,
+                 fastest_split_1609=None, name="Run - RF24 (Foundation)", has_intervals=False),
+        Activity(activity_id=3, sport="running", date=_date(2026, 8, 12), ts_ms=0,
+                 distance_m=8000, duration_s=3000, elapsed_s=3000, zone_s={},
+                 ele_gain_m=30, vo2max=None, avg_hr=145, max_hr=165,
+                 aerobic_te=None, anaerobic_te=None, avg_speed=2.67,
+                 fastest_split_1609=None, name="Easy run - no code", has_intervals=False),
+        Activity(activity_id=4, sport="treadmill", date=_date(2026, 8, 14), ts_ms=0,
+                 distance_m=5000, duration_s=1900, elapsed_s=1900, zone_s={},
+                 ele_gain_m=0, vo2max=None, avg_hr=148, max_hr=168,
+                 aerobic_te=None, anaerobic_te=None, avg_speed=2.63,
+                 fastest_split_1609=None, name="Treadmill - RF24 (Foundation)", has_intervals=False),
+    ]
+    groups = build_repetitions(acts)
+    # Only activities with code "RF24" are grouped
+    assert "RF24" in groups
+    assert len(groups["RF24"]) == 3  # ids 1, 2, 4 (treadmill has code too)
+    # Activities without a code are excluded
+    assert all(a.activity_id != 3 for a in groups["RF24"])
+    # Sorted oldest-first
+    assert groups["RF24"][0].date < groups["RF24"][-1].date
+    # No other codes in the group
+    assert len(groups) == 1

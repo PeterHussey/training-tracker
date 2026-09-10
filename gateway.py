@@ -147,6 +147,7 @@ class GarminGateway:
             email = os.environ.get("GARMIN_EMAIL")
             password = os.environ.get("GARMIN_PASSWORD")
         kind, value = choose_token_source()
+        _ts_error: Exception | None = None
         if kind is not None and value is not None:
             try:
                 if kind == "migrated":
@@ -158,10 +159,18 @@ class GarminGateway:
                 self._http = GarminHttp(store)
                 self.auth_path = "tokenstore"
                 return
-            except Exception:
-                pass
+            except Exception as exc:
+                _ts_error = exc
         # Fallback: garminconnect credential login (last resort, bounded by caller).
-        self._login_garminconnect(email, password, tokenstore_v2=tokenstore_v2)
+        try:
+            self._login_garminconnect(email, password, tokenstore_v2=tokenstore_v2)
+        except RuntimeError:
+            if _ts_error is not None:
+                raise RuntimeError(
+                    f"Garmin auth unavailable: tokenstore failed ({_ts_error.__class__.__name__}: "
+                    f"{_ts_error}), and no op/env credentials available"
+                ) from _ts_error
+            raise
 
     def _materialise_migrated_store(self, store_json: str, tokenstore_v2: Path) -> Path:
         path = Path(tokenstore_v2)
