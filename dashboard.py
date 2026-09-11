@@ -105,6 +105,26 @@ def period_bounds(
     return min_d, since, end
 
 
+def reset_period_after_refresh(
+    old_period, default_since: date, max_d: date
+) -> tuple[date, date]:
+    """Period to show after a Garmin refresh added activities.
+
+    Preserves the user's existing start date and pushes the end out to the new
+    latest activity date, so freshly fetched activities appear in every tab.
+    Falls back to the trailing-window default when there is no prior selection.
+    A single-date selection is treated as start == end == that date.
+    """
+    def _norm(v):
+        return v.date() if hasattr(v, "date") else v
+
+    if isinstance(old_period, (list, tuple)) and len(old_period) == 2:
+        return _norm(old_period[0]), max_d
+    if old_period is not None:
+        return _norm(old_period), max_d
+    return default_since, max_d
+
+
 @st.cache_resource
 def get_store() -> MetricStore:
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -1152,7 +1172,7 @@ def main() -> None:
             if acts:
                 store.save_activities(acts)
                 st.session_state["activities"] = store.load_activities()
-                st.session_state.pop(PERIOD_KEY, None)
+                st.session_state["_period_needs_reset"] = True
             # Trend payloads update even when there are no new activities.
             st.session_state["lt_payload"] = lt
             st.session_state["race_payload"] = race
@@ -1205,12 +1225,29 @@ def main() -> None:
     st.session_state["selected_kpi_labels"] = selected_kpi_labels
 
     min_d, default_since, max_d = period_bounds([a.date for a in activities])
+
+    # After a refresh added activities, the period must cover the newest ones.
+    # Streamlit cannot reset a keyed widget with a script-body `pop`: the value
+    # updates Python-side for one run only, while the browser keeps the stale
+    # range and re-adopts it on the next rerun (streamlit #5442) — hiding newly
+    # fetched activities from the Activities tab. A NEW widget key forces the
+    # browser to adopt the reset value; the user's start date is preserved and
+    # the end extends to the new latest activity date.
+    if st.session_state.pop("_period_needs_reset", False):
+        _ver = st.session_state.get("_period_key_version", 0)
+        old_period = st.session_state.get(f"{PERIOD_KEY}_{_ver}")
+        st.session_state["_period_reset_value"] = reset_period_after_refresh(
+            old_period, default_since, max_d
+        )
+        st.session_state["_period_key_version"] = _ver + 1
+
+    _period_key = f"{PERIOD_KEY}_{st.session_state.get('_period_key_version', 0)}"
     period = st.sidebar.date_input(
         "Period",
-        value=(default_since, max_d),
+        value=st.session_state.pop("_period_reset_value", None) or (default_since, max_d),
         min_value=min_d,
         max_value=max_d,
-        key=PERIOD_KEY,
+        key=_period_key,
     )
     st.sidebar.caption(f"Store range {min_d} → {max_d} · {len(activities)} activities")
     if isinstance(period, (list, tuple)) and len(period) == 2:
