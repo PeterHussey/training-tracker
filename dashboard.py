@@ -23,6 +23,7 @@ import streamlit as st
 
 from gateway import GarminGateway
 from metrics.gap import K as GAP_K
+from metrics.threshold import parse_details_series
 from normalize import from_summary
 from pipeline import persist_session_metrics
 from session import _fmt, build_session_view, run_with_timeout
@@ -48,6 +49,7 @@ KPI_KEYS = [
     ("fitness.vo2max", "VO2max"),
     ("load.lt_hr", "LT HR"),
     ("load.banister", "Daily load"),
+    ("load.decoupling_mean", "Aerobic decoupling"),
 ]
 
 
@@ -247,6 +249,70 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
 DETAILS_TOP_K = 40
 DETAILS_TIMEOUT_S = 8
 DETAILS_TOTAL_TIMEOUT_S = 60
+DECOUPLING_TOP_K = 20
+DECOUPLING_TOTAL_TIMEOUT_S = 30
+
+
+def _fetch_series_for(gw: GarminGateway, candidates: list, timeout_s: float) -> dict[int, tuple]:
+    """Shared cache-first details fetch for a pre-selected candidate list.
+
+    Returns {activity_id: (hr_list, speed_list, ts_ms_list)} for successfully
+    fetched activities with a parseable series. Empty parses are skipped.
+    Never blocks the refresh — skips on failure.
+    """
+    series_by_id: dict[int, tuple] = {}
+    for a in candidates:
+        cache_path = gw.cache_dir / f"activity_details_{a.activity_id}.json"
+        if cache_path.exists():
+            try:
+                details = json.loads(cache_path.read_text())
+                parsed = parse_details_series(details)
+                if parsed[0]:
+                    series_by_id[a.activity_id] = parsed
+            except (json.JSONDecodeError, OSError):
+                pass
+            continue
+        try:
+            details = run_with_timeout(
+                gw.fetch_activity_details, timeout=timeout_s, activity_id=a.activity_id
+            )
+            parsed = parse_details_series(details)
+            if parsed[0]:
+                series_by_id[a.activity_id] = parsed
+        except (TimeoutError, OSError, json.JSONDecodeError, KeyError):
+            pass
+    return series_by_id
+
+
+def fetch_details_for_decoupling(
+    gw: GarminGateway,
+    activities: list,
+    top_k: int = DECOUPLING_TOP_K,
+    timeout_s: float = DETAILS_TIMEOUT_S,
+    since: "date | None" = None,
+    until: "date | None" = None,
+) -> dict[int, tuple]:
+    """Fetch activity details for the most recent long runs (decoupling input).
+
+    Unlike fetch_details_for_lthr (top-k fastest), this selects by duration —
+    outdoor runs >= 90 min with HR, excluding structured-interval workouts —
+    since slow long runs rarely make the fastest cut. Same return shape;
+    callers merge both passes into one series_by_id.
+    """
+    candidates = [
+        a
+        for a in activities
+        if a.sport == "running"
+        and a.duration_s >= 5400
+        and a.avg_hr is not None
+        and not a.has_intervals
+    ]
+    if since is not None:
+        candidates = [a for a in candidates if a.date >= since]
+    if until is not None:
+        candidates = [a for a in candidates if a.date <= until]
+    candidates.sort(key=lambda a: a.date, reverse=True)
+    return _fetch_series_for(gw, candidates[:top_k], timeout_s)
 
 
 def fetch_details_for_lthr(
@@ -270,8 +336,6 @@ def fetch_details_for_lthr(
         {activity_id: (hr_list, speed_list, ts_ms_list)} for successfully
         fetched activities with a parseable series. Empty parses are skipped.
     """
-    from metrics.threshold import parse_details_series
-
     candidates = [
         a
         for a in activities
@@ -282,30 +346,7 @@ def fetch_details_for_lthr(
     if until is not None:
         candidates = [a for a in candidates if a.date <= until]
     candidates.sort(key=lambda a: a.avg_speed or 0, reverse=True)
-    candidates = candidates[:top_k]
-
-    series_by_id: dict[int, tuple] = {}
-    for a in candidates:
-        cache_path = gw.cache_dir / f"activity_details_{a.activity_id}.json"
-        if cache_path.exists():
-            try:
-                details = json.loads(cache_path.read_text())
-                parsed = parse_details_series(details)
-                if parsed[0]:
-                    series_by_id[a.activity_id] = parsed
-            except (json.JSONDecodeError, OSError):
-                pass
-            continue
-        try:
-            details = run_with_timeout(
-                gw.fetch_activity_details, timeout=timeout_s, activity_id=a.activity_id
-            )
-            parsed = parse_details_series(details)
-            if parsed[0]:
-                series_by_id[a.activity_id] = parsed
-        except (TimeoutError, OSError, json.JSONDecodeError, KeyError):
-            pass
-    return series_by_id
+    return _fetch_series_for(gw, candidates[:top_k], timeout_s)
 
 
 def profile_from_widgets(activities, persisted: RunnerProfile | None = None) -> RunnerProfile:
@@ -751,6 +792,49 @@ def render_load_tab(view, windowed, units) -> None:
             "Study found 64% injury risk increase above 110%, roughly doubling at 2x. "
             + context_line(view, "injury.max_run_ratio")
         )
+
+    dec = windowed.get("load.decoupling")
+    dec_mean = windowed.get("load.decoupling_mean")
+    if (dec is None or dec.empty) and (dec_mean is None or dec_mean.empty):
+        st.write("Aerobic decoupling needs ≥6 route-matched flat 90-min sessions with HR data.")
+    else:
+        fig = go.Figure()
+        if dec is not None and len(dec):
+            fig.add_trace(
+                go.Scatter(
+                    x=dec.index,
+                    y=dec.values * 100,
+                    mode="lines+markers",
+                    name="per-run decoupling",
+                )
+            )
+        if dec_mean is not None and len(dec_mean):
+            fig.add_trace(
+                go.Scatter(
+                    x=dec_mean.index,
+                    y=dec_mean.values * 100,
+                    mode="lines+markers",
+                    name="route-cluster mean",
+                )
+            )
+        fig.update_layout(
+            title="Aerobic decoupling (HR vs pace drift)",
+            hovermode="x unified",
+            yaxis_title="%",
+            xaxis_title="Date",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        if dec_mean is None or dec_mean.empty:
+            n = len(dec) if dec is not None else 0
+            st.caption(
+                f"{n}/6 route-matched sessions — single-run values are noise; "
+                "the trend appears at 6. " + context_line(view, "load.decoupling")
+            )
+        else:
+            st.caption(
+                "Mean across route-matched flat 90-min+ sessions. "
+                "Positive = cardiac drift. " + context_line(view, "load.decoupling_mean")
+            )
 
 
 def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None:
@@ -1269,7 +1353,7 @@ def main() -> None:
     )
     if _need_details and activities:
         gw = GarminGateway(cache_dir=APP_CACHE_DIR)
-        st.session_state["series_by_id"] = run_with_timeout(
+        lthr_series = run_with_timeout(
             fetch_details_for_lthr,
             timeout=DETAILS_TOTAL_TIMEOUT_S,
             gw=gw,
@@ -1277,6 +1361,15 @@ def main() -> None:
             since=since,
             until=until,
         )
+        dec_series = run_with_timeout(
+            fetch_details_for_decoupling,
+            timeout=DECOUPLING_TOTAL_TIMEOUT_S,
+            gw=gw,
+            activities=activities,
+            since=since,
+            until=until,
+        )
+        st.session_state["series_by_id"] = {**lthr_series, **dec_series}
         st.session_state["_details_period_key"] = _period_key
 
     compute_sig = (

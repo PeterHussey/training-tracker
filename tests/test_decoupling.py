@@ -5,6 +5,7 @@ import pytest
 from metrics.decoupling import (
     aggregate_decoupling,
     decoupling_percent,
+    decoupling_timebased,
     eligible_activity,
     route_key,
 )
@@ -75,3 +76,41 @@ def test_route_matching_picks_same_route_sessions():
     a = [_run(date(2026, 4, i), dur_s=6000.0, lat=42.4261, lon=-71.2801) for i in range(1, 9)]
     keys = {route_key(x) for x in a}
     assert len(keys) == 1
+
+
+def test_eligibility_excludes_structured_intervals():
+    a = _run(date(2026, 4, 5), dur_s=7200.0)
+    a.has_intervals = True
+    assert not eligible_activity(a)
+    assert eligible_activity(a, exclude_intervals=False)
+
+
+def test_timebased_split_uses_elapsed_time_not_sample_count():
+    # 100-min effort, HR drifts 145 -> 155 at the elapsed-time midpoint.
+    # Dense sampling early (1 Hz), sparse late (0.1 Hz): a sample-count
+    # split puts mostly early samples in both halves (~1% drift) while the
+    # time-based split sees the real ~6.9% drift.
+    hr, speed, ts = [], [], []
+    t = 0
+    for _ in range(3000):
+        hr.append(145.0)
+        speed.append(3.0)
+        ts.append(t)
+        t += 1000
+    for _ in range(300):
+        hr.append(155.0)
+        speed.append(3.0)
+        ts.append(t)
+        t += 10000
+    assert decoupling_timebased(hr, speed, ts) == pytest.approx(155.0 / 145.0 - 1.0, rel=0.05)
+    assert decoupling_percent(hr, speed) < 0.02
+
+
+def test_timebased_drops_dropouts_and_rejects_empty():
+    hr = [145.0, None, 155.0, 156.0]
+    speed = [3.0, 3.0, None, 3.1]
+    ts = [0, 60_000, 120_000, 180_000]
+    dec = decoupling_timebased(hr, speed, ts)
+    assert dec == pytest.approx((156.0 / 3.1) / (145.0 / 3.0) - 1.0)
+    with pytest.raises(ValueError):
+        decoupling_timebased([150.0, None], [3.0, None], [0, 1000])

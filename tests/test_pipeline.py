@@ -1,5 +1,6 @@
 # tests/test_pipeline.py
 import json
+from datetime import date, timedelta
 from pathlib import Path
 from profile import default_profile
 
@@ -7,7 +8,7 @@ import pandas as pd
 import pytest
 
 from metric_series import rows_from_series
-from normalize import from_summary
+from normalize import Activity, from_summary
 from pipeline import compute_metric_rows, run_pipeline
 from store import MetricStore
 
@@ -347,3 +348,92 @@ def test_end_to_end_emits_strength_duration(tmp_path):
             f"load.banister row on {row['date']} driven by strength-only day"
         )
     store.close()
+
+
+def _decoup_run(activity_id=101, day=date(2026, 5, 1), dur_s=6300.0):
+    return Activity(
+        activity_id=activity_id,
+        sport="running",
+        date=day,
+        ts_ms=0,
+        distance_m=18000.0,
+        duration_s=dur_s,
+        elapsed_s=dur_s,
+        avg_hr=150.0,
+        max_hr=170.0,
+        zone_s={},
+        ele_gain_m=100.0,
+        lat=42.4261,
+        lon=-71.2801,
+    )
+
+
+def _decoup_series(minutes=104):
+    half = minutes // 2
+    hr = [145.0] * half + [155.0] * (minutes - half)
+    return hr, [3.0] * minutes, [i * 60000 for i in range(minutes)]
+
+
+def test_pipeline_emits_decoupling_dot_for_eligible_run():
+    a = _decoup_run()
+    rows = compute_metric_rows(
+        [a],
+        default_profile(age=40, hrrest=60, sex="M"),
+        series_by_id={a.activity_id: _decoup_series()},
+    )
+    dots = [r for r in rows if r["metric"] == "load.decoupling"]
+    assert len(dots) == 1
+    assert dots[0]["date"] == "2026-05-01"
+    assert dots[0]["value"] == pytest.approx(155.0 / 145.0 - 1.0, rel=0.01)
+    assert json.loads(dots[0]["params"])["unit"] == "fraction"
+    flags = json.loads(dots[0]["flags"])
+    assert flags["activity_id"] == 101
+    assert "route_key" in flags
+
+
+def test_pipeline_skips_short_run_and_missing_series():
+    short = _decoup_run(activity_id=102, dur_s=1800.0)
+    no_series = _decoup_run(activity_id=103, day=date(2026, 5, 2))
+    rows = compute_metric_rows(
+        [short, no_series],
+        default_profile(age=40, hrrest=60, sex="M"),
+        series_by_id={short.activity_id: _decoup_series()},
+    )
+    assert not [r for r in rows if r["metric"] == "load.decoupling"]
+
+
+def test_pipeline_skips_interval_workout_for_decoupling():
+    a = _decoup_run(activity_id=104)
+    a.has_intervals = True
+    rows = compute_metric_rows(
+        [a],
+        default_profile(age=40, hrrest=60, sex="M"),
+        series_by_id={a.activity_id: _decoup_series()},
+    )
+    assert not [r for r in rows if r["metric"] == "load.decoupling"]
+
+
+def test_pipeline_emits_cluster_mean_with_six_route_matched():
+    acts = [
+        _decoup_run(activity_id=200 + i, day=date(2026, 5, 1) + timedelta(days=i)) for i in range(6)
+    ]
+    series = {a.activity_id: _decoup_series() for a in acts}
+    rows = compute_metric_rows(
+        acts, default_profile(age=40, hrrest=60, sex="M"), series_by_id=series
+    )
+    means = [r for r in rows if r["metric"] == "load.decoupling_mean"]
+    assert len(means) == 1
+    assert means[0]["value"] == pytest.approx(155.0 / 145.0 - 1.0, rel=0.01)
+    assert json.loads(means[0]["params"])["n"] == 6
+
+
+def test_pipeline_no_cluster_mean_below_six_sessions():
+    acts = [
+        _decoup_run(activity_id=300 + i, day=date(2026, 5, 1) + timedelta(days=i)) for i in range(3)
+    ]
+    series = {a.activity_id: _decoup_series() for a in acts}
+    rows = compute_metric_rows(
+        acts, default_profile(age=40, hrrest=60, sex="M"), series_by_id=series
+    )
+    assert len([r for r in rows if r["metric"] == "load.decoupling"]) == 3
+    assert not [r for r in rows if r["metric"] == "load.decoupling_mean"]

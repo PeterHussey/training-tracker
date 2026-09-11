@@ -65,6 +65,8 @@ CONDITIONAL_METRICS = {
     "race_10k": "requires non-null race predictions in the payload",
     "race_half": "requires non-null race predictions in the payload",
     "race_full": "requires non-null race predictions in the payload",
+    "load.decoupling": "requires route-matched flat 90min+ outdoor runs with HR/speed details",
+    "load.decoupling_mean": "requires >=6 route-matched flat 90min+ sessions (single-run values are noise)",
 }
 
 

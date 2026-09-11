@@ -6,6 +6,7 @@ are dominated by day-to-day noise (session-residual variance 57-83%).
 """
 
 import statistics
+from collections.abc import Sequence
 
 from normalize import Activity
 
@@ -29,10 +30,50 @@ def decoupling_percent(hr: list[float], speed: list[float]) -> float:
     return (r2 / r1) - 1.0
 
 
+def decoupling_timebased(
+    hr: Sequence[float | None], speed: Sequence[float | None], ts_ms: Sequence[float | None]
+) -> float:
+    """Decoupling split by elapsed-time midpoint (for irregularly sampled series).
+
+    Live samples arrive ~1-7 s apart, so a sample-count split can misalign
+    the halves in time. Drops samples with missing HR/speed/timestamp, splits
+    the valid samples at the elapsed midpoint, and applies the same HR/speed
+    ratio comparison as :func:`decoupling_percent`.
+    """
+    if not (len(hr) == len(speed) == len(ts_ms)):
+        raise ValueError("need equal hr/speed/ts sequences")
+    valid = [
+        (h, s, t)
+        for h, s, t in zip(hr, speed, ts_ms, strict=True)
+        if h is not None and s is not None and t is not None
+    ]
+    if len(valid) < 2:
+        raise ValueError("need >=2 valid hr/speed samples")
+    lo = min(t for _, _, t in valid)
+    mid = lo + (max(t for _, _, t in valid) - lo) / 2.0
+    first = [(h, s) for h, s, t in valid if t <= mid]
+    second = [(h, s) for h, s, t in valid if t > mid]
+    if not first or not second:
+        raise ValueError("samples do not span the elapsed midpoint")
+
+    def ratio(pairs):
+        mean_sp = sum(s for _, s in pairs) / len(pairs)
+        if mean_sp == 0:
+            raise ValueError("zero average speed in a half")
+        return (sum(h for h, _ in pairs) / len(pairs)) / mean_sp
+
+    return ratio(second) / ratio(first) - 1.0
+
+
 def eligible_activity(
-    a: Activity, min_duration_s: int = 5400, max_ele_per_km: float = 25.0
+    a: Activity,
+    min_duration_s: int = 5400,
+    max_ele_per_km: float = 25.0,
+    exclude_intervals: bool = True,
 ) -> bool:
     if a.sport != "running":
+        return False
+    if exclude_intervals and a.has_intervals:
         return False
     if a.elapsed_s < min_duration_s:
         return False

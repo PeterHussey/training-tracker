@@ -9,7 +9,19 @@ from profile import RunnerProfile
 import pandas as pd
 
 from metric_series import rows_from_series
-from metrics import acwr, elevation, gap, injury, pmc, racepredict, threshold, trimp, vo2max, volume
+from metrics import (
+    acwr,
+    decoupling,
+    elevation,
+    gap,
+    injury,
+    pmc,
+    racepredict,
+    threshold,
+    trimp,
+    vo2max,
+    volume,
+)
 from normalize import Activity
 from store import MetricStore
 
@@ -307,6 +319,43 @@ def compute_metric_rows(
                     rows += rows_from_series(
                         pace_key, pace_series, "computed", params=dots_params_pace
                     )
+
+    # Aerobic decoupling — per-activity dots (brief 3.1). One dot per eligible
+    # long run dated by activity; the route-cluster mean is emitted alongside
+    # once the largest route cluster reaches 6 sessions (single-run values
+    # are noise, so the dashboard only trends the mean).
+    if series_by_id is not None:
+        by_route: dict[tuple, list[tuple]] = {}
+        for a in activities:
+            if not decoupling.eligible_activity(a):
+                continue
+            entry = series_by_id.get(a.activity_id)
+            if not entry:
+                continue
+            try:
+                dec = decoupling.decoupling_timebased(*entry)
+            except ValueError:
+                continue
+            rows += rows_from_series(
+                "load.decoupling",
+                pd.Series([dec], index=pd.DatetimeIndex([pd.Timestamp(a.date)])),
+                "computed",
+                params={"unit": "fraction"},
+                flags={"activity_id": a.activity_id, "route_key": list(decoupling.route_key(a))},
+            )
+            by_route.setdefault(decoupling.route_key(a), []).append((a.date, dec))
+        if by_route:
+            best = max(by_route.values(), key=len)
+            agg = decoupling.aggregate_decoupling([d for _, d in best])
+            if agg is not None:
+                latest = max(d for d, _ in best)
+                rows += rows_from_series(
+                    "load.decoupling_mean",
+                    pd.Series([agg["mean"]], index=pd.DatetimeIndex([pd.Timestamp(latest)])),
+                    "computed",
+                    params={"unit": "fraction", "n": agg["n"], "stdev": agg["stdev"]},
+                    flags={"basis": "route_cluster_mean"},
+                )
 
     return rows
 

@@ -338,3 +338,164 @@ def test_build_repetitions_groups_by_code():
     assert groups["RF24"][0].date < groups["RF24"][-1].date
     # No other codes in the group
     assert len(groups) == 1
+
+
+def _long_run(activity_id, day, dur_s=6300.0, avg_speed=3.0, intervals=False):
+    from normalize import Activity
+
+    return Activity(
+        activity_id=activity_id,
+        sport="running",
+        date=day,
+        ts_ms=0,
+        distance_m=18000.0,
+        duration_s=dur_s,
+        elapsed_s=dur_s,
+        avg_hr=150.0,
+        max_hr=170.0,
+        zone_s={},
+        ele_gain_m=100.0,
+        lat=42.4261,
+        lon=-71.2801,
+        avg_speed=avg_speed,
+        has_intervals=intervals,
+    )
+
+
+def _cached_details(cache_dir, activity_id, minutes=104):
+    import json as _json
+
+    half = minutes // 2
+    rows = []
+    for i in range(minutes):
+        hr = 145.0 if i < half else 155.0
+        rows.append({"metrics": [hr, 3.0, i * 60000]})
+    payload = {
+        "metricDescriptors": [
+            {"key": "directHeartRate", "metricsIndex": 0},
+            {"key": "directSpeed", "metricsIndex": 1},
+            {"key": "directTimestamp", "metricsIndex": 2},
+        ],
+        "activityDetailMetrics": rows,
+    }
+    (cache_dir / f"activity_details_{activity_id}.json").write_text(_json.dumps(payload))
+
+
+def test_decoupling_fetch_pass_covers_long_slow_runs(tmp_path):
+    """The LTHR details pass takes the top-40 fastest runs, which misses slow
+    long runs. The decoupling pass must select by duration/recency instead."""
+    from dashboard import fetch_details_for_decoupling
+
+    slow_long = _long_run(501, date(2026, 5, 10), avg_speed=2.5)
+    fast_short = _long_run(502, date(2026, 5, 11), dur_s=1800.0, avg_speed=4.5)
+    interval_long = _long_run(503, date(2026, 5, 12), intervals=True)
+    _cached_details(tmp_path, 501)
+    _cached_details(tmp_path, 502)
+
+    class _Gw:
+        cache_dir = tmp_path
+
+        def fetch_activity_details(self, activity_id):
+            raise AssertionError("must hit cache, not network")
+
+    series = fetch_details_for_decoupling(
+        _Gw(),  # type: ignore[arg-type]
+        [slow_long, fast_short, interval_long],
+        since=date(2026, 5, 1),
+        until=date(2026, 5, 31),
+    )
+    assert 501 in series and series[501][0], "long slow run must be fetched from cache"
+    assert 502 not in series, "short run must not be selected by duration filter"
+    assert 503 not in series, "structured-interval workout must be excluded"
+
+
+def test_kpi_keys_include_aerobic_decoupling():
+    assert "load.decoupling_mean" in [k for k, _ in d.KPI_KEYS]
+
+
+def test_session_view_carries_decoupling_dots():
+    from profile import default_profile
+
+    from session import build_session_view
+
+    a = _long_run(504, date(2026, 5, 10))
+    n = 104
+    series = {
+        504: (
+            [145.0] * (n // 2) + [155.0] * (n - n // 2),
+            [3.0] * n,
+            [float(i * 60000) for i in range(n)],
+        )
+    }
+    view = build_session_view(
+        [a], default_profile(age=40, hrrest=60, sex="M"), None, None, None, series
+    )
+    assert "load.decoupling" in view.series
+    assert view.context["load.decoupling"]["params"]["unit"] == "fraction"
+
+
+class _FakeCol:
+    def __init__(self, calls):
+        self._calls = calls
+
+    def metric(self, *args, **kwargs):
+        self._calls.append(("metric", args))
+
+
+class _FakeSt:
+    """Minimal streamlit stub: records calls, returns falsy for widgets."""
+
+    def __init__(self):
+        self.calls = []
+
+    def columns(self, n):
+        return [_FakeCol(self.calls) for _ in range(n)]
+
+    def __getattr__(self, name):
+        def _rec(*args, **kwargs):
+            self.calls.append((name, args))
+            return None
+
+        return _rec
+
+
+def _decoupling_view():
+    from profile import default_profile
+
+    from session import build_session_view
+
+    acts = [_long_run(600 + i, date(2026, 7, 6) + timedelta(days=i)) for i in range(6)]
+    n = 104
+    series = {
+        a.activity_id: (
+            [145.0] * (n // 2) + [155.0] * (n - n // 2),
+            [3.0] * n,
+            [float(k * 60000) for k in range(n)],
+        )
+        for a in acts
+    }
+    return build_session_view(
+        acts, default_profile(age=40, hrrest=60, sex="M"), None, None, None, series
+    )
+
+
+def test_render_kpis_shows_decoupling_mean(monkeypatch):
+    view = _decoupling_view()
+    windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_kpis(windowed, view, "km", ["Aerobic decoupling"])
+    metrics = [a for name, a in fake.calls if name == "metric"]
+    assert metrics and metrics[0][1] == "6.9%"
+
+
+def test_render_load_tab_decoupling_chart(monkeypatch):
+    view = _decoupling_view()
+    windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_load_tab(view, windowed, "km")
+    kinds = [name for name, _ in fake.calls]
+    assert "plotly_chart" in kinds
+    captions = [a[0] for name, a in fake.calls if name == "caption"]
+    assert any("route-matched" in c for c in captions)
