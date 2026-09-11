@@ -198,3 +198,5 @@ git commit -m "feat(v2): bind Period selector to store range; caption + reset on
 **Placeholder scan:** every code step carries concrete implementation. No "TBD"/"add handling".
 
 **Type consistency:** `period_bounds` returns `(date, date, date)` everywhere; session key constant `PERIOD_KEY` used in both the `pop` (Task 2 Step 2) and the widget key (Task 2 Step 3). `since`,`until` extraction branch (line 707-710) is untouched and still compiles against `period`.
+---
+Update 2026-09-11: `tests/test_dashboard_period_reset.py` rewritten from scratch as one coherent module — 4 pure `reset_period_after_refresh` tests + 2 `AppTest` regression tests (period widget key reset after refresh that adds activities; period widget survives no-op refresh). All 6 pass. Two cross-test isolation bugs fixed: no more `sys.modules` popping (was orphaning modules for `test_gateway.py` mocks), and `st.cache_resource.clear()` in the AppTest fixture teardown so the cached `get_store()` doesn't pin the previous test's deleted temp DB. Ruff clean.
