@@ -18,7 +18,9 @@ def coupled_acwr(daily: pd.Series, acute: int = 7, chronic: int = 28) -> pd.Seri
     s = daily.sort_index()
     acute_avg = s.rolling(acute, min_periods=acute).sum() / acute
     chronic_avg = s.rolling(chronic, min_periods=chronic).sum() / chronic
-    ratio = acute_avg / chronic_avg.replace(0, pd.NA)
+    # NaN (not pd.NA): keeps the float dtype so downstream rolling ops
+    # (e.g. history_percentile rank) keep working across training gaps.
+    ratio = acute_avg / chronic_avg.replace(0, float("nan"))
     ratio.name = "acwr"
     return ratio
 
