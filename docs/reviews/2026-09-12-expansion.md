@@ -58,5 +58,24 @@ Daily use revealed that the expensive part of this project is not computing metr
 - LTHR calibration (e.g. against the 20-min best-effort anchor already used as KPI fallback).
 - Adjusted race-prediction layer — validation alone only reports Garmin's error; only worth building if paired with an adjustment model.
 - Broaden the activity-comparison mechanism beyond 80/20 plan codes (route/distance-based similarity) — flagged by the 2026-09-10 status review.
-- Weekly/monthly rollup training-log view.
 - Schema versioning for the SQLite store (carried from the 2026-09-10 status review's Later bucket).
+- Performance curves (best pace/HR over durations) — needs broadened activity-details ingestion; next in sequence after the motivation views, parked until designed.
+- Per-session depth beyond the adopted criterion — auto interval detection on top of laps/splits; after performance curves.
+
+## Addendum — same day: personal-only reversal + motivation views
+
+**Trigger:** assessment of publishing vs. incumbents (intervals.icu, Runalyze) against their current feature sets.
+
+**Findings:** intervals.icu (free; PMC, decoupling, custom computed fields, open API, official Garmin sync, 250+ integrations) and Runalyze (freemium/self-hostable; TRIMP load with CTL/ATL/A:C, effective VO2max, race prediction, age grading, Garmin sync) each functionally subsume this tool. Publishing barriers: Garmin has no public OAuth API — a hosted service means collecting users' Garmin credentials (liability, ToS exposure, MFA/Cloudflare breakage; the pinned garminconnect + owned garmin_http.py are the scars of that fragility); Streamlit is a single-user in-memory model (multi-tenant = rewrite); the validation surface multiplies across strangers' devices and edge cases.
+
+**Calls:**
+- Publishing / hosted service: **Declined** — recorded in the brief's out-of-scope list with the reason.
+- Objective widening to "installable and runnable by others" (adopted earlier this same day): **Reverted** — objective is personal-only again. The fresh-clone install criterion is retained explicitly: install hygiene for the owner's next machine, verifiable without any other user, and not in contradiction with personal-only.
+- Motivation & context views (age grading via WMA tables, weekly/monthly rollups, best-mile stat): **Adopted** — justification traces to the learnings above: new views on existing normalized data are nearly free, and validation is the expensive part. Age grading uses external WMA ground truth (table lookup, not a derived model); rollups and best-mile are arithmetic on persisted data — no metric-correctness risk of the kind that made secondary metrics costly. The weekly/monthly rollup moves from Later into the brief as part of this adoption.
+- Sequencing: motivation views first (no new ingestion), then performance curves (needs broadened activity-details ingestion), then per-session depth (interval detection on the adopted detail criterion). The latter two are parked in Later until designed.
+
+**Amendments made to the brief (addendum):**
+- Objective: reverted to "…For the owner's own running training only."
+- Criteria added: age grading (WMA) + weekly/monthly rollups + best-mile stat.
+- Out of scope added: hosted/multi-user publishing, with reason.
+- Later: weekly/monthly rollups removed (now adopted); performance curves and per-session interval detection added.

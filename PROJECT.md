@@ -5,7 +5,7 @@
 
 ## Objective
 
-Personal training dashboard based on Garmin data, improving on free available metrics and tools. Primarily for the owner's own running training, but installable and runnable by others for their own self-hosted use.
+Personal training dashboard based on Garmin data, improving on free available metrics and tools. For the owner's own running training only.
 
 ## Success criteria
 
@@ -17,12 +17,14 @@ Personal training dashboard based on Garmin data, improving on free available me
 - [ ] Support tooling runs end to end (e2e_report CLI, backfill_names/backfill_sports) — verify by: `e2e_report.py` and relevant backfill tests pass
 - [ ] Selecting an activity shows its Garmin detail — laps/splits and running dynamics where available — verify by: select an activity with laps in the dashboard and confirm the splits match Garmin Connect; detail-parsing tests pass
 - [ ] A fresh clone installs and runs following the README alone — verify by: clean-clone quickstart succeeds and missing Garmin credentials surface a clear error, not a stack trace
+- [ ] Age grading (WMA), weekly/monthly rollups, and best-mile stat are computed and displayed — verify by: age-grading tests pin WMA table lookups and interpolation against published calculator values; rollup and best-mile tests pass; dashboard renders the age-graded trend, rollup table, and best-mile stat
 
 ## Out of scope
 
 - Not building: social/sharing features — because Strava and others already cover this well
 - Not building: coaching plan generation — because the target is analysis/reporting, not plan prescription
 - Not building: non-Garmin data sources — because the constraint is Garmin-derivable metrics only (adopted divergence: existing code with no remembered intent, e.g. specs/plans docs, is adopted as supporting material, not product scope)
+- Not building: hosted or multi-user publishing — because Garmin has no public OAuth API (a hosted service would mean collecting users' Garmin credentials: liability, ToS exposure, MFA/Cloudflare breakage), Streamlit is a single-user in-memory model, and intervals.icu/Runalyze already subsume the feature set
 
 ## Constraints
 
@@ -55,3 +57,4 @@ Personal training dashboard based on Garmin data, improving on free available me
 |---|---|---|---|
 | 2026-09-10 | Status | 2 of 6 criteria verified; live Garmin refresh and interactive UI not probed | [docs/reviews/2026-09-10-status.md](docs/reviews/2026-09-10-status.md) |
 | 2026-09-12 | Expansion | Adopted 2 criteria (per-activity detail, self-hostable install), objective widened to self-hosted use by others; parked 5, declined 0 | [docs/reviews/2026-09-12-expansion.md](docs/reviews/2026-09-12-expansion.md) |
+| 2026-09-12 | Expansion | Addendum: objective reverted to personal-only after incumbent assessment (intervals.icu/Runalyze subsume the feature set); publishing declined with reason; adopted motivation-views criterion (age grading, weekly/monthly rollups, best-mile) | [docs/reviews/2026-09-12-expansion.md](docs/reviews/2026-09-12-expansion.md) |
