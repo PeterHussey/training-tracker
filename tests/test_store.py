@@ -310,3 +310,58 @@ def test_migrate_prunes_rolling_keys_on_reopen(tmp_path):
     assert reopened.read_metric("load.lt_hr_rolling") == []
     assert len(reopened.read_metric("load.lt_hr_best20")) == 1
     reopened.close()
+
+
+def test_elapsed_s_roundtrip(tmp_path):
+    """elapsed_s must survive the store: decoupling eligibility gates on it,
+    and DB-loaded activities previously came back with elapsed_s=0.0."""
+    from dataclasses import replace
+
+    db = tmp_path / "t.db"
+    store = MetricStore(str(db))
+    store.save_activities([replace(ACT, elapsed_s=4000.0)])
+    loaded = store.load_activities()
+    store.close()
+    assert loaded[0].elapsed_s == 4000.0
+
+
+def test_route_latlon_roundtrip(tmp_path):
+    """Start lat/lon (saved in the route JSON) must load back: route
+    clustering collapses to 'unknown' without them."""
+    from dataclasses import replace
+
+    db = tmp_path / "t.db"
+    store = MetricStore(str(db))
+    store.save_activities([replace(ACT, lat=42.42, lon=-71.28)])
+    loaded = store.load_activities()
+    store.close()
+    assert loaded[0].lat == 42.42
+    assert loaded[0].lon == -71.28
+
+
+def test_migrate_adds_elapsed_backfilled_from_duration(tmp_path):
+    """Pre-elapsed databases gain the column on open, backfilled from
+    duration_s (conservative: duration <= elapsed always, so the
+    eligibility gate never newly passes on backfilled rows)."""
+    db = str(tmp_path / "t.db")
+    conn = __import__("sqlite3").connect(db)
+    conn.execute(
+        "CREATE TABLE activities (activity_id INTEGER PRIMARY KEY, "
+        "activity_date TEXT NOT NULL, sport TEXT NOT NULL, distance_m REAL, "
+        "duration_s REAL, ele_gain_m REAL, vo2max REAL, avg_hr REAL, max_hr REAL, "
+        "aerobic_te REAL, anaerobic_te REAL, avg_speed REAL, fastest_split_1609 REAL, "
+        "zone_s TEXT NOT NULL DEFAULT '{}', route TEXT NOT NULL DEFAULT '{}', "
+        "name TEXT, has_intervals INTEGER NOT NULL DEFAULT 0)"
+    )
+    conn.execute(
+        "INSERT INTO activities (activity_id, activity_date, sport, distance_m, "
+        "duration_s) VALUES (9, '2026-03-01', 'running', 18000.0, 6300.0)"
+    )
+    conn.commit()
+    conn.close()
+    store = MetricStore(db)
+    cols = {r[1] for r in store.conn.execute("PRAGMA table_info(activities)").fetchall()}
+    assert "elapsed_s" in cols
+    loaded = store.load_activities()
+    store.close()
+    assert loaded[0].elapsed_s == 6300.0

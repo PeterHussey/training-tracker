@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS activities (
   sport              TEXT NOT NULL,
   distance_m         REAL NOT NULL DEFAULT 0,
   duration_s         REAL NOT NULL DEFAULT 0,
+  elapsed_s          REAL NOT NULL DEFAULT 0,
   ele_gain_m         REAL,
   vo2max             REAL,
   avg_hr             REAL,
@@ -68,6 +69,14 @@ class MetricStore:
             self.conn.execute(
                 "ALTER TABLE activities ADD COLUMN has_intervals INTEGER NOT NULL DEFAULT 0"
             )
+        if "elapsed_s" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN elapsed_s REAL")
+            # Backfill from duration_s: duration <= elapsed always, so the
+            # decoupling eligibility gate (elapsed >= 90 min) never newly
+            # passes on backfilled rows; true values arrive on next refresh.
+            self.conn.execute(
+                "UPDATE activities SET elapsed_s = duration_s WHERE elapsed_s IS NULL"
+            )
         # Best-effort LTHR anchors replaced the rolling-mean fallback: prune
         # the dead keys so stale rows don't linger in old databases. These
         # keys are never written again, so unconditional pruning is safe.
@@ -111,6 +120,7 @@ class MetricStore:
                 a.sport,
                 a.distance_m,
                 a.duration_s,
+                a.elapsed_s,
                 a.ele_gain_m,
                 a.vo2max,
                 a.avg_hr,
@@ -131,9 +141,9 @@ class MetricStore:
         ]
         self.conn.executemany(
             "INSERT OR REPLACE INTO activities (activity_id, activity_date, sport, "
-            "distance_m, duration_s, ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, "
+            "distance_m, duration_s, elapsed_s, ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, "
             "anaerobic_te, avg_speed, fastest_split_1609, zone_s, route, name, has_intervals) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         self.conn.commit()
@@ -183,9 +193,9 @@ class MetricStore:
 
     def load_activities(self) -> list[Activity]:
         rows = self.conn.execute(
-            "SELECT activity_id, activity_date, sport, distance_m, duration_s, "
+            "SELECT activity_id, activity_date, sport, distance_m, duration_s, elapsed_s, "
             "ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, anaerobic_te, "
-            "avg_speed, fastest_split_1609, zone_s, name, has_intervals FROM activities "
+            "avg_speed, fastest_split_1609, zone_s, route, name, has_intervals FROM activities "
             "ORDER BY activity_date, activity_id"
         ).fetchall()
         return [self._activity_from_row(r) for r in rows]
@@ -198,6 +208,7 @@ class MetricStore:
             sport,
             distance_m,
             duration_s,
+            elapsed_s,
             ele_gain_m,
             vo2max,
             avg_hr,
@@ -207,6 +218,7 @@ class MetricStore:
             avg_speed,
             fastest_split_1609,
             zone_s,
+            route_s,
             name,
             has_intervals,
         ) = row
@@ -216,14 +228,24 @@ class MetricStore:
                 zones = {int(k): float(v) for k, v in json.loads(zone_s).items()}
             except (json.JSONDecodeError, TypeError, ValueError):
                 zones = {}
+        route: dict = {}
+        if route_s:
+            try:
+                route = json.loads(route_s)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                route = {}
+        duration = float(duration_s)
+        # Pre-elapsed databases backfill elapsed from duration; a stored 0.0
+        # (Garmin omits elapsedDuration) falls back the same way.
+        elapsed = float(elapsed_s) if elapsed_s else duration
         return Activity(
             activity_id=int(activity_id),
             sport=sport,
             date=date.fromisoformat(activity_date),
             ts_ms=0,
             distance_m=float(distance_m),
-            duration_s=float(duration_s),
-            elapsed_s=0.0,
+            duration_s=duration,
+            elapsed_s=elapsed,
             zone_s=zones,
             ele_gain_m=ele_gain_m,
             vo2max=vo2max,
@@ -235,6 +257,10 @@ class MetricStore:
             fastest_split_1609=fastest_split_1609,
             name=name,
             has_intervals=bool(has_intervals),
+            lat=route.get("lat"),
+            lon=route.get("lon"),
+            location=route.get("location"),
+            device_id=route.get("device_id"),
         )
 
     def load_runner_profile(self) -> RunnerProfile | None:
