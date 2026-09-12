@@ -51,18 +51,6 @@ def compute_metric_rows(
         rows += rows_from_series(
             f"volume.distance_{group}", weekly, "computed", params={"agg": "iso_week", "unit": "km"}
         )
-        rows += rows_from_series(
-            f"volume.rolling4wk_{group}",
-            volume.rolling_4wk(weekly),
-            "computed",
-            params={"agg": "iso_week", "unit": "km"},
-        )
-        rows += rows_from_series(
-            f"volume.wow_pct_{group}",
-            volume.week_over_week_pct(weekly),
-            "computed",
-            params={"agg": "iso_week", "unit": "fraction"},
-        )
         daily_hours = volume.daily_duration_hours(activities, group)
         weekly_hours = volume.resample_agg(daily_hours, "W-SUN")
         rows += rows_from_series(
@@ -74,32 +62,17 @@ def compute_metric_rows(
         # Daily source rows (new source of truth, alongside existing weekly rows)
         if not daily.empty:
             rows += rows_from_series(
-                f"volume.distance_{group}_daily", daily,
-                "computed", params={"agg": "daily", "unit": "km"},
+                f"volume.distance_{group}_daily",
+                daily,
+                "computed",
+                params={"agg": "daily", "unit": "km"},
             )
         rows += rows_from_series(
-            f"volume.duration_{group}_daily", daily_hours,
-            "computed", params={"agg": "daily", "unit": "h"},
+            f"volume.duration_{group}_daily",
+            daily_hours,
+            "computed",
+            params={"agg": "daily", "unit": "h"},
         )
-
-    # Duration rolling + week-over-week for the total (mirrors the distance chart
-    # overlay/change views). Duration feeds all sports, including no-distance
-    # cross-training, so the total is a true time-anchored load proxy.
-    total_hours = volume.resample_agg(
-        volume.daily_duration_hours(activities, "total"), "W-SUN"
-    )
-    rows += rows_from_series(
-        "volume.rolling4wk_duration_total",
-        volume.rolling_4wk(total_hours),
-        "computed",
-        params={"agg": "iso_week", "unit": "h"},
-    )
-    rows += rows_from_series(
-        "volume.wow_pct_duration_total",
-        volume.week_over_week_pct(total_hours),
-        "computed",
-        params={"agg": "iso_week", "unit": "fraction"},
-    )
 
     # Elevation — context only (brief 4.2)
     gain = elevation.daily_elevation_gain(activities, "running")

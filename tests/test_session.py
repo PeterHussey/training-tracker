@@ -16,7 +16,6 @@ from session import (
     build_session_view,
     in_period,
     resolve_activities,
-    rollup,
     run_with_timeout,
     week_start,
     window_series,
@@ -49,7 +48,6 @@ def _view(**kw):
 
 REQUIRED = {
     "volume.distance_total",
-    "volume.rolling4wk_total",
     "load.banister",
     "load.edwards",
     "pmc.ctl",
@@ -319,38 +317,6 @@ def _run(aid, d, dist_m, dur_s, split=None, sport="running"):
     )
 
 
-def test_rollup_weekly():
-    acts = [
-        _run(1, date(2026, 1, 5), 5000.0, 1000.0),  # Mon W02
-        _run(2, date(2026, 1, 7), 3000.0, 600.0, sport="treadmill"),  # Wed W02
-        _run(3, date(2026, 1, 7), 0.0, 1800.0, sport="cross"),  # excluded
-        _run(4, date(2026, 1, 12), 4000.0, 800.0),  # Mon W03
-    ]
-    df = rollup(acts, "W")
-    assert list(df["period"]) == ["2026-W02", "2026-W03"]
-    assert list(df["start"]) == [date(2026, 1, 5), date(2026, 1, 12)]
-    assert list(df["runs"]) == [2, 1]
-    assert list(df["distance_km"]) == [8.0, 4.0]
-    assert df["duration_h"].iloc[0] == pytest.approx(1600.0 / 3600.0)
-    assert df["duration_h"].iloc[1] == pytest.approx(800.0 / 3600.0)
-
-
-def test_rollup_monthly():
-    acts = [
-        _run(1, date(2026, 1, 5), 5000.0, 1000.0),
-        _run(2, date(2026, 1, 20), 3000.0, 600.0),
-        _run(3, date(2026, 2, 1), 4000.0, 800.0),
-    ]
-    df = rollup(acts, "M")
-    assert list(df["period"]) == ["2026-01", "2026-02"]
-    assert list(df["start"]) == [date(2026, 1, 1), date(2026, 2, 1)]
-    assert list(df["runs"]) == [2, 1]
-
-
-def test_rollup_empty():
-    assert rollup([], "W").empty
-
-
 def test_best_mile_all_time():
     acts = [
         _run(1, date(2026, 1, 5), 5000.0, 1000.0, split=320.0),
@@ -411,7 +377,10 @@ def test_volume_daily_resampled_to_monthly():
     """selected_volume_agg='monthly' buckets volume.distance_total_daily
     by calendar month (month-end index), preserving sums."""
     profile = RunnerProfile(
-        hrmax=180, hrrest=60, sex="M", birth_year=1986,
+        hrmax=180,
+        hrrest=60,
+        sex="M",
+        birth_year=1986,
         selected_volume_agg="monthly",
     )
     acts = _acts()
@@ -426,7 +395,10 @@ def test_volume_daily_resampled_to_monthly():
 def test_volume_monthly_index_is_month_end():
     """monthly index = month-end dates (e.g. 2026-01-31) for the fixture's months."""
     profile = RunnerProfile(
-        hrmax=180, hrrest=60, sex="M", birth_year=1986,
+        hrmax=180,
+        hrrest=60,
+        sex="M",
+        birth_year=1986,
         selected_volume_agg="monthly",
     )
     acts = _acts()
@@ -451,7 +423,10 @@ def test_windowed_leaves_non_volume_daily_untouched():
 def test_volume_agg_invalid_falls_back_weekly():
     """selected_volume_agg='bogus' behaves like weekly (falls back to W-SUN)."""
     profile = RunnerProfile(
-        hrmax=180, hrrest=60, sex="M", birth_year=1986,
+        hrmax=180,
+        hrrest=60,
+        sex="M",
+        birth_year=1986,
         selected_volume_agg="bogus",
     )
     acts = _acts()
@@ -466,7 +441,10 @@ def test_volume_agg_invalid_falls_back_weekly():
 def test_volume_weekly_resample_drops_empty_weeks():
     """weeks with no data are absent from the resampled weekly series."""
     profile = RunnerProfile(
-        hrmax=180, hrrest=60, sex="M", birth_year=1986,
+        hrmax=180,
+        hrrest=60,
+        sex="M",
+        birth_year=1986,
         selected_volume_agg="weekly",
     )
     acts = _acts()

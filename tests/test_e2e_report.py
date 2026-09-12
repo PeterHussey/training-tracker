@@ -141,7 +141,6 @@ def test_e2e_report_script_offline_smoke():
     assert proc.returncode == 0, proc.stdout + proc.stderr
     for token in (
         "volume.distance_total",
-        "volume.rolling4wk_running",
         "elevation.gain_per_km_running",
         "load.banister",
         "load.edwards",

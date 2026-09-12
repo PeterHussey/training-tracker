@@ -81,6 +81,23 @@ class MetricStore:
         # the dead keys so stale rows don't linger in old databases. These
         # keys are never written again, so unconditional pruning is safe.
         self.prune_legacy_keys(["load.lt_hr_rolling", "load.lt_pace_rolling"])
+        # Weekly rolling/wow volume overlays are now computed in the dashboard
+        # from the daily series; the stored copies are dead. Keep the weekly
+        # distance/duration rows (KPI + e2e report still read them).
+        self.prune_legacy_keys(
+            [
+                *[
+                    f"volume.rolling4wk_{g}"
+                    for g in ("total", "running", "treadmill", "cross", "strength")
+                ],
+                *[
+                    f"volume.wow_pct_{g}"
+                    for g in ("total", "running", "treadmill", "cross", "strength")
+                ],
+                "volume.rolling4wk_duration_total",
+                "volume.wow_pct_duration_total",
+            ]
+        )
         self.conn.commit()
 
     def save_runner_profile(self, profile) -> None:

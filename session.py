@@ -214,39 +214,6 @@ def window_series(s: pd.Series, since: date, until: date, weekly: bool = False) 
     return s[mask]
 
 
-def rollup(activities, freq: str) -> pd.DataFrame:
-    """Weekly (ISO Mon-Sun) or monthly run rollup: count, distance, duration.
-
-    freq: "W" (ISO week) or "M" (calendar month). Runs = outdoor running +
-    treadmill. Columns: period, start, runs, distance_km, duration_h.
-    """
-    cols = ["period", "start", "runs", "distance_km", "duration_h"]
-    runs = [a for a in activities if a.sport in ("running", "treadmill")]
-    if not runs:
-        return pd.DataFrame(columns=cols)
-    df = pd.DataFrame(
-        {
-            "date": [a.date for a in runs],
-            "distance_km": [a.distance_m / 1000.0 for a in runs],
-            "duration_h": [a.duration_s / 3600.0 for a in runs],
-        }
-    )
-    d = pd.to_datetime(df["date"])
-    if freq == "W":
-        iso = d.dt.isocalendar()
-        df["period"] = iso["year"].astype(str) + "-W" + iso["week"].astype(str).str.zfill(2)
-        df["start"] = (d - pd.to_timedelta(d.dt.weekday, unit="D")).dt.date
-    else:
-        df["period"] = d.dt.strftime("%Y-%m")
-        df["start"] = d.dt.to_period("M").dt.start_time.dt.date
-    out = df.groupby(["period", "start"], as_index=False).agg(
-        runs=("date", "size"),
-        distance_km=("distance_km", "sum"),
-        duration_h=("duration_h", "sum"),
-    )
-    return out.sort_values("start").reset_index(drop=True)
-
-
 def best_mile(activities, since: date | None = None) -> dict | None:
     """Fastest stored 1609m split (all-time, or on/after `since`), else None."""
     best: dict | None = None

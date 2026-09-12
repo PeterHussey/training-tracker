@@ -695,11 +695,7 @@ def test_volume_tab_duration_rolling_trace_is_smoothed(monkeypatch):
     ]
     d.render_volume_tab(acts, view, windowed, "km", "weekly")
     figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
-    dur_figs = [
-        f
-        for f in figs
-        if "duration (hours)" in str(getattr(f.layout.title, "text", ""))
-    ]
+    dur_figs = [f for f in figs if "duration (hours)" in str(getattr(f.layout.title, "text", ""))]
     assert dur_figs, "no duration chart rendered"
     fig = dur_figs[0]
     traces = {t.name: list(t.y) for t in fig.data}
@@ -707,9 +703,7 @@ def test_volume_tab_duration_rolling_trace_is_smoothed(monkeypatch):
     raw = traces["running"]
     roll = traces["rolling 4wk"]
     assert len(raw) >= 2, "need multiple weeks to show smoothing"
-    assert roll != raw, (
-        "rolling 4wk trace equals raw duration bars — fix: use volume.rolling_4wk()"
-    )
+    assert roll != raw, "rolling 4wk trace equals raw duration bars — fix: use volume.rolling_4wk()"
 
 
 def test_render_activities_best_mile_and_graded(monkeypatch):
