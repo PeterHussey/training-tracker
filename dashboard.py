@@ -22,18 +22,17 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from gateway import GarminGateway
+from metrics import volume
 from metrics.gap import K as GAP_K
 from metrics.threshold import parse_details_series
 from normalize import from_summary
 from pipeline import persist_session_metrics
 from session import (
-    KM_PER_MI,
     _fmt,
     activity_graded_pct,
     best_mile,
     build_session_view,
     resolve_activities,
-    rollup,
     run_with_timeout,
 )
 from store import MetricStore
@@ -177,13 +176,15 @@ def _latest_json_file(cache: Path, pattern: str):
     return _load_json_file(candidates[0])
 
 
-def _persist_selected_fields(store: MetricStore, selected_race: str) -> None:
-    """Persist user-selected race distance to the runner profile."""
+def _persist_selected_fields(store: MetricStore, selected_race: str, selected_volume_agg: str) -> None:
+    """Persist user-selected race distance and volume aggregation to the runner profile."""
     profile = store.load_runner_profile()
     if profile is None:
         profile = default_profile()
-    if profile.selected_race != selected_race:
-        store.save_runner_profile(replace(profile, selected_race=selected_race))
+    if profile.selected_race != selected_race or profile.selected_volume_agg != selected_volume_agg:
+        store.save_runner_profile(
+            replace(profile, selected_race=selected_race, selected_volume_agg=selected_volume_agg)
+        )
 
 
 def load_cached_trends(
@@ -1062,7 +1063,10 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
         )
 
 
-def render_volume_tab(activities, view, windowed, units) -> None:
+def render_volume_tab(activities, view, windowed, units, selected_volume_agg="weekly") -> None:
+    is_monthly = selected_volume_agg == "monthly"
+    grain = "Monthly" if is_monthly else "Weekly"
+
     st.markdown(
         """
         **Volume & Terrain** — How much you've run and the terrain profile.
@@ -1071,17 +1075,25 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         - **Weekly duration (hours)** = Time spent training across ALL sports (running + treadmill + cross + strength).
         - **Week-over-week changes** = % change in distance and duration week to week.
         - **Elevation gain** = Daily climbing (route context only, not a risk metric).
-        - **Rollups** = Run count, distance, and duration by ISO week or calendar month.
+        - **Aggregation**: switch weekly/monthly via the sidebar toggle; weekly rolls up ISO weeks (Mon–Sun), monthly to calendar months.
         """
     )
 
-    weeks = {g: windowed.get(f"volume.distance_{g}") for g in ("running", "treadmill", "cross")}
-    weeks = {g: s for g, s in weeks.items() if s is not None and len(s)}
+    # Distance chart — per-sport daily series resampled to the selected grain
+    weeks = {}
+    for g in ("running", "treadmill", "cross"):
+        key = f"volume.distance_{g}_daily"
+        s = windowed.get(key)
+        if s is not None and len(s):
+            weeks[g] = s
     if weeks:
         fig = go.Figure()
         for g, s in weeks.items():
             fig.add_trace(go.Bar(x=s.index, y=s.values, name=g))
-        roll = windowed.get("volume.rolling4wk_total")
+        total_dist = windowed.get("volume.distance_total_daily")
+        roll = None
+        if total_dist is not None and len(total_dist):
+            roll = volume.rolling_4wk(total_dist)
         if roll is not None and len(roll):
             fig.add_trace(
                 go.Scatter(
@@ -1099,7 +1111,7 @@ def render_volume_tab(activities, view, windowed, units) -> None:
                     "title": f"rolling {'mi' if units in ('miles', 'imperial') else 'km'}",
                 }
             )
-        fig.update_layout(title="Weekly distance", barmode="stack", hovermode="x unified")
+        fig.update_layout(title=f"{grain} distance", barmode="stack", hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "📊 **How to read:** Stacked bars = weekly distance by sport. Blue = outdoor running, "
@@ -1113,7 +1125,7 @@ def render_volume_tab(activities, view, windowed, units) -> None:
     # Time-volume chart (hours/week) — includes cross-training, which has no
     # distance but still consumes time/energy.
     hours = {
-        g: windowed.get(f"volume.duration_{g}")
+        g: windowed.get(f"volume.duration_{g}_daily")
         for g in ("running", "treadmill", "cross", "strength")
     }
     hours = {g: s for g, s in hours.items() if s is not None and len(s)}
@@ -1121,7 +1133,7 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         fig = go.Figure()
         for g, s in hours.items():
             fig.add_trace(go.Bar(x=s.index, y=s.values, name=g))
-        roll = windowed.get("volume.rolling4wk_duration_total")
+        roll = windowed.get("volume.duration_total_daily")
         if roll is not None and len(roll):
             fig.add_trace(
                 go.Scatter(
@@ -1132,9 +1144,9 @@ def render_volume_tab(activities, view, windowed, units) -> None:
                     line={"color": "#F18F01"},
                 )
             )
-            fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "title": "rolling hours"})
+        fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "title": "rolling hours"})
         fig.update_layout(
-            title="Weekly duration (hours)",
+            title=f"{grain} duration (hours)",
             barmode="stack",
             hovermode="x unified",
             yaxis_title="hours",
@@ -1148,12 +1160,14 @@ def render_volume_tab(activities, view, windowed, units) -> None:
             + context_line(view, "volume.duration_total")
         )
 
-        wow = windowed.get("volume.wow_pct_duration_total")
+        wow = volume.week_over_week_pct(windowed.get("volume.duration_total_daily"))
         if wow is not None and len(wow):
             fig = go.Figure(go.Bar(x=wow.index, y=wow.values * 100, name="week-over-week %"))
             fig.add_hline(y=0, line_dash="dot", line_color="gray")
             fig.update_layout(
-                title="Week-over-week duration change", hovermode="x unified", yaxis_title="%"
+                title=f"{'Month-over-month' if is_monthly else 'Week-over-week'} duration change",
+                hovermode="x unified",
+                yaxis_title="%",
             )
             st.plotly_chart(fig, use_container_width=True)
             st.caption(
@@ -1161,12 +1175,14 @@ def render_volume_tab(activities, view, windowed, units) -> None:
                 "Positive = more time training; negative = less. Large spikes (>30%) warrant attention."
             )
 
-    wow = windowed.get("volume.wow_pct_total")
+    wow = volume.week_over_week_pct(windowed.get("volume.distance_total_daily"))
     if wow is not None and len(wow):
         fig = go.Figure(go.Bar(x=wow.index, y=wow.values * 100, name="week-over-week %"))
         fig.add_hline(y=0, line_dash="dot", line_color="gray")
         fig.update_layout(
-            title="Week-over-week distance change", hovermode="x unified", yaxis_title="%"
+            title=f"{'Month-over-month' if is_monthly else 'Week-over-week'} distance change",
+            hovermode="x unified",
+            yaxis_title="%",
         )
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
@@ -1218,25 +1234,6 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         )
     else:
         st.write("No elevation data in this window.")
-
-    freq_label = st.radio(
-        "Rollup period", ("Weekly", "Monthly"), index=0, horizontal=True, key="rollup_freq"
-    )
-    r = rollup(activities, "M" if freq_label == "Monthly" else "W")
-    if r.empty:
-        st.write("No runs to roll up.")
-    else:
-        dist_col = "distance_mi" if units in ("miles", "imperial") else "distance_km"
-        disp = r.rename(columns={"distance_km": dist_col}).copy()
-        if dist_col == "distance_mi":
-            disp[dist_col] = disp[dist_col] / KM_PER_MI
-        disp[dist_col] = disp[dist_col].round(1)
-        disp["duration_h"] = disp["duration_h"].round(1)
-        st.dataframe(disp, use_container_width=True, hide_index=True)
-        st.caption(
-            "📊 **How to read:** Run count, distance, and duration rolled up by ISO week "
-            "(Mon–Sun) or calendar month. Outdoor running + treadmill only."
-        )
 
 
 def render_repetitions(activities, activity_id: int, units: str) -> None:
@@ -1500,7 +1497,14 @@ def main() -> None:
     )
     if selected_kpi_labels != default_kpi_labels:
         st.session_state["selected_kpi_labels"] = selected_kpi_labels
-    _persist_selected_fields(store, profile.selected_race)
+    volume_agg = st.sidebar.radio(
+        "Volume aggregation",
+        ("weekly", "monthly"),
+        index=0 if profile.selected_volume_agg != "monthly" else 1,
+        horizontal=True,
+        key="volume_agg_widget",
+    )
+    _persist_selected_fields(store, profile.selected_race, profile.selected_volume_agg)
     st.session_state["selected_kpi_labels"] = selected_kpi_labels
 
     min_d, default_since, max_d = period_bounds([a.date for a in activities])
@@ -1611,7 +1615,7 @@ def main() -> None:
     with tab_fitness:
         render_fitness_tab(view, windowed, units, profile.selected_race)
     with tab_volume:
-        render_volume_tab(activities, view, windowed, units)
+        render_volume_tab(activities, view, windowed, units, volume_agg)
     with tab_acts:
         render_activities(activities, since, until, units, profile)
 

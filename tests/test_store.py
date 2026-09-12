@@ -166,6 +166,37 @@ def test_load_runner_profile_configured_roundtrip(tmp_path):
     assert loaded.selected_race == "half"
 
 
+def test_load_runner_profile_selected_volume_agg_default(tmp_path):
+    """selected_volume_agg defaults to 'weekly' when not persisted."""
+    from profile import default_profile
+    db = tmp_path / "t.db"
+    store = MetricStore(str(db))
+    p = default_profile(age=40, hrrest=60, sex="M")
+    store.save_runner_profile(p)
+    loaded = store.load_runner_profile()
+    store.close()
+    assert loaded is not None
+    assert loaded.selected_volume_agg == "weekly"
+
+
+def test_load_runner_profile_selected_volume_agg_roundtrip(tmp_path):
+    """Persisted selected_volume_agg survives reload."""
+    db = tmp_path / "t.db"
+    store = MetricStore(str(db))
+    p = RunnerProfile(
+        hrmax=185,
+        hrrest=62,
+        sex="F",
+        birth_year=1990,
+        selected_volume_agg="monthly",
+    )
+    store.save_runner_profile(p)
+    loaded = store.load_runner_profile()
+    store.close()
+    assert loaded is not None
+    assert loaded.selected_volume_agg == "monthly"
+
+
 def test_load_runner_profile_none(tmp_path):
     store = MetricStore(str(tmp_path / "t.db"))
     assert store.load_runner_profile() is None

@@ -105,6 +105,11 @@ class MetricStore:
                 profile.selected_race,
                 {},
             ),
+            (
+                "selected_volume_agg",
+                profile.selected_volume_agg,
+                {},
+            ),
         ]
         self.conn.executemany(
             "INSERT OR REPLACE INTO runner_profile (key, value, meta) VALUES (?, ?, ?)",
@@ -308,6 +313,7 @@ class MetricStore:
             units=data.get("units", "metric"),
             hrmax_source=hrmax_meta.get("source", "configured"),
             selected_race=data.get("selected_race", "5k"),
+            selected_volume_agg=data.get("selected_volume_agg", "weekly"),
         )
 
     def prune_legacy_keys(self, keys: list[str]) -> int:

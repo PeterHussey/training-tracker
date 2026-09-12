@@ -638,7 +638,7 @@ def test_render_fitness_tab_age_graded_chart(monkeypatch):
     assert any("Age-graded" in str(getattr(f.layout.title, "text", "")) for f in figs)
 
 
-def test_render_volume_tab_rollup_weekly_default(monkeypatch):
+def test_volume_tab_sidebar_agg_toggle_weekly_default(monkeypatch):
     view = _graded_view()
     windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
     fake = _FakeSt()
@@ -646,12 +646,12 @@ def test_render_volume_tab_rollup_weekly_default(monkeypatch):
     acts = [
         Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
     ]
-    d.render_volume_tab(acts, view, windowed, "km")
-    frames = [a[0] for name, a in fake.calls if name == "dataframe"]
-    assert frames and any("2026-W02" in str(f.get("period", [])) for f in frames)
+    d.render_volume_tab(acts, view, windowed, "km", "weekly")
+    figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
+    assert figs and "Weekly" in str(figs[0].layout.title.text)
 
 
-def test_render_volume_tab_rollup_monthly_toggle(monkeypatch):
+def test_volume_tab_sidebar_agg_toggle_monthly(monkeypatch):
     view = _graded_view()
     windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
     fake = _FakeSt()
@@ -660,9 +660,28 @@ def test_render_volume_tab_rollup_monthly_toggle(monkeypatch):
     acts = [
         Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
     ]
-    d.render_volume_tab(acts, view, windowed, "km")
+    d.render_volume_tab(acts, view, windowed, "km", "monthly")
+    figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
+    assert figs and "Monthly" in str(figs[0].layout.title.text)
+
+
+def test_volume_tab_no_rollup_pane(monkeypatch):
+    view = _graded_view()
+    windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
+    fake = _FakeSt()
+    # Ensure radio is not called at all
+    fake.radio = lambda *a, **k: None  # return falsy so widget value is ignored
+    monkeypatch.setattr(d, "st", fake)
+    acts = [
+        Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
+    ]
+    d.render_volume_tab(acts, view, windowed, "km", "weekly")
+    # radio should not have been called (or if called, returned None)
+    radio_calls = [a for name, a in fake.calls if name == "radio"]
+    assert not radio_calls, f"radio should not be called, but was called with {radio_calls}"
+    # no dataframe call should have a "period" key
     frames = [a[0] for name, a in fake.calls if name == "dataframe"]
-    assert frames and any("2026-01" in str(f.get("period", [])) for f in frames)
+    assert not any("period" in str(f) for f in frames)
 
 
 def test_render_activities_best_mile_and_graded(monkeypatch):
