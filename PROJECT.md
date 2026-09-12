@@ -5,7 +5,7 @@
 
 ## Objective
 
-Personal training dashboard based on Garmin data, improving on free available metrics and tools. For the owner's own running training.
+Personal training dashboard based on Garmin data, improving on free available metrics and tools. Primarily for the owner's own running training, but installable and runnable by others for their own self-hosted use.
 
 ## Success criteria
 
@@ -15,6 +15,8 @@ Personal training dashboard based on Garmin data, improving on free available me
 - [ ] Selecting an activity accurately shows all previous comparison activities — verify by: select an activity and confirm the comparison list matches route/distance history
 - [ ] Full metric set (trimp, pmc, acwr, volume, vo2max, threshold, racepredict, gap, decoupling, elevation, injury, hrmax, plus cross/strength handling) stays Garmin-derivable with checks green — verify by: `.venv/bin/python -m pytest -p no:cacheprovider -q` passes (236 tests) and metric definitions match `docs/v2/metrics-spec.md`
 - [ ] Support tooling runs end to end (e2e_report CLI, backfill_names/backfill_sports) — verify by: `e2e_report.py` and relevant backfill tests pass
+- [ ] Selecting an activity shows its Garmin detail — laps/splits and running dynamics where available — verify by: select an activity with laps in the dashboard and confirm the splits match Garmin Connect; detail-parsing tests pass
+- [ ] A fresh clone installs and runs following the README alone — verify by: clean-clone quickstart succeeds and missing Garmin credentials surface a clear error, not a stack trace
 
 ## Out of scope
 
@@ -52,3 +54,4 @@ Personal training dashboard based on Garmin data, improving on free available me
 | Date | Type | Summary | File |
 |---|---|---|---|
 | 2026-09-10 | Status | 2 of 6 criteria verified; live Garmin refresh and interactive UI not probed | [docs/reviews/2026-09-10-status.md](docs/reviews/2026-09-10-status.md) |
+| 2026-09-12 | Expansion | Adopted 2 criteria (per-activity detail, self-hostable install), objective widened to self-hosted use by others; parked 5, declined 0 | [docs/reviews/2026-09-12-expansion.md](docs/reviews/2026-09-12-expansion.md) |
