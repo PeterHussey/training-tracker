@@ -793,6 +793,8 @@ def render_load_tab(view, windowed, units) -> None:
             + context_line(view, "injury.max_run_ratio")
         )
 
+
+def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None:
     dec = windowed.get("load.decoupling")
     dec_mean = windowed.get("load.decoupling_mean")
     if (dec is None or dec.empty) and (dec_mean is None or dec_mean.empty):
@@ -836,8 +838,6 @@ def render_load_tab(view, windowed, units) -> None:
                 "Positive = cardiac drift. " + context_line(view, "load.decoupling_mean")
             )
 
-
-def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None:
     vo2 = windowed.get("fitness.vo2max")
     if vo2 is None or vo2.empty:
         st.write(

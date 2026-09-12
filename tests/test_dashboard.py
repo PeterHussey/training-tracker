@@ -490,12 +490,25 @@ def test_render_kpis_shows_decoupling_mean(monkeypatch):
 
 
 def test_render_load_tab_decoupling_chart(monkeypatch):
+    """Decoupling lives in the Fitness tab now — the Load tab must not render it."""
     view = _decoupling_view()
     windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
     fake = _FakeSt()
     monkeypatch.setattr(d, "st", fake)
     d.render_load_tab(view, windowed, "km")
-    kinds = [name for name, _ in fake.calls]
-    assert "plotly_chart" in kinds
+    figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
+    assert not any("decoupling" in str(getattr(f.layout.title, "text", "")) for f in figs)
+    captions = [a[0] for name, a in fake.calls if name == "caption"]
+    assert not any("route-matched" in c for c in captions)
+
+
+def test_render_fitness_tab_decoupling_chart(monkeypatch):
+    view = _decoupling_view()
+    windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_fitness_tab(view, windowed, "km")
+    figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
+    assert any("decoupling" in str(getattr(f.layout.title, "text", "")) for f in figs)
     captions = [a[0] for name, a in fake.calls if name == "caption"]
     assert any("route-matched" in c for c in captions)
