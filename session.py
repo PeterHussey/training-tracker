@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from metrics import age_grading
 from pipeline import compute_metric_rows
 
 if TYPE_CHECKING:
@@ -66,6 +67,7 @@ CONDITIONAL_METRICS = {
     "race_full": "requires non-null race predictions in the payload",
     "load.decoupling": "requires route-matched flat 90min+ outdoor runs with HR/speed details",
     "load.decoupling_mean": "requires >=6 route-matched flat 90min+ sessions (single-run values are noise)",
+    "age_graded.pct": "requires outdoor-running activities >= 3km (WMA 2023 grading)",
 }
 
 
@@ -196,6 +198,64 @@ def window_series(s: pd.Series, since: date, until: date, weekly: bool = False) 
     idx = pd.to_datetime(s.index)
     mask = (idx >= pd.Timestamp(since)) & (idx <= pd.Timestamp(until))
     return s[mask]
+
+
+def rollup(activities, freq: str) -> pd.DataFrame:
+    """Weekly (ISO Mon-Sun) or monthly run rollup: count, distance, duration.
+
+    freq: "W" (ISO week) or "M" (calendar month). Runs = outdoor running +
+    treadmill. Columns: period, start, runs, distance_km, duration_h.
+    """
+    cols = ["period", "start", "runs", "distance_km", "duration_h"]
+    runs = [a for a in activities if a.sport in ("running", "treadmill")]
+    if not runs:
+        return pd.DataFrame(columns=cols)
+    df = pd.DataFrame(
+        {
+            "date": [a.date for a in runs],
+            "distance_km": [a.distance_m / 1000.0 for a in runs],
+            "duration_h": [a.duration_s / 3600.0 for a in runs],
+        }
+    )
+    d = pd.to_datetime(df["date"])
+    if freq == "W":
+        iso = d.dt.isocalendar()
+        df["period"] = iso["year"].astype(str) + "-W" + iso["week"].astype(str).str.zfill(2)
+        df["start"] = (d - pd.to_timedelta(d.dt.weekday, unit="D")).dt.date
+    else:
+        df["period"] = d.dt.strftime("%Y-%m")
+        df["start"] = d.dt.to_period("M").dt.start_time.dt.date
+    out = df.groupby(["period", "start"], as_index=False).agg(
+        runs=("date", "size"),
+        distance_km=("distance_km", "sum"),
+        duration_h=("duration_h", "sum"),
+    )
+    return out.sort_values("start").reset_index(drop=True)
+
+
+def best_mile(activities, since: date | None = None) -> dict | None:
+    """Fastest stored 1609m split (all-time, or on/after `since`), else None."""
+    best: dict | None = None
+    for a in activities:
+        if a.fastest_split_1609 is None:
+            continue
+        if since is not None and a.date < since:
+            continue
+        if best is None or a.fastest_split_1609 < best["value_s"]:
+            best = {
+                "value_s": a.fastest_split_1609,
+                "date": a.date.isoformat(),
+                "activity_id": a.activity_id,
+            }
+    return best
+
+
+def activity_graded_pct(a, profile: RunnerProfile) -> float | None:
+    """Per-activity WMA graded pct (outdoor runs >= 3km), else None."""
+    if a.sport != "running":
+        return None
+    g = age_grading.grade(a.distance_m, a.duration_s, a.date.year - profile.birth_year, profile.sex)
+    return g[0] if g else None
 
 
 def build_repetitions(activities) -> dict[str, list]:

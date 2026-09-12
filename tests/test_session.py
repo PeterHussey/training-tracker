@@ -7,11 +7,15 @@ from profile import RunnerProfile, default_profile
 import pandas as pd
 import pytest
 
-from normalize import from_summary
+from normalize import Activity, from_summary
 from session import (
+    CONDITIONAL_METRICS,
+    activity_graded_pct,
+    best_mile,
     build_session_view,
     in_period,
     resolve_activities,
+    rollup,
     run_with_timeout,
     week_start,
     window_series,
@@ -292,3 +296,91 @@ def test_resolve_activities_reloads_after_new_rows(tmp_path):
     store.save_activities([_stored_run(), _stored_run(activity_id=2)])
     assert len(resolve_activities(store, state)) == 2
     store.close()
+
+
+# --- Rollups, best-mile, per-activity grading (sub-project A views) ---
+
+PROFILE_40M = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986, units="metric")
+
+
+def _run(aid, d, dist_m, dur_s, split=None, sport="running"):
+    return Activity(
+        activity_id=aid,
+        sport=sport,
+        date=d,
+        ts_ms=0,
+        distance_m=dist_m,
+        duration_s=dur_s,
+        elapsed_s=dur_s,
+        avg_hr=None,
+        max_hr=None,
+        fastest_split_1609=split,
+    )
+
+
+def test_rollup_weekly():
+    acts = [
+        _run(1, date(2026, 1, 5), 5000.0, 1000.0),  # Mon W02
+        _run(2, date(2026, 1, 7), 3000.0, 600.0, sport="treadmill"),  # Wed W02
+        _run(3, date(2026, 1, 7), 0.0, 1800.0, sport="cross"),  # excluded
+        _run(4, date(2026, 1, 12), 4000.0, 800.0),  # Mon W03
+    ]
+    df = rollup(acts, "W")
+    assert list(df["period"]) == ["2026-W02", "2026-W03"]
+    assert list(df["start"]) == [date(2026, 1, 5), date(2026, 1, 12)]
+    assert list(df["runs"]) == [2, 1]
+    assert list(df["distance_km"]) == [8.0, 4.0]
+    assert df["duration_h"].iloc[0] == pytest.approx(1600.0 / 3600.0)
+    assert df["duration_h"].iloc[1] == pytest.approx(800.0 / 3600.0)
+
+
+def test_rollup_monthly():
+    acts = [
+        _run(1, date(2026, 1, 5), 5000.0, 1000.0),
+        _run(2, date(2026, 1, 20), 3000.0, 600.0),
+        _run(3, date(2026, 2, 1), 4000.0, 800.0),
+    ]
+    df = rollup(acts, "M")
+    assert list(df["period"]) == ["2026-01", "2026-02"]
+    assert list(df["start"]) == [date(2026, 1, 1), date(2026, 2, 1)]
+    assert list(df["runs"]) == [2, 1]
+
+
+def test_rollup_empty():
+    assert rollup([], "W").empty
+
+
+def test_best_mile_all_time():
+    acts = [
+        _run(1, date(2026, 1, 5), 5000.0, 1000.0, split=320.0),
+        _run(2, date(2026, 1, 12), 5000.0, 1000.0, split=310.0),
+        _run(3, date(2026, 1, 13), 5000.0, 1000.0, split=None),
+    ]
+    bm = best_mile(acts)
+    assert bm == {"value_s": 310.0, "date": "2026-01-12", "activity_id": 2}
+
+
+def test_best_mile_since():
+    acts = [
+        _run(1, date(2026, 1, 5), 5000.0, 1000.0, split=320.0),
+        _run(2, date(2026, 1, 12), 5000.0, 1000.0, split=310.0),
+    ]
+    assert best_mile(acts, since=date(2026, 1, 6))["activity_id"] == 2
+    assert best_mile(acts, since=date(2026, 2, 1)) is None
+
+
+def test_best_mile_none_without_splits():
+    assert best_mile([_run(1, date(2026, 1, 5), 5000.0, 1000.0)]) is None
+
+
+def test_activity_graded_pct():
+    a = _run(1, date(2026, 1, 10), 5000.0, 1000.0)
+    assert activity_graded_pct(a, PROFILE_40M) == pytest.approx(0.77864, rel=1e-4)
+    treadmill = _run(2, date(2026, 1, 10), 5000.0, 1000.0, sport="treadmill")
+    assert activity_graded_pct(treadmill, PROFILE_40M) is None
+    short = _run(3, date(2026, 1, 10), 2000.0, 500.0)
+    assert activity_graded_pct(short, PROFILE_40M) is None
+
+
+def test_age_graded_pct_is_conditional_metric():
+    assert "age_graded.pct" in CONDITIONAL_METRICS

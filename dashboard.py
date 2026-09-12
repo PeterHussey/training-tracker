@@ -26,7 +26,16 @@ from metrics.gap import K as GAP_K
 from metrics.threshold import parse_details_series
 from normalize import from_summary
 from pipeline import persist_session_metrics
-from session import _fmt, build_session_view, resolve_activities, run_with_timeout
+from session import (
+    KM_PER_MI,
+    _fmt,
+    activity_graded_pct,
+    best_mile,
+    build_session_view,
+    resolve_activities,
+    rollup,
+    run_with_timeout,
+)
 from store import MetricStore
 
 st.set_page_config(page_title="Training Tracker", layout="wide")
@@ -849,6 +858,7 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
 
         - **Aerobic decoupling** = Cardiac drift (HR vs pace) on long flat runs. Needs ≥6 sessions; single values are noise.
         - **VO2max** = Garmin Firstbeat daily estimate. ~5% error; underestimates at high levels (≥60 mL/kg/min).
+        - **Age grading** = WMA 2023 age-graded % of open world record (outdoor runs ≥3 km).
         - **Thresholds** = Lactate threshold HR/pace from Garmin + critical velocity (fastest mile).
         - **LTHR anchors** = Best-effort 20/30-min LT estimates when Garmin LT is missing.
         - **Race predictions** = Garmin daily trend for 5K/10K/Half/Full. 5K/10K/Half most trustworthy.
@@ -916,6 +926,25 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             "**~5% error; underestimates ≥60 mL/kg/min.** Never recomputed here — taken directly from Garmin. "
             "Trend direction matters more than absolute value. "
             + context_line(view, "fitness.vo2max")
+        )
+
+    ag = windowed.get("age_graded.pct")
+    if ag is not None and len(ag):
+        fig = go.Figure(
+            go.Scatter(x=ag.index, y=ag.values * 100, mode="lines+markers", name="Age-graded %")
+        )
+        fig.update_layout(
+            title="Age-graded performance (WMA 2023)",
+            hovermode="x unified",
+            yaxis_title="% of open WR",
+            xaxis_title="Date",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            "📊 **How to read:** Daily best WMA age-graded percentage over outdoor runs ≥3 km. "
+            "100% = open-class world-record pace; ~80% ≈ national class, ~70% ≈ regional. "
+            "WMA 2023 age factors; arbitrary distances log-log interpolated between event anchors. "
+            + context_line(view, "age_graded.pct")
         )
 
     threshes = [
@@ -1042,6 +1071,7 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         - **Weekly duration (hours)** = Time spent training across ALL sports (running + treadmill + cross + strength).
         - **Week-over-week changes** = % change in distance and duration week to week.
         - **Elevation gain** = Daily climbing (route context only, not a risk metric).
+        - **Rollups** = Run count, distance, and duration by ISO week or calendar month.
         """
     )
 
@@ -1189,6 +1219,25 @@ def render_volume_tab(activities, view, windowed, units) -> None:
     else:
         st.write("No elevation data in this window.")
 
+    freq_label = st.radio(
+        "Rollup period", ("Weekly", "Monthly"), index=0, horizontal=True, key="rollup_freq"
+    )
+    r = rollup(activities, "M" if freq_label == "Monthly" else "W")
+    if r.empty:
+        st.write("No runs to roll up.")
+    else:
+        dist_col = "distance_mi" if units in ("miles", "imperial") else "distance_km"
+        disp = r.rename(columns={"distance_km": dist_col}).copy()
+        if dist_col == "distance_mi":
+            disp[dist_col] = disp[dist_col] / KM_PER_MI
+        disp[dist_col] = disp[dist_col].round(1)
+        disp["duration_h"] = disp["duration_h"].round(1)
+        st.dataframe(disp, use_container_width=True, hide_index=True)
+        st.caption(
+            "📊 **How to read:** Run count, distance, and duration rolled up by ISO week "
+            "(Mon–Sun) or calendar month. Outdoor running + treadmill only."
+        )
+
 
 def render_repetitions(activities, activity_id: int, units: str) -> None:
     """Comparison table + chart for every repetition of the selected workout.
@@ -1283,7 +1332,7 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
     )
 
 
-def render_activities(activities, since, until, units) -> None:
+def render_activities(activities, since, until, units, profile) -> None:
     st.markdown(
         """
         **Activities** — Your raw activity log. Click a row to compare repetitions of the same 80/20 workout.
@@ -1291,7 +1340,19 @@ def render_activities(activities, since, until, units) -> None:
         - **GAP** = Grade-Adjusted Pace (compensates for elevation).
         - **TE** = Garmin Training Effect (aerobic/anaerobic).
         - **VO2max** = Per-run Firstbeat estimate.
+        - **Graded** = WMA age-graded % of open world record (outdoor runs ≥3 km).
         """
+    )
+    bm_period = best_mile([a for a in activities if since <= a.date <= until])
+    bm_all = best_mile(activities)
+    cols = st.columns(2)
+    cols[0].metric(
+        "Best mile (period)",
+        _fmt(bm_period["value_s"], {"unit": "s"}, units) if bm_period else "—",
+    )
+    cols[1].metric(
+        "Best mile (all-time)",
+        _fmt(bm_all["value_s"], {"unit": "s"}, units) if bm_all else "—",
     )
     rows = []
     for a in activities:
@@ -1304,6 +1365,7 @@ def render_activities(activities, since, until, units) -> None:
             grade = a.ele_gain_m / a.distance_m
             gap_speed = a.avg_speed * (1.0 + GAP_K * grade)
             gap_pace = m_per_unit / gap_speed if gap_speed > 0 else None
+        graded = activity_graded_pct(a, profile)
         rows.append(
             {
                 "date": a.date.isoformat(),
@@ -1313,6 +1375,7 @@ def render_activities(activities, since, until, units) -> None:
                 "duration": _fmt(a.duration_s, {"unit": "s"}, units),
                 "pace": _fmt(pace, {"unit": "s"}, units) if pace else "—",
                 "GAP": _fmt(gap_pace, {"unit": "s"}, units) if gap_pace else "—",
+                "graded": f"{graded * 100:.1f}%" if graded is not None else "—",
                 "avg HR": f"{a.avg_hr:.0f}" if a.avg_hr is not None else "—",
                 "max HR": f"{a.max_hr:.0f}" if a.max_hr is not None else "—",
                 "VO2max": f"{a.vo2max:.1f}" if a.vo2max is not None else "—",
@@ -1550,7 +1613,7 @@ def main() -> None:
     with tab_volume:
         render_volume_tab(activities, view, windowed, units)
     with tab_acts:
-        render_activities(activities, since, until, units)
+        render_activities(activities, since, until, units, profile)
 
     with st.expander("Technical Reference", expanded=False):
         st.markdown("""

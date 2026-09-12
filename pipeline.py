@@ -11,6 +11,7 @@ import pandas as pd
 from metric_series import rows_from_series
 from metrics import (
     acwr,
+    age_grading,
     decoupling,
     elevation,
     gap,
@@ -109,6 +110,16 @@ def compute_metric_rows(
         gap.gap_pace(activities),
         "computed",
         params={"unit": "m/s", "k": gap.K},
+    )
+
+    # Age grading (WMA 2023) — daily best graded pct over outdoor runs >= 3km.
+    # Per-activity values are derived on the fly in session.py; only the daily
+    # best persists (metric_series PK is (metric, date)).
+    rows += rows_from_series(
+        "age_graded.pct",
+        age_grading.daily_best_graded(activities, profile),
+        "computed",
+        params={"unit": "fraction", "basis": "wma_2023"},
     )
 
     # Injury risk — longest safe run (single-run distance vs rolling 30d max).

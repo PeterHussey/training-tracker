@@ -8,6 +8,7 @@ while the first refresh (empty store) keeps the full window.
 """
 
 from datetime import date, timedelta
+from profile import RunnerProfile
 from unittest import mock
 
 import pytest
@@ -20,6 +21,7 @@ from dashboard import (
     period_bounds,
     race_time_ticks,
 )
+from normalize import Activity
 
 
 def test_compute_fetch_start_full_window_when_empty():
@@ -608,3 +610,86 @@ def test_render_kpis_lt_hr_prefers_garmin(monkeypatch):
     d.render_kpis(windowed, view, "km", ["LT HR"])
     metrics = [a for name, a in fake.calls if name == "metric"]
     assert metrics and metrics[0][0] == "LT HR" and metrics[0][1] == "158 bpm"
+
+
+# --- Sub-project A views: age-graded trend, rollups, best-mile (sub-project A) ---
+
+PROFILE_40M = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986, units="metric")
+
+
+def _graded_view():
+    from session import build_session_view
+
+    acts = [
+        Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
+        Activity(2, "running", date(2026, 1, 17), 0, 10000.0, 2000.0, 2000.0, 150.0, 170.0),
+    ]
+    return build_session_view(acts, PROFILE_40M)
+
+
+def test_render_fitness_tab_age_graded_chart(monkeypatch):
+    view = _graded_view()
+    assert "age_graded.pct" in view.series
+    windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_fitness_tab(view, windowed, "km")
+    figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
+    assert any("Age-graded" in str(getattr(f.layout.title, "text", "")) for f in figs)
+
+
+def test_render_volume_tab_rollup_weekly_default(monkeypatch):
+    view = _graded_view()
+    windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    acts = [
+        Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
+    ]
+    d.render_volume_tab(acts, view, windowed, "km")
+    frames = [a[0] for name, a in fake.calls if name == "dataframe"]
+    assert frames and any("2026-W02" in str(f.get("period", [])) for f in frames)
+
+
+def test_render_volume_tab_rollup_monthly_toggle(monkeypatch):
+    view = _graded_view()
+    windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
+    fake = _FakeSt()
+    fake.radio = lambda *a, **k: "Monthly"
+    monkeypatch.setattr(d, "st", fake)
+    acts = [
+        Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
+    ]
+    d.render_volume_tab(acts, view, windowed, "km")
+    frames = [a[0] for name, a in fake.calls if name == "dataframe"]
+    assert frames and any("2026-01" in str(f.get("period", [])) for f in frames)
+
+
+def test_render_activities_best_mile_and_graded(monkeypatch):
+    acts = [
+        Activity(
+            1,
+            "running",
+            date(2026, 1, 10),
+            0,
+            5000.0,
+            1000.0,
+            1000.0,
+            150.0,
+            170.0,
+            fastest_split_1609=320.0,
+        ),
+    ]
+    fake = _FakeSt()
+    recorded = []
+
+    def _df(*a, **k):
+        recorded.append(a)
+        return mock.Mock(selection=mock.Mock(rows=[]))
+
+    fake.dataframe = _df
+    monkeypatch.setattr(d, "st", fake)
+    d.render_activities(acts, date(2026, 1, 1), date(2026, 1, 31), "km", PROFILE_40M)
+    metrics = [a for name, a in fake.calls if name == "metric"]
+    assert any("Best mile" in str(m[0]) for m in metrics)
+    assert recorded and "graded" in recorded[0][0].columns

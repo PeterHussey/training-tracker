@@ -2,7 +2,7 @@
 import json
 from datetime import date, timedelta
 from pathlib import Path
-from profile import default_profile
+from profile import RunnerProfile, default_profile
 
 import pandas as pd
 import pytest
@@ -278,6 +278,35 @@ def test_pipeline_garmin_lt_suppresses_best_effort():
     assert "load.lt_hr_best30" not in metrics
     # But Garmin's own LT should be there
     assert "load.lt_hr" in metrics
+
+
+def test_pipeline_emits_age_graded_pct():
+    profile = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986, units="metric")
+    acts = [
+        # Eligible outdoor run: 5000m in 1000s at age 40 -> pct 0.77864
+        Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
+        # Treadmill excluded; short run excluded.
+        Activity(2, "treadmill", date(2026, 1, 11), 0, 5000.0, 900.0, 900.0, 150.0, 170.0),
+        Activity(3, "running", date(2026, 1, 12), 0, 2500.0, 500.0, 500.0, 150.0, 170.0),
+    ]
+    rows = compute_metric_rows(acts, profile)
+    ag = [r for r in rows if r["metric"] == "age_graded.pct"]
+    assert len(ag) == 1
+    assert ag[0]["date"] == "2026-01-10"
+    assert ag[0]["value"] == pytest.approx(0.77864, rel=1e-4)
+    assert ag[0]["source"] == "computed"
+    params = json.loads(ag[0]["params"])
+    assert params["unit"] == "fraction"
+    assert params["basis"] == "wma_2023"
+
+
+def test_pipeline_no_age_graded_without_eligible_runs():
+    profile = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986, units="metric")
+    acts = [
+        Activity(1, "treadmill", date(2026, 1, 10), 0, 5000.0, 900.0, 900.0, 150.0, 170.0),
+    ]
+    rows = compute_metric_rows(acts, profile)
+    assert [r for r in rows if r["metric"] == "age_graded.pct"] == []
 
 
 def test_rows_from_series_keys():
