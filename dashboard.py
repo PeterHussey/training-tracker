@@ -52,6 +52,13 @@ KPI_KEYS = [
     ("load.decoupling_mean", "Aerobic decoupling"),
 ]
 
+# KPI fallback sources: primary -> (fallback key, label suffix). Used when the
+# primary series is empty in the selected window. The suffix keeps the tile
+# honest about provenance (measured Garmin record vs computed estimate).
+KPI_FALLBACKS = {
+    "load.lt_hr": ("load.lt_hr_best20", " (best-effort)"),
+}
+
 
 GLOSSARY = [
     "Prefer TREND over absolute value for every metric.",
@@ -634,6 +641,12 @@ def render_kpis(windowed, view, units, selected_kpi_labels: list[str] | None = N
     for col, (key, label) in zip(cols, visible, strict=False):
         s = windowed.get(key)
         val = last_value(s) if s is not None else None
+        if val is None and key in KPI_FALLBACKS:
+            fb_key, suffix = KPI_FALLBACKS[key]
+            fb_s = windowed.get(fb_key)
+            fb_val = last_value(fb_s) if fb_s is not None else None
+            if fb_val is not None:
+                key, label, val = fb_key, label + suffix, fb_val
         if val is None:
             col.metric(label, "—")
             continue

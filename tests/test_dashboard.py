@@ -512,3 +512,36 @@ def test_render_fitness_tab_decoupling_chart(monkeypatch):
     assert any("decoupling" in str(getattr(f.layout.title, "text", "")) for f in figs)
     captions = [a[0] for name, a in fake.calls if name == "caption"]
     assert any("route-matched" in c for c in captions)
+
+
+def test_render_kpis_lt_hr_falls_back_to_best20(monkeypatch):
+    """No Garmin LT record: the LT HR tile shows the 20-min best-effort
+    anchor, clearly labeled, instead of a dash."""
+    view = _decoupling_view()
+    assert "load.lt_hr" not in view.series
+    windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_kpis(windowed, view, "km", ["LT HR"])
+    metrics = [a for name, a in fake.calls if name == "metric"]
+    assert metrics and metrics[0][0] == "LT HR (best-effort)" and metrics[0][1] == "138 bpm"
+
+
+def test_render_kpis_lt_hr_prefers_garmin(monkeypatch):
+    """A measured Garmin LT record always wins over the best-effort anchor."""
+    from profile import default_profile
+
+    from session import build_session_view
+
+    acts = [_long_run(700 + i, date(2026, 7, 6) + timedelta(days=i)) for i in range(2)]
+    lt = {"speed_and_heart_rate": {"heartRate": 158, "speed": 3.5, "calendarDate": "2026-07-01"}}
+    view = build_session_view(
+        acts, default_profile(age=40, hrrest=60, sex="M"), lt, None, None, None
+    )
+    assert "load.lt_hr" in view.series
+    windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_kpis(windowed, view, "km", ["LT HR"])
+    metrics = [a for name, a in fake.calls if name == "metric"]
+    assert metrics and metrics[0][0] == "LT HR" and metrics[0][1] == "158 bpm"
