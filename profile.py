@@ -21,6 +21,7 @@ class RunnerProfile:
     units: str = "metric"
     hrmax_source: str = "configured"  # "configured" | "age_predicted"
     selected_race: str = "5k"  # "5k" | "10k" | "half" | "full"
+    selected_volume_agg: str = "weekly"  # "weekly" | "monthly"
 
     EDWARDS_WEIGHTS: ClassVar[dict[int, float]] = {1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0, 5: 5.0}
 

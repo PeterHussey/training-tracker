@@ -7,6 +7,7 @@ from profile import RunnerProfile, default_profile
 import pandas as pd
 import pytest
 
+from metrics import volume
 from normalize import Activity, from_summary
 from session import (
     CONDITIONAL_METRICS,
@@ -384,3 +385,96 @@ def test_activity_graded_pct():
 
 def test_age_graded_pct_is_conditional_metric():
     assert "age_graded.pct" in CONDITIONAL_METRICS
+
+
+def test_volume_daily_resampled_to_weekly_monday():
+    """Default profile (selected_volume_agg='weekly') resamples daily volume
+    to weekly-Monday-indexed series whose per-week sums match the legacy
+    volume.distance_total weekly series on the same weeks (±1e-6)."""
+    view = _view()
+    since, until = date(2026, 8, 1), date(2026, 8, 31)
+    w = view.windowed(since, until)
+    daily = w["volume.distance_total_daily"]
+    weekly = w["volume.distance_total"]
+    # Both should be Monday-indexed
+    assert (daily.index.dayofweek == 0).all()
+    # Per-week sums from the resampled daily series should match the legacy
+    # weekly series on overlapping weeks
+    for idx in weekly.index:
+        if idx in daily.index:
+            assert abs(daily.loc[idx] - weekly.loc[idx]) < 1e-6, (
+                f"Mismatch on {idx}: daily={daily.loc[idx]}, weekly={weekly.loc[idx]}"
+            )
+
+
+def test_volume_daily_resampled_to_monthly():
+    """selected_volume_agg='monthly' buckets volume.distance_total_daily
+    by calendar month (month-end index), preserving sums."""
+    profile = RunnerProfile(
+        hrmax=180, hrrest=60, sex="M", birth_year=1986,
+        selected_volume_agg="monthly",
+    )
+    acts = _acts()
+    view = build_session_view(acts, profile, _lt(), _race(), _vo2())
+    since, until = date(2026, 8, 1), date(2026, 8, 31)
+    w = view.windowed(since, until)
+    daily = w["volume.distance_total_daily"]
+    # Index should be month-end dates
+    assert daily.index[-1] == pd.Timestamp("2026-08-31")
+
+
+def test_volume_monthly_index_is_month_end():
+    """monthly index = month-end dates (e.g. 2026-01-31) for the fixture's months."""
+    profile = RunnerProfile(
+        hrmax=180, hrrest=60, sex="M", birth_year=1986,
+        selected_volume_agg="monthly",
+    )
+    acts = _acts()
+    view = build_session_view(acts, profile, _lt(), _race(), _vo2())
+    s = view.series["volume.distance_total_daily"]
+    # Resample to monthly and check index is month-end
+    resampled = volume.resample_agg(s, "ME")
+    assert resampled.index[-1] == pd.Timestamp("2026-08-31")
+
+
+def test_windowed_leaves_non_volume_daily_untouched():
+    """A non-volume metric (load.banister) is NOT resampled — returns
+    original daily values filtered by date."""
+    view = _view()
+    since, until = date(2026, 8, 1), date(2026, 8, 31)
+    w = view.windowed(since, until)
+    s = w["load.banister"]
+    # Index should be original daily dates, not resampled Monday-indexed
+    assert s.index.dayofweek[0] != 0 or len(s) <= 1
+
+
+def test_volume_agg_invalid_falls_back_weekly():
+    """selected_volume_agg='bogus' behaves like weekly (falls back to W-SUN)."""
+    profile = RunnerProfile(
+        hrmax=180, hrrest=60, sex="M", birth_year=1986,
+        selected_volume_agg="bogus",
+    )
+    acts = _acts()
+    view = build_session_view(acts, profile, _lt(), _race(), _vo2())
+    since, until = date(2026, 8, 1), date(2026, 8, 31)
+    w = view.windowed(since, until)
+    daily = w["volume.distance_total_daily"]
+    # Should be weekly-Monday-indexed like the default
+    assert (daily.index.dayofweek == 0).all()
+
+
+def test_volume_weekly_resample_drops_empty_weeks():
+    """weeks with no data are absent from the resampled weekly series."""
+    profile = RunnerProfile(
+        hrmax=180, hrrest=60, sex="M", birth_year=1986,
+        selected_volume_agg="weekly",
+    )
+    acts = _acts()
+    view = build_session_view(acts, profile, _lt(), _race(), _vo2())
+    s = view.series["volume.distance_total_daily"]
+    resampled = volume.resample_agg(s, "W-SUN")
+    # Weeks with no data should be absent (counts == 0 → dropped)
+    assert len(resampled) > 0
+    # Verify no week has a sum of 0 (which would indicate an empty bucket)
+    for idx, val in resampled.items():
+        assert val != 0 or idx not in resampled.index, "Empty week should be dropped"

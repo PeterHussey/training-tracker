@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from metrics import age_grading
+from metrics import age_grading, volume
 from pipeline import compute_metric_rows
 
 if TYPE_CHECKING:
@@ -181,11 +181,25 @@ class SessionView:
 
         Weekly rows (params agg == "iso_week") are kept when their week overlaps
         the window (Monday <= until AND Sunday >= since); daily rows by date.
+
+        For volume._daily metrics, the series is first resampled to the grain
+        selected by `profile.selected_volume_agg` ("weekly" → W-SUN, "monthly"
+        → ME), then filtered by the window.
         """
         out = {}
         for metric, s in self.series.items():
-            weekly = self.context[metric]["params"].get("agg") == "iso_week"
-            out[metric] = window_series(s, since, until, weekly=weekly)
+            if metric.startswith("volume.") and metric.endswith("_daily"):
+                freq = {
+                    "weekly": "W-SUN",
+                    "monthly": "ME",
+                }.get(self.profile.selected_volume_agg, "W-SUN")
+                is_weekly = freq == "W-SUN"
+                out[metric] = window_series(
+                    volume.resample_agg(s, freq), since, until, weekly=is_weekly
+                )
+            else:
+                weekly = self.context[metric]["params"].get("agg") == "iso_week"
+                out[metric] = window_series(s, since, until, weekly=weekly)
         return out
 
 
