@@ -125,9 +125,7 @@ def period_bounds(
     return min_d, since, end
 
 
-def reset_period_after_refresh(
-    old_period, default_since: date, max_d: date
-) -> tuple[date, date]:
+def reset_period_after_refresh(old_period, default_since: date, max_d: date) -> tuple[date, date]:
     """Period to show after a Garmin refresh added activities.
 
     Preserves the user's existing start date and pushes the end out to the new
@@ -135,6 +133,7 @@ def reset_period_after_refresh(
     Falls back to the trailing-window default when there is no prior selection.
     A single-date selection is treated as start == end == that date.
     """
+
     def _norm(v):
         return v.date() if hasattr(v, "date") else v
 
@@ -561,8 +560,10 @@ def _anchor_cards(windowed, view, units) -> None:
 
         card_text = f"{pt['proxy_hr']:.0f} bpm ({pt['raw_hr']:.0f} raw @ {pace_str}, {pt['date']})"
         st.metric(f"LTHR anchor {label}", card_text)
-        st.caption(f"📊 **How to read:** Your best {label} sustained effort. Proxy HR = adjusted for HRmax source. "
-                   f"Raw HR = actual recorded. Pace = average for that effort. Date = when it occurred.")
+        st.caption(
+            f"📊 **How to read:** Your best {label} sustained effort. Proxy HR = adjusted for HRmax source. "
+            f"Raw HR = actual recorded. Pace = average for that effort. Date = when it occurred."
+        )
 
         # Qualifier dots: faint scatter of all qualifying efforts.
         # (Interval/sustained encoding was tried and reverted: the device
@@ -620,8 +621,7 @@ def _anchor_cards(windowed, view, units) -> None:
             st.caption(
                 f"📊 **How to read:** Faint dots = all {label} qualifying efforts in the current window. "
                 f"Left axis (blue) = HR. Right axis (orange) = pace. "
-                f"Cluster = consistency. Outliers = anomalies. "
-                + context_line(view, dots_hr_key)
+                f"Cluster = consistency. Outliers = anomalies. " + context_line(view, dots_hr_key)
             )
 
     if not has_any:
@@ -745,12 +745,17 @@ def render_load_tab(view, windowed, units) -> None:
         st.write("PMC chart needs combined daily load history in this window.")
     else:
         fig = go.Figure()
-        for key, name, color in (("pmc.ctl", "CTL (fitness)", "#2E86AB"), ("pmc.atl", "ATL (fatigue)", "#A23B72")):
+        for key, name, color in (
+            ("pmc.ctl", "CTL (fitness)", "#2E86AB"),
+            ("pmc.atl", "ATL (fatigue)", "#A23B72"),
+        ):
             t = windowed.get(key)
             if t is not None and len(t):
                 fig.add_trace(go.Scatter(x=t.index, y=t.values, name=name, line={"color": color}))
         fig.add_trace(
-            go.Scatter(x=tsb.index, y=tsb.values, name="TSB (form)", yaxis="y2", line={"color": "#F18F01"})
+            go.Scatter(
+                x=tsb.index, y=tsb.values, name="TSB (form)", yaxis="y2", line={"color": "#F18F01"}
+            )
         )
         fig.add_hline(y=0, line_dash="dot", line_color="gray")
         fig.update_layout(
@@ -1322,8 +1327,10 @@ def render_activities(activities, since, until, units) -> None:
         st.write("No activities in this window.")
         return
     df = df.sort_values("date", ascending=False).reset_index(drop=True)
-    st.caption("📊 **How to read:** Click any row to see all repetitions of that workout (same 80/20 code) "
-               "and track your progression over time.")
+    st.caption(
+        "📊 **How to read:** Click any row to see all repetitions of that workout (same 80/20 code) "
+        "and track your progression over time."
+    )
     sel = st.dataframe(
         df.drop(columns=["activity_id"]),
         use_container_width=True,
