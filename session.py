@@ -245,6 +245,25 @@ def repetition_rows(activities, code: str) -> list[dict]:
     return sorted(rows, key=lambda r: r["date"])
 
 
+def resolve_activities(store, session_state, key="activities"):
+    """Load activities once per session, reloading when the store changes.
+
+    Regression guard: the dashboard keeps loaded Activity objects in
+    session state across reruns, so a schema migration (or a refresh that
+    rewrites rows) otherwise leaves stale objects — e.g. elapsed_s=0.0
+    with no lat/lon — in the view pipeline indefinitely, silently emptying
+    every metric gated on the new fields. The fingerprint (columns + row
+    count + elapsed total) changes on migration, new rows, and value
+    rewrites, and forces a reload. session_state is a plain dict here for
+    testability; callers pass st.session_state.
+    """
+    fp = store.activities_fingerprint()
+    if session_state.get(key) is None or session_state.get("_activities_fingerprint") != fp:
+        session_state[key] = store.load_activities()
+        session_state["_activities_fingerprint"] = fp
+    return session_state[key]
+
+
 def run_with_timeout(fn, timeout: float, **kwargs):
     """Run fn on a daemon thread, bounding it to a hard wall-clock timeout.
 

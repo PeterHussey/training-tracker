@@ -8,7 +8,14 @@ import pandas as pd
 import pytest
 
 from normalize import from_summary
-from session import build_session_view, in_period, run_with_timeout, week_start, window_series
+from session import (
+    build_session_view,
+    in_period,
+    resolve_activities,
+    run_with_timeout,
+    week_start,
+    window_series,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -224,3 +231,64 @@ def test_session_context_has_best_keys():
     assert "load.lt_pace_best30" in view.series
     assert "load.lt_effort_dots30_hr" in view.series
     assert "load.lt_effort_dots30_pace" in view.series
+
+
+def _stored_run(activity_id=1, elapsed_s=6400.0):
+    from normalize import Activity
+
+    return Activity(
+        activity_id=activity_id,
+        sport="running",
+        date=date(2026, 4, 1),
+        ts_ms=0,
+        distance_m=18000.0,
+        duration_s=6300.0,
+        elapsed_s=elapsed_s,
+        avg_hr=150.0,
+        max_hr=170.0,
+        zone_s={},
+        lat=42.42,
+        lon=-71.28,
+    )
+
+
+def test_resolve_activities_reloads_stale_objects(tmp_path):
+    """Regression guard: objects cached in session state before a migration
+    (elapsed_s=0.0, no lat/lon) must be replaced, not reused."""
+    from dataclasses import replace
+
+    from store import MetricStore
+
+    store = MetricStore(str(tmp_path / "t.db"))
+    store.save_activities([_stored_run()])
+    stale = replace(_stored_run(), elapsed_s=0.0, lat=None, lon=None)
+    state = {"activities": [stale], "_activities_fingerprint": "stale"}
+    got = resolve_activities(store, state)
+    store.close()
+    assert got[0].elapsed_s == 6400.0
+    assert got[0].lat == 42.42
+    assert state["activities"][0].elapsed_s == 6400.0
+
+
+def test_resolve_activities_reuses_fresh_cache(tmp_path):
+    from store import MetricStore
+
+    store = MetricStore(str(tmp_path / "t.db"))
+    store.save_activities([_stored_run()])
+    state: dict = {}
+    first = resolve_activities(store, state)
+    second = resolve_activities(store, state)
+    store.close()
+    assert second is first
+
+
+def test_resolve_activities_reloads_after_new_rows(tmp_path):
+    from store import MetricStore
+
+    store = MetricStore(str(tmp_path / "t.db"))
+    store.save_activities([_stored_run()])
+    state: dict = {}
+    assert len(resolve_activities(store, state)) == 1
+    store.save_activities([_stored_run(), _stored_run(activity_id=2)])
+    assert len(resolve_activities(store, state)) == 2
+    store.close()

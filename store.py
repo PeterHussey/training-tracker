@@ -169,6 +169,21 @@ class MetricStore:
             for row in cur.fetchall()
         ]
 
+    def activities_fingerprint(self) -> str:
+        """Cheap change detector for the activities table.
+
+        Columns + row count + elapsed total: changes on migration, refresh
+        (new rows), and value rewrites (backfilled elapsed replaced by true
+        values). Lets callers cache loaded Activity objects and reload only
+        when the store actually changed.
+        """
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(activities)").fetchall()]
+        total = "COALESCE(SUM(COALESCE(elapsed_s, duration_s)), 0)"
+        if "elapsed_s" not in cols:
+            total = "COALESCE(SUM(duration_s), 0)"
+        n, tot = self.conn.execute(f"SELECT COUNT(*), {total} FROM activities").fetchone()
+        return f"{'|'.join(cols)}#{n}#{tot}"
+
     def latest_activity_date(self) -> date | None:
         """Date of the most recent activity persisted, or None when the store is empty.
 

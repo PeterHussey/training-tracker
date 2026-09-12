@@ -26,7 +26,7 @@ from metrics.gap import K as GAP_K
 from metrics.threshold import parse_details_series
 from normalize import from_summary
 from pipeline import persist_session_metrics
-from session import _fmt, build_session_view, run_with_timeout
+from session import _fmt, build_session_view, resolve_activities, run_with_timeout
 from store import MetricStore
 
 st.set_page_config(page_title="Training Tracker", layout="wide")
@@ -1224,7 +1224,6 @@ def main() -> None:
     units = st.sidebar.radio("Units", ("km", "miles"), index=0 if _units_display == "km" else 1)
 
     if "activities" not in st.session_state:
-        st.session_state["activities"] = store.load_activities()
         st.session_state["lt_payload"] = None
         st.session_state["race_payload"] = None
         st.session_state["vo2max_payload"] = None
@@ -1237,6 +1236,10 @@ def main() -> None:
             st.session_state["race_payload"] = cached_race
         if cached_vo2 is not None:
             st.session_state["vo2max_payload"] = cached_vo2
+    # Fingerprint-guarded reload: session state survives reruns (including
+    # file-change auto-reruns after a migration), so a plain once-only load
+    # would feed stale Activity objects to the pipeline indefinitely.
+    resolve_activities(store, st.session_state)
 
     st.sidebar.header("Data")
     fetch_mode = st.sidebar.radio(
