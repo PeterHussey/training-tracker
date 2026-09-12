@@ -46,7 +46,8 @@ def compute_metric_rows(
     # week-over-week % (brief 4.1). Duration covers all sports including
     # cross-training, which has no distance but still burns time/energy.
     for group in volume.groups():
-        weekly = volume.weekly_distance(activities, group)
+        daily = volume.daily_distance(activities, group)
+        weekly = volume.resample_agg(daily, "W-SUN")
         rows += rows_from_series(
             f"volume.distance_{group}", weekly, "computed", params={"agg": "iso_week", "unit": "km"}
         )
@@ -62,7 +63,8 @@ def compute_metric_rows(
             "computed",
             params={"agg": "iso_week", "unit": "fraction"},
         )
-        weekly_hours = volume.weekly_duration_hours(activities, group)
+        daily_hours = volume.daily_duration_hours(activities, group)
+        weekly_hours = volume.resample_agg(daily_hours, "W-SUN")
         rows += rows_from_series(
             f"volume.duration_{group}",
             weekly_hours,
@@ -73,7 +75,9 @@ def compute_metric_rows(
     # Duration rolling + week-over-week for the total (mirrors the distance chart
     # overlay/change views). Duration feeds all sports, including no-distance
     # cross-training, so the total is a true time-anchored load proxy.
-    total_hours = volume.weekly_duration_hours(activities, "total")
+    total_hours = volume.resample_agg(
+        volume.daily_duration_hours(activities, "total"), "W-SUN"
+    )
     rows += rows_from_series(
         "volume.rolling4wk_duration_total",
         volume.rolling_4wk(total_hours),

@@ -1,4 +1,4 @@
-"""Weekly volume / consistency metrics (research brief 4.1)."""
+"""Daily volume / consistency metrics (research brief 4.1)."""
 
 import pandas as pd
 
@@ -21,28 +21,51 @@ def _group_members(activities: list[Activity], group: str) -> list[Activity]:
     return [a for a in activities if a.sport == "cross"]
 
 
-def weekly_distance(activities: list[Activity], group: str) -> pd.Series:
-    acts = _group_members(activities, group)
-    if not acts:
-        return pd.Series([], dtype=float)
-    idx = pd.DatetimeIndex([a.date for a in acts]).strftime("%G-W%V")
-    s = pd.Series([a.distance_km for a in acts], index=idx)
-    out = s.groupby(s.index).sum().sort_index()
-    out.index.name = "week"
-    return out
+def _running_members(activities: list[Activity], group: str) -> list[Activity]:
+    """Running + treadmill only for distance. Cross/strength have no distance."""
+    if group == "total":
+        return [a for a in activities if a.sport in ("running", "treadmill")]
+    if group in ("cross", "strength"):
+        return []
+    return _group_members(activities, group)
 
 
-def weekly_duration_hours(activities: list[Activity], group: str) -> pd.Series:
-    """Weekly duration in hours. Unlike distance, cross-training contributes
-    here because it has duration (time-in-seat) even with no distance."""
-    acts = _group_members(activities, group)
-    if not acts:
+def daily_distance(activities: list[Activity], group: str) -> pd.Series:
+    """Daily distance (km). Running + treadmill only — distance has no
+    meaning for cross/strength."""
+    members = _running_members(activities, group)
+    if not members:
+        return pd.Series([], dtype=float, name="distance_km")
+    idx = pd.DatetimeIndex([a.date for a in members])
+    s = pd.Series([a.distance_km for a in members], index=idx, name="distance_km")
+    return s.groupby(level=0).sum().sort_index()
+
+
+def daily_duration_hours(activities: list[Activity], group: str) -> pd.Series:
+    """Daily duration (hours). All sports — cross/strength have duration."""
+    members = _group_members(activities, group)
+    if not members:
+        return pd.Series([], dtype=float, name="duration_hours")
+    idx = pd.DatetimeIndex([a.date for a in members])
+    s = pd.Series([a.duration_min / 60.0 for a in members], index=idx, name="duration_hours")
+    return s.groupby(level=0).sum().sort_index()
+
+
+def resample_agg(s: pd.Series, freq: str) -> pd.Series:
+    """Generic resampler. 'W-SUN' → Mon–Sun ISO-week buckets, index shifted
+    to Monday. 'ME' → month-end-aligned. Returns summed, sorted-index series.
+    Empty buckets (no source data) are dropped."""
+    if s.empty:
         return pd.Series([], dtype=float)
-    idx = pd.DatetimeIndex([a.date for a in acts]).strftime("%G-W%V")
-    s = pd.Series([a.duration_min / 60.0 for a in acts], index=idx)
-    out = s.groupby(s.index).sum().sort_index()
-    out.index.name = "week"
-    return out
+    resampled = s.resample(freq).sum()
+    # Drop empty buckets (no source data → sum is 0). resample fills 0 for
+    # missing weeks; we only want weeks with actual activity data.
+    counts = s.resample(freq).count()
+    resampled = resampled[counts > 0]
+    if freq == "W-SUN":
+        # Shift Sunday labels back to Monday (ISO-week convention).
+        resampled.index = resampled.index - pd.Timedelta(days=6)
+    return resampled.sort_index()
 
 
 def rolling_4wk(weekly: pd.Series) -> pd.Series:
