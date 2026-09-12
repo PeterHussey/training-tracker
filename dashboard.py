@@ -629,7 +629,7 @@ def _anchor_cards(windowed, view, units) -> None:
                 hovermode="x unified",
                 showlegend=False,
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             st.caption(
                 f"📊 **How to read:** Faint dots = all {label} qualifying efforts in the current window. "
                 f"Left axis (blue) = HR. Right axis (orange) = pace. "
@@ -738,7 +738,7 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis_title="Banister TRIMP",
             legend={"orientation": "h", "y": 1.12},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Each bar = one day's HR-based training load. Stacked = outdoor running (blue) + "
             "treadmill (orange) + cross-training (green). The sum feeds the PMC/ACWR charts below. "
@@ -777,7 +777,7 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis2={"overlaying": "y", "side": "right", "title": "TSB"},
             legend={"orientation": "h", "y": 1.12},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Blue = CTL (42-day rolling fitness). Purple = ATL (7-day rolling fatigue). "
             "Orange = TSB = CTL − ATL. **Above zero = fresh/form (good for racing). Below zero = tired.** "
@@ -802,7 +802,7 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis={"range": [0, max(2.0, float(acwr.max()))]},
             legend={"orientation": "h", "y": 1.12},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Blue line = ACWR (7-day avg load ÷ 28-day avg load). **1.0 = steady load.** "
             "Green band 0.8–1.3 = typical 'sweet spot'. **ACWR measures load swing, not injury prediction.** "
@@ -832,7 +832,7 @@ def render_load_tab(view, windowed, units) -> None:
             yaxis={"title": "Ratio", "range": [0, max(2.0, float(max_ratio.max()) * 1.1)]},
             xaxis_title="Date",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         latest = max_ratio.iloc[-1]
         if latest > 1.3:
             st.error(
@@ -898,7 +898,7 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             yaxis_title="%",
             xaxis_title="Date",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         if dec_mean is None or dec_mean.empty:
             n = len(dec) if dec is not None else 0
             st.caption(
@@ -923,7 +923,7 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
     else:
         fig = go.Figure(go.Scatter(x=vo2.index, y=vo2.values, mode="lines+markers", name="VO2max"))
         fig.update_layout(title="VO2max (Firstbeat estimate, daily trend)", hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Daily Garmin Firstbeat VO2max estimate (mL/kg/min). "
             "**~5% error; underestimates ≥60 mL/kg/min.** Never recomputed here — taken directly from Garmin. "
@@ -942,7 +942,7 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             yaxis_title="% of open WR",
             xaxis_title="Date",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Daily best WMA age-graded percentage over outdoor runs ≥3 km. "
             "100% = open-class world-record pace; ~80% ≈ national class, ~70% ≈ regional. "
@@ -980,7 +980,7 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             yaxis_title=("bpm" if params and params.get("unit") != "m/s" else f"min per {units}"),
             hovermode="x unified",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         # Add interpretation for each threshold chart
         if key == "load.lt_hr":
             st.caption(
@@ -1050,7 +1050,7 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             yaxis_title="predicted time",
             yaxis={"tickvals": tickvals, "ticktext": ticktext},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Daily Garmin race prediction trend from `/racepredictions/daily` "
             "(full ~365-day history, not just today's snapshot). "
@@ -1114,7 +1114,7 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
                 }
             )
         fig.update_layout(title=f"{grain} distance", barmode="stack", hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Stacked bars = weekly distance by sport. Blue = outdoor running, "
             "orange = treadmill, green = cross-training (no distance, stacks at 0). "
@@ -1154,7 +1154,7 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
             hovermode="x unified",
             yaxis_title="hours",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Stacked bars = weekly training TIME (hours) by sport. "
             "Includes cross-training and strength (which have no distance but consume energy). "
@@ -1172,7 +1172,7 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
                 hovermode="x unified",
                 yaxis_title="%",
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             st.caption(
                 "📊 **How to read:** % change in total weekly training hours vs previous week. "
                 "Positive = more time training; negative = less. Large spikes (>30%) warrant attention."
@@ -1187,7 +1187,7 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
             hovermode="x unified",
             yaxis_title="%",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.caption(
             "📊 **How to read:** % change in weekly running+treadmill distance vs previous week. "
             "Positive = more distance; negative = less. The '10% rule' is a rough guideline, not a law."
@@ -1228,7 +1228,7 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
                 }
             )
         fig.update_layout(title="Elevation gain (running)", hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Blue bars = daily elevation gain (route profile). "
             "Orange line = 28-day rolling average (climbing trend). "
@@ -1289,7 +1289,7 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
         "GAP = Grade-Adjusted Pace (compensates for elevation). TE = Garmin Training Effect. "
         "Compare pace/HR/GAP across reps to track fitness progression on the same workout."
     )
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.dataframe(table, width='stretch', hide_index=True)
 
     xs = [a.date for a in reps]
     m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
@@ -1324,7 +1324,7 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
         yaxis2={"overlaying": "y", "side": "right", "title": "bpm"},
         legend={"orientation": "h", "y": 1.12},
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     st.caption(
         "📊 **How to read:** Blue = average pace. Purple dashed = GAP (pace adjusted for hills — "
         "compares effort across hilly/flat routes). Orange = average HR (right axis). "
@@ -1396,7 +1396,7 @@ def render_activities(activities, since, until, units, profile) -> None:
     )
     sel = st.dataframe(
         df.drop(columns=["activity_id"]),
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         on_select="rerun",
         selection_mode="single-row",
