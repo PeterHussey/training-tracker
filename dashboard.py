@@ -176,7 +176,9 @@ def _latest_json_file(cache: Path, pattern: str):
     return _load_json_file(candidates[0])
 
 
-def _persist_selected_fields(store: MetricStore, selected_race: str, selected_volume_agg: str) -> None:
+def _persist_selected_fields(
+    store: MetricStore, selected_race: str, selected_volume_agg: str
+) -> None:
     """Persist user-selected race distance and volume aggregation to the runner profile."""
     profile = store.load_runner_profile()
     if profile is None:
@@ -1505,7 +1507,7 @@ def main() -> None:
         horizontal=True,
         key="volume_agg_widget",
     )
-    _persist_selected_fields(store, profile.selected_race, profile.selected_volume_agg)
+    _persist_selected_fields(store, profile.selected_race, volume_agg)
     st.session_state["selected_kpi_labels"] = selected_kpi_labels
 
     min_d, default_since, max_d = period_bounds([a.date for a in activities])
@@ -1602,7 +1604,7 @@ def main() -> None:
             st.session_state.get("series_by_id"),
         )
     view = st.session_state["view"]
-    windowed = view.windowed(since, until)
+    windowed = view.windowed(since, until, volume_agg)
 
     st.subheader("Current values (within selected range)")
     selected_kpis = st.session_state.get("selected_kpi_labels")

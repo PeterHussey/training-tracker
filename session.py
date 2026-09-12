@@ -176,23 +176,26 @@ class SessionView:
     def metrics(self) -> list[str]:
         return sorted(self.series)
 
-    def windowed(self, since: date, until: date) -> dict[str, pd.Series]:
+    def windowed(
+        self, since: date, until: date, volume_agg: str | None = None
+    ) -> dict[str, pd.Series]:
         """Return series filtered to [since, until].
 
         Weekly rows (params agg == "iso_week") are kept when their week overlaps
         the window (Monday <= until AND Sunday >= since); daily rows by date.
 
         For volume._daily metrics, the series is first resampled to the grain
-        selected by `profile.selected_volume_agg` ("weekly" → W-SUN, "monthly"
-        → ME), then filtered by the window.
+        (`volume_agg`, defaulting to `profile.selected_volume_agg`; "weekly" →
+        W-SUN, "monthly" → ME), then filtered by the window.
         """
+        agg = volume_agg or self.profile.selected_volume_agg
         out = {}
         for metric, s in self.series.items():
             if metric.startswith("volume.") and metric.endswith("_daily"):
                 freq = {
                     "weekly": "W-SUN",
                     "monthly": "ME",
-                }.get(self.profile.selected_volume_agg, "W-SUN")
+                }.get(agg, "W-SUN")
                 is_weekly = freq == "W-SUN"
                 out[metric] = window_series(
                     volume.resample_agg(s, freq), since, until, weekly=is_weekly

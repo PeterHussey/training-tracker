@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from profile import default_profile
 
-from dashboard import CACHE_DIR_NAME, load_cached_trends
+from dashboard import CACHE_DIR_NAME, _persist_selected_fields, load_cached_trends
 from normalize import from_summary
 from pipeline import persist_session_metrics
 from store import MetricStore
@@ -124,6 +124,16 @@ def test_persist_session_metrics_writes_race_trend(tmp_path):
         ("2026-09-03", 1413.0),
     ]
     assert len(store.read_metric("race_full")) == 2
+    store.close()
+
+
+def test_persist_selected_fields_persists_volume_agg(tmp_path):
+    db = tmp_path / "persist_fields.db"
+    store = MetricStore(str(db))
+    _persist_selected_fields(store, selected_race="half", selected_volume_agg="monthly")
+    loaded = store.load_runner_profile()
+    assert loaded.selected_race == "half"
+    assert loaded.selected_volume_agg == "monthly"
     store.close()
 
 

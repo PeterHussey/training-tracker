@@ -409,6 +409,27 @@ def test_volume_monthly_index_is_month_end():
     assert resampled.index[-1] == pd.Timestamp("2026-08-31")
 
 
+def test_windowed_explicit_volume_agg_overrides_profile():
+    """An explicit volume_agg argument to windowed() wins over the profile field
+    (the dashboard passes the live sidebar radio value; the cached view's
+    profile otherwise carries a stale persisted grain)."""
+    profile = RunnerProfile(
+        hrmax=180,
+        hrrest=60,
+        sex="M",
+        birth_year=1986,
+        selected_volume_agg="weekly",
+    )
+    acts = _acts()
+    view = build_session_view(acts, profile, _lt(), _race(), _vo2())
+    since, until = date(2026, 8, 1), date(2026, 8, 31)
+    w = view.windowed(since, until, volume_agg="monthly")
+    daily = w["volume.distance_total_daily"]
+    # month-end index (calendar months) even though profile says weekly
+    assert daily.index[-1] == pd.Timestamp("2026-08-31")
+    assert (daily.index.dayofweek != 0).all() or len(daily) == 1
+
+
 def test_windowed_leaves_non_volume_daily_untouched():
     """A non-volume metric (load.banister) is NOT resampled — returns
     original daily values filtered by date."""
