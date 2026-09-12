@@ -150,12 +150,9 @@ def compute_metric_rows(activities: list[Activity], profile: RunnerProfile,
         rows += rows_from_series("load.edwards", daily["edwards"], "computed")
         rows += rows_from_series("pmc", pmc.ctl_atl_tsb(ban), "computed",
                                  params={"tau_ctl": 42, "tau_atl": 7})
-        acwr_s = acwr.coupled_acwr(ban)
+acwr_s = acwr.coupled_acwr(ban)
         rows += rows_from_series("load.acwr", acwr_s, "computed",
-                                 params={"acute": 7, "chronic": 28, "coupled": True})
-        rows += rows_from_series("load.acwr_pct",
-                                 acwr.history_percentile(acwr_s, window=180)["history_pct"], "computed",
-                                 params={"window": 180})
+                                  params={"acute": 7, "chronic": 28, "coupled": True})
 
     # Cross-training HR load (indoor bike, elliptical, strength...) — no distance,
     # so load is measured from HR only.
@@ -497,10 +494,10 @@ REQUIRED = {
     "load.cs_approx", "load.lt_hr", "load.lt_pace",
     "race_5k", "race_10k", "race_half", "race_full",
 }
-# NOTE: load.acwr/load.acwr_pct are deliberately NOT in REQUIRED — the sample
-# fixture's running span is 13d (< 28d chronic window), so coupled_acwr is
-# all-NaN and nothing emits. e2e_report already asserts acwr presence ⇔
-# running_span >= 28d (its conditional cross-check).
+# NOTE: load.acwr is deliberately NOT in REQUIRED — the sample fixture's
+    # running span is 13d (< 28d chronic window), so coupled_acwr is
+    # all-NaN and nothing emits. e2e_report already asserts acwr presence ⇔
+    # running_span >= 28d (its conditional cross-check).
 
 
 def test_session_view_emits_expected_metrics():
@@ -625,7 +622,6 @@ EXPECTED_METRICS = [
 
 CONDITIONAL_METRICS = {
     "load.acwr": "requires a >=28d outdoor-running span for the chronic window",
-    "load.acwr_pct": "requires a >=28d outdoor-running span for the chronic window",
     "load.banister_cross": "requires cross-training activities with HR data",
     "load.edwards_cross": "requires cross-training activities with HR data",
     "load.lt_hr": "requires a measured lactate threshold in the payload",
@@ -915,7 +911,6 @@ DEFAULT_WINDOW_DAYS = 180
 
 KPI_KEYS = [
     ("load.acwr", "ACWR"),
-    ("load.acwr_pct", "ACWR %"),
     ("pmc.ctl", "CTL"),
     ("pmc.atl", "ATL"),
     ("pmc.tsb", "TSB"),
@@ -1087,15 +1082,8 @@ def render_load_tab(view, windowed, units) -> None:
         fig = go.Figure()
         fig.add_hrect(y0=0.8, y1=1.3, fillcolor="lightgreen", opacity=0.2,
                       line_width=0)
-        fig.add_trace(go.Scatter(x=acwr.index, y=acwr.values, name="ACWR",
+fig.add_trace(go.Scatter(x=acwr.index, y=acwr.values, name="ACWR",
                                  line=dict(color="#2E86AB")))
-        pct = windowed.get("load.acwr_pct")
-        if pct is not None and len(pct):
-            fig.add_trace(go.Scatter(x=pct.index, y=pct.values * 100,
-                                     name="history pct (%)", yaxis="y2",
-                                     line=dict(color="#F18F01", dash="dash")))
-            fig.update_layout(yaxis2=dict(overlaying="y", side="right",
-                                          title="% within last 180d"))
         fig.add_hline(y=0.5, line_dash="dot", line_color="red")
         fig.add_hline(y=1.5, line_dash="dot", line_color="red")
         fig.update_layout(title="Acute:Chronic Workload Ratio (coupled 7/28)",

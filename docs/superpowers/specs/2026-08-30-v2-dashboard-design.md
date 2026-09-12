@@ -91,16 +91,15 @@ of scope).
 
 ## 5. Charts & interpretation context
 
-Tabbed layout with a KPI row of current in-window values on top: ACWR, ACWR%,
-CTL, ATL, TSB, weekly distance, VO2max, LT HR.
+Tabbed layout with a KPI row of current in-window values on top: ACWR,
+    CTL, ATL, TSB, weekly distance, VO2max, LT HR.
 
 - **Tab 1 — Load & Recovery**
   - Daily TRIMP bars (`load.banister`, toggle to Edwards) — caption shows
     Banister params + `hrmax_source`; note "TRIMP is proportional to the chosen
     HRmax" (spec §7.2).
   - PMC lines (`pmc.ctl` / `pmc.atl` / `pmc.tsb`, TSB on secondary axis).
-  - ACWR line with 0.8–1.3 band shading + history percentile
-    (`load.acwr_pct`); note "ACWR banded as injury prediction" (spec §6).
+  - ACWR line with 0.8–1.3 band shading; note "ACWR banded as injury prediction" (spec §6).
   - Cross-training TRIMP (`load.banister_cross` / `load.edwards_cross`) when
     present, `basis=cross_training` flagged.
 - **Tab 2 — Fitness**

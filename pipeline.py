@@ -187,12 +187,6 @@ def compute_metric_rows(
         rows += rows_from_series(
             "load.acwr", acwr_s, "computed", params={"acute": 7, "chronic": 28, "coupled": True}
         )
-        rows += rows_from_series(
-            "load.acwr_pct",
-            acwr.history_percentile(acwr_s, window=180)["history_pct"],
-            "computed",
-            params={"window": 180},
-        )
 
     # VO2max — ingested reference (brief 2.1). Uses the daily trend endpoint
     # /metrics-service/metrics/maxmet/daily/{start}/{end} (vo2MaxPreciseValue,

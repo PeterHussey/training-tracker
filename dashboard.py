@@ -41,7 +41,6 @@ APP_CACHE_DIR = Path("cache") / CACHE_DIR_NAME
 
 KPI_KEYS = [
     ("load.acwr", "ACWR"),
-    ("load.acwr_pct", "ACWR %"),
     ("pmc.ctl", "CTL"),
     ("pmc.atl", "ATL"),
     ("pmc.tsb", "TSB"),
@@ -54,7 +53,6 @@ KPI_KEYS = [
 
 KPI_INTERPRETATIONS = {
     "load.acwr": "Acute:Chronic Workload Ratio (7-day / 28-day). >1.0 = load increasing, <1.0 = load decreasing. Green zone 0.8–1.3 is a heuristic.",
-    "load.acwr_pct": "Your current ACWR as a percentile within the last 180 days. 50th = typical, >80th = unusually high load swing.",
     "pmc.ctl": "Chronic Training Load (fitness). 42-day exponential average of daily TRIMP. Higher = more fitness.",
     "pmc.atl": "Acute Training Load (fatigue). 7-day exponential average of daily TRIMP. Higher = more fatigue.",
     "pmc.tsb": "Training Stress Balance = CTL − ATL. Positive = fresh/form (ready to race); negative = tired.",
@@ -779,20 +777,6 @@ def render_load_tab(view, windowed, units) -> None:
         fig.add_trace(
             go.Scatter(x=acwr.index, y=acwr.values, name="ACWR", line={"color": "#2E86AB"})
         )
-        pct = windowed.get("load.acwr_pct")
-        if pct is not None and len(pct):
-            fig.add_trace(
-                go.Scatter(
-                    x=pct.index,
-                    y=pct.values * 100,
-                    name="History % (percentile)",
-                    yaxis="y2",
-                    line={"color": "#F18F01", "dash": "dash"},
-                )
-            )
-            fig.update_layout(
-                yaxis2={"overlaying": "y", "side": "right", "title": "% within last 180d"}
-            )
         fig.add_hline(y=0.5, line_dash="dot", line_color="red")
         fig.add_hline(y=1.5, line_dash="dot", line_color="red")
         fig.update_layout(
@@ -804,8 +788,7 @@ def render_load_tab(view, windowed, units) -> None:
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "📊 **How to read:** Blue line = ACWR (7-day avg load ÷ 28-day avg load). **1.0 = steady load.** "
-            "Green band 0.8–1.3 = typical 'sweet spot'. Dashed orange = your ACWR percentile in the last 180 days "
-            "(50 = typical, 90 = unusually high load swing). **ACWR measures load swing, not injury prediction.** "
+            "Green band 0.8–1.3 = typical 'sweet spot'. **ACWR measures load swing, not injury prediction.** "
             + context_line(view, "load.acwr")
         )
 

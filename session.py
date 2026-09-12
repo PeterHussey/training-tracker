@@ -41,7 +41,6 @@ EXPECTED_METRICS = [
 
 CONDITIONAL_METRICS = {
     "load.acwr": "requires a >=28-day span of HR-load activities (running + treadmill + cross) for the chronic window",
-    "load.acwr_pct": "requires a >=28-day span of HR-load activities (running + treadmill + cross) for the chronic window",
     "load.banister_cross": "requires cross-training activities with HR data",
     "load.edwards_cross": "requires cross-training activities with HR data",
     "load.banister_treadmill": "requires treadmill activities with HR data",

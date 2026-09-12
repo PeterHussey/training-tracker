@@ -24,8 +24,7 @@
 - load.banister_cross / load.edwards_cross: daily TRIMP from cross-training HR
   (background cross load, never merged into running PMC/ACWR).
 - pmc.ctl / pmc.atl / pmc.tsb: EWMA tau 42/7, outdoor-running only.
-- load.acwr + load.acwr_pct: coupled 7/28 calendar-day ratio + 180d history
-  percentile, outdoor-running only.
+- load.acwr: coupled 7/28 calendar-day ratio, outdoor-running only.
 - fitness.vo2max: ingested per-run Firstbeat estimate.
 - lt_hr / lt_pace: ingested, HR anchored, pace flagged. cs_approx: fastest-mile.
   (Stored under load.lt_hr / load.lt_pace / load.cs_approx.)
@@ -55,7 +54,7 @@
 ## 4. Parameters (config; defaults in RunnerProfile)
 - HRmax, HRrest, sex, birthYear, lthr_manual, hr_zones; Edwards weights {1..5};
   decoupling min-duration 5400 s; gradient 25 m/km; min sessions 6;
-  ACWR windows 7/28; PMC tau 42/7; history window 180.
+  ACWR windows 7/28; PMC tau 42/7.
 - HRmax sources: `configured` (manual), `age_predicted` (default), `observed`
   (recurring max HR on >=2 distinct days over past workouts; one-off spikes are
   discounted as artifacts). `observed`/`configured` never downgrade to age

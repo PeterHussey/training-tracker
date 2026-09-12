@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from metrics.acwr import coupled_acwr, history_percentile
+from metrics.acwr import coupled_acwr
 
 
 def test_constant_load_yields_ratio_one():
@@ -24,26 +24,14 @@ def test_acute_chronic_windows():
     assert day31 == pytest.approx(4000.0 / 3100.0)
 
 
-def test_history_percentile_bounds():
-    idx = pd.date_range("2026-04-01", periods=60, freq="D")
-    tr = pd.Series(100.0, index=idx)
-    acwr = coupled_acwr(tr)
-    hp = history_percentile(acwr, window=30)
-    # all equal -> pandas rank(pct=True) uses pct = avg_rank / nobs; for an
-    # all-equal window of n values, avg_rank = (n+1)/2, so pct = (n+1)/(2n) = 31/60.
-    assert hp["history_pct"].iloc[-1] == pytest.approx((30 + 1) / (2 * 30))
-
-
 def test_training_gap_yields_nan_not_crash():
     """A 28-day zero-load gap makes the chronic window 0. The ratio must be
-    NaN (missing), and history_percentile must not crash the pipeline."""
+    NaN (missing), not inf."""
     idx = pd.date_range("2026-04-01", periods=90, freq="D")
     tr = pd.Series([100.0] * 30 + [0.0] * 30 + [100.0] * 30, index=idx)
     acwr = coupled_acwr(tr)
     assert acwr.dtype == float
-    hp = history_percentile(acwr, window=30)
     # mid-gap with residual chronic load: defined 0.0 (full detraining)
-    assert hp.loc["2026-05-15", "acwr"] == 0.0
+    assert acwr.loc["2026-05-15"] == 0.0
     # deep gap with an all-zero chronic window: NaN (missing), not inf
-    assert pd.isna(hp.loc["2026-05-29", "acwr"])
-    assert hp["history_pct"].notna().any()
+    assert pd.isna(acwr.loc["2026-05-29"])

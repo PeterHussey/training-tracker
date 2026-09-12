@@ -108,7 +108,6 @@ docs/
 
 **`metrics/acwr.py`**
 - `coupled_acwr(daily: pd.Series, acute=7, chronic=28) -> pd.Series`
-- `history_percentile(acwr: pd.Series, window=180) -> pd.DataFrame` — columns `acwr, history_pct`.
 
 **`metrics/decoupling.py`**
 - `decoupling_percent(hr: list[float], speed: list[float]) -> float`
@@ -1417,7 +1416,7 @@ git commit -m "feat(v2): CTL/ATL/TSB performance-management chart"
 
 **Interfaces:**
 - Consumes: daily load `pd.Series` (TRIMP or distance).
-- Produces: `coupled_acwr`, `history_percentile` (signatures above).
+- Produces: `coupled_acwr` (signature above).
 
 - [ ] **Step 1: Write the failing ACWR tests**
 
@@ -1426,7 +1425,7 @@ git commit -m "feat(v2): CTL/ATL/TSB performance-management chart"
 import pandas as pd
 import pytest
 
-from metrics.acwr import coupled_acwr, history_percentile
+from metrics.acwr import coupled_acwr
 
 
 def test_constant_load_yields_ratio_one():
@@ -1449,12 +1448,17 @@ def test_acute_chronic_windows():
     assert day31 == pytest.approx(4000.0 / 3100.0)
 
 
-def test_history_percentile_bounds():
-    idx = pd.date_range("2026-04-01", periods=60, freq="D")
-    tr = pd.Series(100.0, index=idx)
+def test_training_gap_yields_nan_not_crash():
+    """A 28-day zero-load gap makes the chronic window 0. The ratio must be
+    NaN (missing), not inf."""
+    idx = pd.date_range("2026-04-01", periods=90, freq="D")
+    tr = pd.Series([100.0] * 30 + [0.0] * 30 + [100.0] * 30, index=idx)
     acwr = coupled_acwr(tr)
-    hp = history_percentile(acwr, window=30)
-    assert hp["history_pct"].iloc[-1] == pytest.approx((30 + 1) / (2 * 30))  # all equal -> pandas avg-rank pct = (n+1)/2n
+    assert acwr.dtype == float
+    # mid-gap with residual chronic load: defined 0.0 (full detraining)
+    assert acwr.loc["2026-05-15"] == 0.0
+    # deep gap with an all-zero chronic window: NaN (missing), not inf
+    assert pd.isna(acwr.loc["2026-05-29"])
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -1468,8 +1472,8 @@ Expected: `ModuleNotFoundError`.
 """Acute:Chronic workload ratio — a load-SWING monitor, never an injury gate.
 
 Research brief 1.1: population ACWR bands are not validated for individual
-running risk (Nakaoka found an inverse association). Use only individual-history
-percentiles, and flag rapid change rather than absolute bands.
+running risk (Nakaoka found an inverse association). Treat as a monitoring
+signal for load swing, never as a deterministic risk gate.
 """
 import pandas as pd
 
@@ -1484,20 +1488,17 @@ def coupled_acwr(daily: pd.Series, acute: int = 7, chronic: int = 28) -> pd.Seri
     s = daily.sort_index()
     acute_avg = s.rolling(acute, min_periods=acute).sum() / acute
     chronic_avg = s.rolling(chronic, min_periods=chronic).sum() / chronic
-    ratio = acute_avg / chronic_avg.replace(0, pd.NA)
+    # NaN (not pd.NA): keeps the float dtype so downstream rolling ops
+    # keep working across training gaps.
+    ratio = acute_avg / chronic_avg.replace(0, float("nan"))
     ratio.name = "acwr"
     return ratio
-
-
-def history_percentile(acwr: pd.Series, window: int = 180) -> pd.DataFrame:
-    pct = acwr.rolling(window, min_periods=20).rank(pct=True)
-    return pd.DataFrame({"acwr": acwr, "history_pct": pct})
 ```
 
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `cd v2 && ../.venv/bin/python -m pytest tests/test_acwr.py -v`
-Expected: `3 passed`. The history-percentile pin is intentionally `(window+1)/(2*window)` (= 31/60), not `0.5`: pandas `rolling().rank(pct=True)` averages tied ranks ((1+n)/2) then divides by n obs. If a stale rank still appears due to NaN-leading windows, confirm the final value on the max-window rank at the last point (uses `min_periods=20` so only late points have ranks).
+Expected: `3 passed`. The gap test pins NaN (not inf) for an all-zero chronic window and 0.0 for a partial window, and asserts the float dtype holds.
 
 - [ ] **Step 5: Commit**
 
@@ -2325,12 +2326,9 @@ def run_pipeline(activities: list[Activity], profile: RunnerProfile, out_db,
         rows += rows_from_series("load.edwards", daily["edwards"], "computed")
         rows += rows_from_series("pmc", pmc.ctl_atl_tsb(ban), "computed",
                                  params={"tau_ctl": 42, "tau_atl": 7})
-        acwr_s = acwr.coupled_acwr(ban)
+acwr_s = acwr.coupled_acwr(ban)
         rows += rows_from_series("load.acwr", acwr_s, "computed",
-                                 params={"acute": 7, "chronic": 28, "coupled": True})
-        rows += rows_from_series("load.acwr_pct",
-                                 acwr.history_percentile(acwr_s, window=180)["history_pct"], "computed",
-                                 params={"window": 180})
+                                  params={"acute": 7, "chronic": 28, "coupled": True})
 
     # VO2max — ingested reference (brief 2.1)
     rows += rows_from_series("fitness.vo2max", vo2max.daily_vo2max(activities), "garmin_ingested",
@@ -2423,8 +2421,7 @@ Write the document with this content (fill from the plan decisions; no TBDs):
   rolling4wk, wow_pct.
 - load.banister / load.edwards: daily TRIMP, outdoor-running only.
 - pmc.ctl / pmc.atl / pmc.tsb: EWMA tau 42/7, outdoor-running only.
-- load.acwr + load.acwr_pct: coupled 7/28 calendar-day ratio + 180d history
-  percentile, outdoor-running only.
+- load.acwr: coupled 7/28 calendar-day ratio, outdoor-running only.
 - fitness.vo2max: ingested per-run Firstbeat estimate.
 - lt_hr / lt_pace: ingested, HR anchored, pace flagged. cs_approx: fastest-mile.
 - race_5k / race_10k / race_half / race_full: ingested, marathon flagged.

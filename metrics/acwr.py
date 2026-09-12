@@ -1,8 +1,8 @@
 """Acute:Chronic workload ratio — a load-SWING monitor, never an injury gate.
 
 Research brief 1.1: population ACWR bands are not validated for individual
-running risk (Nakaoka found an inverse association). Use only individual-history
-percentiles, and flag rapid change rather than absolute bands.
+running risk (Nakaoka found an inverse association). Treat as a monitoring
+signal for load swing, never as a deterministic risk gate.
 """
 
 import pandas as pd
@@ -19,12 +19,7 @@ def coupled_acwr(daily: pd.Series, acute: int = 7, chronic: int = 28) -> pd.Seri
     acute_avg = s.rolling(acute, min_periods=acute).sum() / acute
     chronic_avg = s.rolling(chronic, min_periods=chronic).sum() / chronic
     # NaN (not pd.NA): keeps the float dtype so downstream rolling ops
-    # (e.g. history_percentile rank) keep working across training gaps.
+    # keep working across training gaps.
     ratio = acute_avg / chronic_avg.replace(0, float("nan"))
     ratio.name = "acwr"
     return ratio
-
-
-def history_percentile(acwr: pd.Series, window: int = 180) -> pd.DataFrame:
-    pct = acwr.rolling(window, min_periods=20).rank(pct=True)
-    return pd.DataFrame({"acwr": acwr, "history_pct": pct})
