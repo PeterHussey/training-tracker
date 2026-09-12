@@ -684,6 +684,34 @@ def test_volume_tab_no_rollup_pane(monkeypatch):
     assert not any("period" in str(f) for f in frames)
 
 
+def test_volume_tab_duration_rolling_trace_is_smoothed(monkeypatch):
+    view = _graded_view()
+    windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    acts = [
+        Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
+        Activity(2, "running", date(2026, 1, 17), 0, 10000.0, 2000.0, 2000.0, 150.0, 170.0),
+    ]
+    d.render_volume_tab(acts, view, windowed, "km", "weekly")
+    figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
+    dur_figs = [
+        f
+        for f in figs
+        if "duration (hours)" in str(getattr(f.layout.title, "text", ""))
+    ]
+    assert dur_figs, "no duration chart rendered"
+    fig = dur_figs[0]
+    traces = {t.name: list(t.y) for t in fig.data}
+    assert "rolling 4wk" in traces, "rolling 4wk trace missing"
+    raw = traces["running"]
+    roll = traces["rolling 4wk"]
+    assert len(raw) >= 2, "need multiple weeks to show smoothing"
+    assert roll != raw, (
+        "rolling 4wk trace equals raw duration bars — fix: use volume.rolling_4wk()"
+    )
+
+
 def test_render_activities_best_mile_and_graded(monkeypatch):
     acts = [
         Activity(

@@ -1133,7 +1133,8 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
         fig = go.Figure()
         for g, s in hours.items():
             fig.add_trace(go.Bar(x=s.index, y=s.values, name=g))
-        roll = windowed.get("volume.duration_total_daily")
+        total_hrs = windowed.get("volume.duration_total_daily")
+        roll = volume.rolling_4wk(total_hrs) if total_hrs is not None else None
         if roll is not None and len(roll):
             fig.add_trace(
                 go.Scatter(
