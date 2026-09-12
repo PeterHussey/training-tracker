@@ -441,6 +441,9 @@ class _FakeCol:
     def metric(self, *args, **kwargs):
         self._calls.append(("metric", args))
 
+    def caption(self, *args, **kwargs):
+        self._calls.append(("caption", args))
+
 
 class _FakeSt:
     """Minimal streamlit stub: records calls, returns falsy for widgets."""

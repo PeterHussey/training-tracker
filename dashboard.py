@@ -52,6 +52,19 @@ KPI_KEYS = [
     ("load.decoupling_mean", "Aerobic decoupling"),
 ]
 
+KPI_INTERPRETATIONS = {
+    "load.acwr": "Acute:Chronic Workload Ratio (7-day / 28-day). >1.0 = load increasing, <1.0 = load decreasing. Green zone 0.8–1.3 is a heuristic.",
+    "load.acwr_pct": "Your current ACWR as a percentile within the last 180 days. 50th = typical, >80th = unusually high load swing.",
+    "pmc.ctl": "Chronic Training Load (fitness). 42-day exponential average of daily TRIMP. Higher = more fitness.",
+    "pmc.atl": "Acute Training Load (fatigue). 7-day exponential average of daily TRIMP. Higher = more fatigue.",
+    "pmc.tsb": "Training Stress Balance = CTL − ATL. Positive = fresh/form (ready to race); negative = tired.",
+    "volume.distance_total": "Weekly running + treadmill distance. Stacked by sport in Volume tab.",
+    "fitness.vo2max": "Garmin Firstbeat VO2max estimate (mL/kg/min). ~5% error; underestimates at high levels.",
+    "load.lt_hr": "Lactate threshold heart rate from Garmin (bpm). ~7% error. Anchors training zones.",
+    "load.banister": "Daily Banister TRIMP (combined running + treadmill + cross-training HR load). Feeds PMC/ACWR.",
+    "load.decoupling_mean": "Mean aerobic decoupling across ≥6 route-matched 90-min flat runs. Positive = cardiac drift (HR rises vs pace).",
+}
+
 # KPI fallback sources: primary -> (fallback key, label suffix). Used when the
 # primary series is empty in the selected window. The suffix keeps the tile
 # honest about provenance (measured Garmin record vs computed estimate).
@@ -513,6 +526,13 @@ def _anchor_cards(windowed, view, units) -> None:
     Cards read the unfiltered view (anchors are all-time bests); dots read
     the period-windowed series (in-window qualifier context).
     """
+    st.markdown(
+        """
+        **LTHR anchors (best-effort)** — When Garmin's lactate threshold is missing, these are your
+        best 20-min and 30-min sustained efforts (outdoor running, HR + pace).
+        The dots below show all qualifying efforts in the current window for context.
+        """
+    )
     anchors = [
         (
             "load.lt_hr_best20",
@@ -543,6 +563,8 @@ def _anchor_cards(windowed, view, units) -> None:
 
         card_text = f"{pt['proxy_hr']:.0f} bpm ({pt['raw_hr']:.0f} raw @ {pace_str}, {pt['date']})"
         st.metric(f"LTHR anchor {label}", card_text)
+        st.caption(f"📊 **How to read:** Your best {label} sustained effort. Proxy HR = adjusted for HRmax source. "
+                   f"Raw HR = actual recorded. Pace = average for that effort. Date = when it occurred.")
 
         # Qualifier dots: faint scatter of all qualifying efforts.
         # (Interval/sustained encoding was tried and reverted: the device
@@ -586,7 +608,7 @@ def _anchor_cards(windowed, view, units) -> None:
                 )
             )
             fig.update_layout(
-                title=f"Qualifier dots — {label} window",
+                title=f"Qualifier dots — {label} window (all qualifying efforts)",
                 yaxis_title="bpm",
                 yaxis2={
                     "overlaying": "y",
@@ -597,7 +619,12 @@ def _anchor_cards(windowed, view, units) -> None:
                 showlegend=False,
             )
             st.plotly_chart(fig, use_container_width=True)
-            st.caption(context_line(view, dots_hr_key))
+            st.caption(
+                f"📊 **How to read:** Faint dots = all {label} qualifying efforts in the current window. "
+                f"Left axis (blue) = HR. Right axis (orange) = pace. "
+                f"Cluster = consistency. Outliers = anomalies. "
+                + context_line(view, dots_hr_key)
+            )
 
     if not has_any:
         st.write(
@@ -649,14 +676,29 @@ def render_kpis(windowed, view, units, selected_kpi_labels: list[str] | None = N
                 key, label, val = fb_key, label + suffix, fb_val
         if val is None:
             col.metric(label, "—")
+            col.caption(KPI_INTERPRETATIONS.get(key, ""))
             continue
         if key == "volume.distance_total":
             label = f"Weekly {'mi' if units in ('miles', 'imperial') else 'km'}"
         meta = (view.context.get(key) or {}).get("params", {})
         col.metric(label, _fmt(val, meta, units))
+        interpretation = KPI_INTERPRETATIONS.get(key)
+        if interpretation:
+            col.caption(interpretation)
 
 
 def render_load_tab(view, windowed, units) -> None:
+    st.markdown(
+        """
+        **Load & Recovery** — How hard you've trained and how recovered you are.
+
+        - **Daily TRIMP** = Banister heart-rate load per day (running + treadmill + cross-training with HR). Stacked by sport.
+        - **PMC (CTL/ATL/TSB)** = Fitness (42-day avg), Fatigue (7-day avg), and Form (CTL − ATL) from combined TRIMP.
+        - **ACWR** = Acute (7-day) / Chronic (28-day) load ratio. Measures load *swing*, not injury risk.
+        - **Longest Safe Run** = Today's longest run vs. your 30-day max. Ratios > 1.1 = elevated injury risk.
+        """
+    )
+
     sport_series = [
         ("load.banister_running", "Outdoor running"),
         ("load.banister_treadmill", "Treadmill"),
@@ -688,8 +730,10 @@ def render_load_tab(view, windowed, units) -> None:
         )
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "Stacked across running + treadmill + cross-training (HR intensity only). "
-            "The sum feeds the PMC/ACWR windows below. " + context_line(view, "load.banister")
+            "📊 **How to read:** Each bar = one day's HR-based training load. Stacked = outdoor running (blue) + "
+            "treadmill (orange) + cross-training (green). The sum feeds the PMC/ACWR charts below. "
+            "Cross-training uses HR intensity only (no distance). "
+            + context_line(view, "load.banister")
         )
     else:
         s = windowed.get("load.banister")
@@ -703,12 +747,12 @@ def render_load_tab(view, windowed, units) -> None:
         st.write("PMC chart needs combined daily load history in this window.")
     else:
         fig = go.Figure()
-        for key, name, color in (("pmc.ctl", "CTL", "#2E86AB"), ("pmc.atl", "ATL", "#A23B72")):
+        for key, name, color in (("pmc.ctl", "CTL (fitness)", "#2E86AB"), ("pmc.atl", "ATL (fatigue)", "#A23B72")):
             t = windowed.get(key)
             if t is not None and len(t):
                 fig.add_trace(go.Scatter(x=t.index, y=t.values, name=name, line={"color": color}))
         fig.add_trace(
-            go.Scatter(x=tsb.index, y=tsb.values, name="TSB", yaxis="y2", line={"color": "#F18F01"})
+            go.Scatter(x=tsb.index, y=tsb.values, name="TSB (form)", yaxis="y2", line={"color": "#F18F01"})
         )
         fig.add_hline(y=0, line_dash="dot", line_color="gray")
         fig.update_layout(
@@ -720,8 +764,10 @@ def render_load_tab(view, windowed, units) -> None:
         )
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "TSB = CTL - ATL; positive = fresh/form. Combined load windows. "
-            "tau 42/7 days. " + context_line(view, "pmc.ctl")
+            "📊 **How to read:** Blue = CTL (42-day rolling fitness). Purple = ATL (7-day rolling fatigue). "
+            "Orange = TSB = CTL − ATL. **Above zero = fresh/form (good for racing). Below zero = tired.** "
+            "CTL rises slowly with consistent training; ATL spikes with hard weeks. "
+            + context_line(view, "pmc.ctl")
         )
 
     acwr = windowed.get("load.acwr")
@@ -739,7 +785,7 @@ def render_load_tab(view, windowed, units) -> None:
                 go.Scatter(
                     x=pct.index,
                     y=pct.values * 100,
-                    name="history pct (%)",
+                    name="History % (percentile)",
                     yaxis="y2",
                     line={"color": "#F18F01", "dash": "dash"},
                 )
@@ -757,9 +803,10 @@ def render_load_tab(view, windowed, units) -> None:
         )
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "Green 0.8-1.3 is a heuristic. ACWR measures load SWING, not "
-            "injury prediction. Computed from combined running+treadmill+cross "
-            "load. " + context_line(view, "load.acwr")
+            "📊 **How to read:** Blue line = ACWR (7-day avg load ÷ 28-day avg load). **1.0 = steady load.** "
+            "Green band 0.8–1.3 = typical 'sweet spot'. Dashed orange = your ACWR percentile in the last 180 days "
+            "(50 = typical, 90 = unusually high load swing). **ACWR measures load swing, not injury prediction.** "
+            + context_line(view, "load.acwr")
         )
 
     max_ratio = windowed.get("injury.max_run_ratio")
@@ -800,14 +847,26 @@ def render_load_tab(view, windowed, units) -> None:
         else:
             st.success(f"Latest run is {latest:.0%} of your 30-day longest — within safe range.")
         st.caption(
-            "Ratio = run distance / rolling 30-day max distance (running + treadmill). "
-            "Green < 110% = safe, orange 110-130% = elevated risk, red > 130% = high risk. "
+            "📊 **How to read:** Ratio = today's longest run distance ÷ your longest run in the past 30 days "
+            "(running + treadmill). **Green < 110% = safe. Orange 110–130% = elevated risk. Red > 130% = high risk.** "
             "Study found 64% injury risk increase above 110%, roughly doubling at 2x. "
             + context_line(view, "injury.max_run_ratio")
         )
 
 
 def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None:
+    st.markdown(
+        """
+        **Fitness** — Your physiological metrics and race predictions.
+
+        - **Aerobic decoupling** = Cardiac drift (HR vs pace) on long flat runs. Needs ≥6 sessions; single values are noise.
+        - **VO2max** = Garmin Firstbeat daily estimate. ~5% error; underestimates at high levels (≥60 mL/kg/min).
+        - **Thresholds** = Lactate threshold HR/pace from Garmin + critical velocity (fastest mile).
+        - **LTHR anchors** = Best-effort 20/30-min LT estimates when Garmin LT is missing.
+        - **Race predictions** = Garmin daily trend for 5K/10K/Half/Full. 5K/10K/Half most trustworthy.
+        """
+    )
+
     dec = windowed.get("load.decoupling")
     dec_mean = windowed.get("load.decoupling_mean")
     if (dec is None or dec.empty) and (dec_mean is None or dec_mean.empty):
@@ -820,7 +879,7 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
                     x=dec.index,
                     y=dec.values * 100,
                     mode="lines+markers",
-                    name="per-run decoupling",
+                    name="Per-run decoupling",
                 )
             )
         if dec_mean is not None and len(dec_mean):
@@ -829,7 +888,7 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
                     x=dec_mean.index,
                     y=dec_mean.values * 100,
                     mode="lines+markers",
-                    name="route-cluster mean",
+                    name="Route-cluster mean",
                 )
             )
         fig.update_layout(
@@ -842,13 +901,16 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
         if dec_mean is None or dec_mean.empty:
             n = len(dec) if dec is not None else 0
             st.caption(
-                f"{n}/6 route-matched sessions — single-run values are noise; "
-                "the trend appears at 6. " + context_line(view, "load.decoupling")
+                f"📊 **How to read:** Blue dots = individual run decoupling (HR/pace drift in 2nd half vs 1st half). "
+                f"Positive % = cardiac drift (HR rising relative to pace). "
+                f"{n}/6 route-matched sessions — **single-run values are noise**; the trend appears at ≥6. "
+                + context_line(view, "load.decoupling")
             )
         else:
             st.caption(
-                "Mean across route-matched flat 90-min+ sessions. "
-                "Positive = cardiac drift. " + context_line(view, "load.decoupling_mean")
+                "📊 **How to read:** Orange line = mean decoupling across route-matched flat routes (≥90 min). "
+                "Positive = cardiac drift (fatigue marker). Aggregated over ≥6 sessions for reliability. "
+                + context_line(view, "load.decoupling_mean")
             )
 
     vo2 = windowed.get("fitness.vo2max")
@@ -862,8 +924,9 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
         fig.update_layout(title="VO2max (Firstbeat estimate, daily trend)", hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "Daily trend from Garmin `/maxmet/daily` (vo2MaxPreciseValue). "
-            "Firstbeat estimate ~5% error, underestimates >=60 mL/kg/min. "
+            "📊 **How to read:** Daily Garmin Firstbeat VO2max estimate (mL/kg/min). "
+            "**~5% error; underestimates ≥60 mL/kg/min.** Never recomputed here — taken directly from Garmin. "
+            "Trend direction matters more than absolute value. "
             + context_line(view, "fitness.vo2max")
         )
 
@@ -898,7 +961,22 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             hovermode="x unified",
         )
         st.plotly_chart(fig, use_container_width=True)
-        st.caption(context_line(view, key))
+        # Add interpretation for each threshold chart
+        if key == "load.lt_hr":
+            st.caption(
+                "📊 **How to read:** Garmin's lactate threshold HR estimate (bpm). ~7% error. "
+                "Anchors your HR training zones. " + context_line(view, key)
+            )
+        elif key == "load.lt_pace":
+            st.caption(
+                "📊 **How to read:** Garmin's lactate threshold pace estimate. Can overestimate 20–26%. "
+                "Use LTHR anchors below for best-effort pace validation. " + context_line(view, key)
+            )
+        elif key == "load.cs_approx":
+            st.caption(
+                "📊 **How to read:** Critical velocity approximation from your fastest mile. "
+                "Represents sustainable pace for ~30–40 min. " + context_line(view, key)
+            )
 
     # Best-effort LTHR anchor cards + qualifier dots
     _anchor_cards(windowed, view, units)
@@ -954,10 +1032,11 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
         )
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "Daily history from `/racepredictions/daily` — each distance "
-            "trends over the year, so a single refresh shows the prediction "
-            "time series, not just today's snapshot. "
-            "5K/10K/half are the trustworthy end; marathon is the least trustworthy prediction."
+            "📊 **How to read:** Daily Garmin race prediction trend from `/racepredictions/daily` "
+            "(full ~365-day history, not just today's snapshot). "
+            "**5K/10K/Half = trustworthy. Marathon = least trustworthy.** "
+            "Step-line (HV) shows when predictions change. "
+            "Hover for exact predicted time."
         )
     else:
         st.write(
@@ -967,6 +1046,17 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
 
 
 def render_volume_tab(activities, view, windowed, units) -> None:
+    st.markdown(
+        """
+        **Volume & Terrain** — How much you've run and the terrain profile.
+
+        - **Weekly distance** = Running + treadmill distance by week (cross-training has no distance, shows at 0).
+        - **Weekly duration (hours)** = Time spent training across ALL sports (running + treadmill + cross + strength).
+        - **Week-over-week changes** = % change in distance and duration week to week.
+        - **Elevation gain** = Daily climbing (route context only, not a risk metric).
+        """
+    )
+
     weeks = {g: windowed.get(f"volume.distance_{g}") for g in ("running", "treadmill", "cross")}
     weeks = {g: s for g, s in weeks.items() if s is not None and len(s)}
     if weeks:
@@ -994,8 +1084,9 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         fig.update_layout(title="Weekly distance", barmode="stack", hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "Stacked by sport. Cross-training has no distance and stacks "
-            "at 0; see the time-volume chart for its workload. "
+            "📊 **How to read:** Stacked bars = weekly distance by sport. Blue = outdoor running, "
+            "orange = treadmill, green = cross-training (no distance, stacks at 0). "
+            "Orange line = 4-week rolling average (smoothed trend). "
             + context_line(view, "volume.distance_total")
         )
     else:
@@ -1032,8 +1123,10 @@ def render_volume_tab(activities, view, windowed, units) -> None:
         )
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "Time-anchored workload: running + treadmill + cross-training + strength. "
-            "Cross-training and strength contribute time even with no distance. "
+            "📊 **How to read:** Stacked bars = weekly training TIME (hours) by sport. "
+            "Includes cross-training and strength (which have no distance but consume energy). "
+            "Orange line = 4-week rolling average. Compare with distance chart above to see "
+            "if you're getting similar time from non-running activities. "
             + context_line(view, "volume.duration_total")
         )
 
@@ -1045,6 +1138,10 @@ def render_volume_tab(activities, view, windowed, units) -> None:
                 title="Week-over-week duration change", hovermode="x unified", yaxis_title="%"
             )
             st.plotly_chart(fig, use_container_width=True)
+            st.caption(
+                "📊 **How to read:** % change in total weekly training hours vs previous week. "
+                "Positive = more time training; negative = less. Large spikes (>30%) warrant attention."
+            )
 
     wow = windowed.get("volume.wow_pct_total")
     if wow is not None and len(wow):
@@ -1054,6 +1151,10 @@ def render_volume_tab(activities, view, windowed, units) -> None:
             title="Week-over-week distance change", hovermode="x unified", yaxis_title="%"
         )
         st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            "📊 **How to read:** % change in weekly running+treadmill distance vs previous week. "
+            "Positive = more distance; negative = less. The '10% rule' is a rough guideline, not a law."
+        )
 
     gain = windowed.get("elevation.daily_gain_running")
     if gain is not None and len(gain):
@@ -1091,7 +1192,12 @@ def render_volume_tab(activities, view, windowed, units) -> None:
             )
         fig.update_layout(title="Elevation gain (running)", hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
-        st.caption("Elevation is route context, not a risk metric.")
+        st.caption(
+            "📊 **How to read:** Blue bars = daily elevation gain (route profile). "
+            "Orange line = 28-day rolling average (climbing trend). "
+            "Dashed blue = gain per km/mi (hilliness normalized by distance). "
+            "**Elevation is route context, not a risk metric.**"
+        )
     else:
         st.write("No elevation data in this window.")
 
@@ -1141,6 +1247,11 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
             }
         )
     st.subheader(f"Repeated workout **{code}**")
+    st.caption(
+        "📊 **How to read:** Table shows every repetition of this workout (same 80/20 code), oldest first. "
+        "GAP = Grade-Adjusted Pace (compensates for elevation). TE = Garmin Training Effect. "
+        "Compare pace/HR/GAP across reps to track fitness progression on the same workout."
+    )
     st.dataframe(table, use_container_width=True, hide_index=True)
 
     xs = [a.date for a in reps]
@@ -1177,9 +1288,23 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
         legend={"orientation": "h", "y": 1.12},
     )
     st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        "📊 **How to read:** Blue = average pace. Purple dashed = GAP (pace adjusted for hills — "
+        "compares effort across hilly/flat routes). Orange = average HR (right axis). "
+        "Improving fitness = pace/GAP gets faster at same or lower HR."
+    )
 
 
 def render_activities(activities, since, until, units) -> None:
+    st.markdown(
+        """
+        **Activities** — Your raw activity log. Click a row to compare repetitions of the same 80/20 workout.
+
+        - **GAP** = Grade-Adjusted Pace (compensates for elevation).
+        - **TE** = Garmin Training Effect (aerobic/anaerobic).
+        - **VO2max** = Per-run Firstbeat estimate.
+        """
+    )
     rows = []
     for a in activities:
         if not (since <= a.date <= until):
@@ -1214,7 +1339,8 @@ def render_activities(activities, since, until, units) -> None:
         st.write("No activities in this window.")
         return
     df = df.sort_values("date", ascending=False).reset_index(drop=True)
-    st.caption("Select a row to compare repeated workouts (same 80/20 plan code).")
+    st.caption("📊 **How to read:** Click any row to see all repetitions of that workout (same 80/20 code) "
+               "and track your progression over time.")
     sel = st.dataframe(
         df.drop(columns=["activity_id"]),
         use_container_width=True,
@@ -1436,7 +1562,10 @@ def main() -> None:
     with tab_acts:
         render_activities(activities, since, until, units)
 
-    with st.expander("How to read this dashboard"):
+    with st.expander("Technical Reference", expanded=False):
+        st.markdown("""
+        **Detailed technical notes, formulas, and limitations.** The charts above have inline "How to read" captions — this section is for deep dives.
+        """)
         for line in GLOSSARY:
             st.markdown(f"- {line}")
 
