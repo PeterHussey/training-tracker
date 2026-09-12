@@ -466,3 +466,80 @@ def test_pipeline_no_cluster_mean_below_six_sessions():
     )
     assert len([r for r in rows if r["metric"] == "load.decoupling"]) == 3
     assert not [r for r in rows if r["metric"] == "load.decoupling_mean"]
+
+
+def test_pipeline_emits_daily_volume_rows(tmp_path):
+    """Daily distance and duration rows are emitted alongside weekly rows."""
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    db = tmp_path / "metrics_daily.db"
+    run_pipeline(
+        acts, default_profile(age=40, hrrest=60, sex="M"), str(db)
+    )
+    store = MetricStore(str(db))
+    # Daily distance total exists
+    daily_dist = store.read_metric("volume.distance_total_daily")
+    assert daily_dist, "volume.distance_total_daily missing"
+    # Daily duration total exists
+    daily_dur = store.read_metric("volume.duration_total_daily")
+    assert daily_dur, "volume.duration_total_daily missing"
+    # Weekly distance total still exists (unchanged)
+    weekly_dist = store.read_metric("volume.distance_total")
+    assert weekly_dist, "volume.distance_total weekly missing"
+    # Weekly duration total still exists (unchanged)
+    weekly_dur = store.read_metric("volume.duration_total")
+    assert weekly_dur, "volume.duration_total weekly missing"
+    store.close()
+
+
+def test_pipeline_daily_volume_consistency_with_weekly(tmp_path):
+    """Daily volume rows sum to the corresponding weekly row for the same week."""
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    db = tmp_path / "metrics_consistency.db"
+    run_pipeline(
+        acts, default_profile(age=40, hrrest=60, sex="M"), str(db)
+    )
+    store = MetricStore(str(db))
+    # Get weekly distance total rows
+    weekly_rows = store.read_metric("volume.distance_total")
+    # Group weekly rows by date, find a week with data
+    for row in weekly_rows:
+        row_date = pd.Timestamp(row["date"])
+        week_start = row_date - pd.Timedelta(days=row_date.weekday())  # Monday
+        week_end = week_start + pd.Timedelta(days=6)  # Sunday
+        # Sum daily distance rows that fall in this week
+        daily_rows = store.read_metric("volume.distance_total_daily")
+        week_daily_sum = sum(
+            r["value"] for r in daily_rows
+            if week_start <= pd.Timestamp(r["date"]) <= week_end
+        )
+        # The weekly value should equal the sum of its daily components
+        assert (
+            row["value"] == pytest.approx(week_daily_sum)
+        ), f"Weekly distance {row['value']} != daily sum {week_daily_sum} for week starting {week_start.date()}"
+    store.close()
+
+
+def test_pipeline_daily_volume_strength_absent_distance_present_duration():
+    """strength group: distance_daily is empty (no running), duration_daily exists."""
+    data = json.loads(FIXTURE.read_text())
+    acts = [from_summary(a) for a in data]
+    # Filter to only strength activities
+    strength_acts = [a for a in acts if a.sport == "strength"]
+    assert strength_acts, "Need strength activities for this test"
+    rows = compute_metric_rows(
+        strength_acts, default_profile(age=40, hrrest=60, sex="M")
+    )
+    metrics = {r["metric"] for r in rows}
+    # distance_strength_daily should be absent (no running distance for strength)
+    assert "volume.distance_strength_daily" not in metrics, (
+        "distance_strength_daily should be absent for strength-only activities"
+    )
+    # duration_strength_daily should be present
+    assert "volume.duration_strength_daily" in metrics, (
+        "duration_strength_daily should be present for strength activities"
+    )
+
+
+

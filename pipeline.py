@@ -71,6 +71,16 @@ def compute_metric_rows(
             "computed",
             params={"agg": "iso_week", "unit": "h"},
         )
+        # Daily source rows (new source of truth, alongside existing weekly rows)
+        if not daily.empty:
+            rows += rows_from_series(
+                f"volume.distance_{group}_daily", daily,
+                "computed", params={"agg": "daily", "unit": "km"},
+            )
+        rows += rows_from_series(
+            f"volume.duration_{group}_daily", daily_hours,
+            "computed", params={"agg": "daily", "unit": "h"},
+        )
 
     # Duration rolling + week-over-week for the total (mirrors the distance chart
     # overlay/change views). Duration feeds all sports, including no-distance
