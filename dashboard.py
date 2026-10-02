@@ -12,6 +12,8 @@ this module is a thin view.
 
 import json
 import os
+import sys
+import time
 from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
@@ -25,7 +27,7 @@ from gateway import GarminGateway
 from metrics import volume
 from metrics.gap import K as GAP_K
 from metrics.threshold import parse_details_series
-from normalize import from_summary
+from normalize import from_summary, parse_rpe_feel, parse_weather
 from pipeline import persist_session_metrics
 from session import (
     _fmt,
@@ -42,6 +44,8 @@ st.set_page_config(page_title="Training Tracker", layout="wide")
 DB_PATH = os.environ.get("TRAINING_DB", str(Path(__file__).parent / "data" / "training.sqlite"))
 FETCH_DAYS = 365
 FETCH_TIMEOUT = 90  # hard cap on the whole Garmin refresh (auth + fetches)
+BACKFILL_CALL_TIMEOUT_S = 8  # per summary/weather fetch during RPE/weather backfill
+BACKFILL_RESERVE_S = 15  # stop RPE/weather backfill this many seconds before FETCH_TIMEOUT
 DEFAULT_WINDOW_DAYS = 180
 PERIOD_KEY = "period"
 CACHE_DIR_NAME = "app_cache"
@@ -236,6 +240,7 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
             100-activity per-page limit.
     """
     end = date.today()
+    started = time.monotonic()  # anchors the backfill budget to the 90s guard
     store = get_store()
     if fetch_mode == "historical":
         earliest = store.earliest_activity_date()
@@ -272,7 +277,74 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
         # Incremental mode with no new activities is a normal no-op.
         return [], lt, race, vo2
     acts = [from_summary(a) for a in raw]
+    # RPE/Feel/weather backfill runs BEFORE the caller's store.save_activities
+    # (save_activities is INSERT OR REPLACE — merging here means one save
+    # persists everything and never NULLs previously backfilled rows). Bounded
+    # so a first-run backfill of hundreds of ids cannot overrun FETCH_TIMEOUT.
+    _backfill_rpe_weather(gw, acts, started + FETCH_TIMEOUT - BACKFILL_RESERVE_S)
     return acts, lt, race, vo2
+
+
+def _cached_or_fetch(gw: GarminGateway, activity_id: int, name: str, fetch) -> dict:
+    """Cache-first payload load for one backfill endpoint.
+
+    `activity_{summary,weather}_{id}.json` on disk wins (no network), so repeat
+    refreshes are cheap; otherwise fetch via `run_with_timeout`.
+    """
+    path = gw.cache_dir / f"{name}_{activity_id}.json"
+    if path.exists():
+        return json.loads(path.read_text())
+    return run_with_timeout(fetch, timeout=BACKFILL_CALL_TIMEOUT_S, activity_id=activity_id)
+
+
+def _backfill_rpe_weather(gw: GarminGateway, acts: list, deadline: float) -> None:
+    """Merge RPE/Feel/weather onto freshly fetched activities before they are saved.
+
+    Cache-first per endpoint (disk payload beats network), per-call timeout via
+    `run_with_timeout`, and the whole pass stops at `deadline` (refresh start +
+    FETCH_TIMEOUT - BACKFILL_RESERVE_S): whatever does not fit the budget stays
+    uncached and is picked up on the next refresh. Any fetch/parse failure on
+    one activity is logged to stderr and skipped — backfill never blocks or
+    raises the refresh.
+    """
+    total = len(acts)
+    for i, a in enumerate(acts):
+        aid = a.activity_id
+        if time.monotonic() >= deadline:
+            _log_backfill_budget(i, total)
+            break
+        try:
+            summary = _cached_or_fetch(gw, aid, "activity_summary", gw.fetch_activity_summary)
+            for key, value in parse_rpe_feel(summary).items():
+                setattr(a, key, value)
+        except Exception as exc:  # noqa: BLE001 - skip-on-failure: refresh must never block
+            _log_backfill_skip(aid, "summary", exc)
+        if time.monotonic() >= deadline:
+            _log_backfill_budget(i, total)
+            break
+        try:
+            weather = _cached_or_fetch(gw, aid, "activity_weather", gw.fetch_activity_weather)
+            for key, value in parse_weather(weather).items():
+                setattr(a, key, value)
+        except Exception as exc:  # noqa: BLE001 - skip-on-failure: refresh must never block
+            _log_backfill_skip(aid, "weather", exc)
+
+
+def _log_backfill_skip(activity_id: int, what: str, exc: Exception) -> None:
+    print(
+        f"[backfill] skipped {what} for activity {activity_id}: {exc.__class__.__name__}: {exc}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _log_backfill_budget(done: int, total: int) -> None:
+    print(
+        f"[backfill] time budget exhausted after {done}/{total} activities; "
+        "the rest is picked up on the next refresh",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 DETAILS_TOP_K = 40

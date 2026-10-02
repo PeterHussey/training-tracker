@@ -7,6 +7,8 @@ Garmin window to activities newer than the latest already in the local store,
 while the first refresh (empty store) keeps the full window.
 """
 
+import json
+import time
 from datetime import date, timedelta
 from profile import RunnerProfile
 from unittest import mock
@@ -42,7 +44,7 @@ def test_compute_fetch_start_floored_to_fetch_window():
     assert compute_fetch_start(end, date(2020, 1, 1)) == end - timedelta(days=FETCH_DAYS)
 
 
-def test_refresh_garmin_narrows_window_when_store_has_activities(monkeypatch):
+def test_refresh_garmin_narrows_window_when_store_has_activities(monkeypatch, tmp_path):
     """Subsequent refreshes must only ask Garmin for activities newer than what
     is already persisted locally — this is the regression guard for the volume-
     driven timeout."""
@@ -55,6 +57,7 @@ def test_refresh_garmin_narrows_window_when_store_has_activities(monkeypatch):
     monkeypatch.setattr("dashboard.get_store", lambda: fake_store)
 
     fake_gw = mock.Mock()
+    fake_gw.cache_dir = tmp_path  # real dir: RPE/weather backfill cache-first check
     fake_gw.fetch_activities.return_value = [{"activityId": 1}]
     fake_gw.fetch_lactate_threshold.return_value = {"speed_and_heart_rate": {}, "power": {}}
     fake_gw.fetch_race_predictions_trend.return_value = [
@@ -84,7 +87,7 @@ def test_refresh_garmin_narrows_window_when_store_has_activities(monkeypatch):
     assert race[0]["time5K"] == 1405
 
 
-def test_refresh_garmin_full_window_when_store_empty(monkeypatch):
+def test_refresh_garmin_full_window_when_store_empty(monkeypatch, tmp_path):
     """First refresh: empty local store => fetch full FETCH_DAYS window."""
     end = date(2026, 8, 31)
     monkeypatch.setattr("dashboard.date", mock.Mock(today=mock.Mock(return_value=end)))
@@ -94,6 +97,7 @@ def test_refresh_garmin_full_window_when_store_empty(monkeypatch):
     monkeypatch.setattr("dashboard.get_store", lambda: fake_store)
 
     fake_gw = mock.Mock()
+    fake_gw.cache_dir = tmp_path  # real dir: RPE/weather backfill cache-first check
     fake_gw.fetch_activities.return_value = [{"activityId": 1}]
     fake_gw.fetch_lactate_threshold.return_value = {"speed_and_heart_rate": {}, "power": {}}
     fake_gw.fetch_race_predictions_trend.return_value = [
@@ -158,6 +162,187 @@ def test_refresh_garmin_raises_only_when_store_empty(monkeypatch):
 
     with pytest.raises(RuntimeError, match="returned no activities"):
         d.refresh_garmin()
+
+
+# --- RPE/Feel/weather backfill in refresh (cache-first, timeout-bounded) ---
+
+_SUMMARY_OK = {"summaryDTO": {"directWorkoutRpe": 75, "directWorkoutFeel": 100}}
+_WEATHER_OK = {
+    "temp": 46.0,
+    "apparentTemp": 44.0,
+    "relativeHumidity": 55.0,
+    "windSpeed": 6.0,
+    "windDirectionCompassPoint": "NNE",
+    "weatherTypeDTO": {"desc": "Mostly Cloudy"},
+}
+
+
+def _raw(aid: int) -> dict:
+    """Minimal Garmin activity-list payload for from_summary."""
+    return {
+        "activityId": aid,
+        "activityName": "Fake Run",
+        "startTimeLocal": "2026-09-03 10:00:00",
+        "activityType": {"typeKey": "running"},
+        "distance": 5000.0,
+        "duration": 1800.0,
+        "elapsedDuration": 1800.0,
+        "averageHR": 150.0,
+        "maxHR": 165.0,
+    }
+
+
+def _refresh_backfill_setup(monkeypatch, tmp_path, raws):
+    """Wire refresh_garmin to a fake gateway + a real store under tmp_path.
+
+    Returns (gw, store): tests attach summary/weather stubs (or pre-seed the
+    cache) to gw and assert persistence against store.
+    """
+    from store import MetricStore
+
+    gw = mock.Mock()
+    gw.cache_dir = tmp_path  # real dir: the backfill's cache-first check hits it
+    gw.fetch_activities.return_value = raws
+    gw.fetch_lactate_threshold.return_value = {}
+    gw.fetch_race_predictions_trend.return_value = []
+    gw.fetch_vo2max_trend.return_value = []
+    store = MetricStore(str(tmp_path / "refresh.sqlite"))
+    monkeypatch.setattr("dashboard.date", mock.Mock(today=mock.Mock(return_value=date(2026, 9, 3))))
+    monkeypatch.setattr("dashboard.GarminGateway", lambda **kw: gw)
+    monkeypatch.setattr("dashboard.get_store", lambda: store)
+    return gw, store
+
+
+def test_refresh_garmin_backfills_rpe_weather_before_save(monkeypatch, tmp_path):
+    """Fresh id → summary+weather fetched, parsed, merged onto the Activity
+    objects before they hit the store: main() saves the list refresh_garmin
+    returns (INSERT OR REPLACE), so the merge has to happen inside the refresh
+    for the columns to persist."""
+    gw, store = _refresh_backfill_setup(monkeypatch, tmp_path, [_raw(5001)])
+    gw.fetch_activity_summary.return_value = _SUMMARY_OK
+    gw.fetch_activity_weather.return_value = _WEATHER_OK
+
+    acts, _lt, _race, _vo2 = d.refresh_garmin()
+
+    gw.fetch_activity_summary.assert_called_once_with(activity_id=5001)
+    gw.fetch_activity_weather.assert_called_once_with(activity_id=5001)
+    assert acts[0].rpe_10 == 7.5
+    assert acts[0].feel == "Very Strong"
+    assert acts[0].wx_temp == 46.0
+    assert acts[0].wx_desc == "Mostly Cloudy"
+
+    # What main() does next: one save must carry the backfilled columns.
+    store.save_activities(acts)
+    row = {a.activity_id: a for a in store.load_activities()}[5001]
+    store.close()
+    assert row.rpe_10 == 7.5
+    assert row.feel == "Very Strong"
+    assert row.wx_temp == 46.0
+    assert row.wx_feels == 44.0
+    assert row.wx_humidity == 55.0
+    assert row.wx_wind == 6.0
+    assert row.wx_wind_dir == "NNE"
+    assert row.wx_desc == "Mostly Cloudy"
+    assert row.wx_unit == "F"
+
+
+def test_refresh_garmin_backfill_cache_hit_skips_fetch(monkeypatch, tmp_path):
+    """Cache-first: an id with summary/weather already on disk merges from the
+    cache — the network stubs must never be called (cheap repeat refreshes)."""
+    (tmp_path / "activity_summary_5002.json").write_text(
+        json.dumps({"summaryDTO": {"directWorkoutRpe": 40, "directWorkoutFeel": 25}})
+    )
+    (tmp_path / "activity_weather_5002.json").write_text(
+        json.dumps({"temp": 50.0, "weatherTypeDTO": {"desc": "Fair"}})
+    )
+    gw, store = _refresh_backfill_setup(monkeypatch, tmp_path, [_raw(5002)])
+
+    acts, *_ = d.refresh_garmin()
+
+    gw.fetch_activity_summary.assert_not_called()
+    gw.fetch_activity_weather.assert_not_called()
+    assert acts[0].rpe_10 == 4.0
+    assert acts[0].feel == "Weak"
+    assert acts[0].wx_temp == 50.0
+    assert acts[0].wx_desc == "Fair"
+    store.close()
+
+
+def test_refresh_garmin_backfill_skips_failed_activity(monkeypatch, tmp_path):
+    """Skip-on-failure: fetches raising for one id must not block the refresh —
+    the remaining activities still backfill and persist; the failed one stays
+    None (its payloads land in the cache on a later successful retry)."""
+    gw, store = _refresh_backfill_setup(monkeypatch, tmp_path, [_raw(5001), _raw(5002)])
+
+    def _summary(activity_id):
+        if activity_id == 5002:
+            raise RuntimeError("summary fetch boom")
+        return _SUMMARY_OK
+
+    def _weather(activity_id):
+        if activity_id == 5002:
+            raise TimeoutError("weather stalled")
+        return _WEATHER_OK
+
+    gw.fetch_activity_summary.side_effect = _summary
+    gw.fetch_activity_weather.side_effect = _weather
+
+    acts, *_ = d.refresh_garmin()  # must complete, not raise
+
+    by_id = {a.activity_id: a for a in acts}
+    assert len(acts) == 2
+    assert by_id[5001].rpe_10 == 7.5
+    assert by_id[5001].wx_temp == 46.0
+    assert by_id[5002].rpe_10 is None
+    assert by_id[5002].feel is None
+    assert by_id[5002].wx_temp is None
+    assert by_id[5002].wx_desc is None
+
+    # "saves the rest": the successful activity's values reach the store.
+    store.save_activities(acts)
+    rows = {a.activity_id: a for a in store.load_activities()}
+    store.close()
+    assert rows[5001].rpe_10 == 7.5
+    assert rows[5001].wx_desc == "Mostly Cloudy"
+    assert rows[5002].rpe_10 is None
+    assert rows[5002].wx_temp is None
+
+
+def test_backfill_stops_when_time_budget_exhausted(tmp_path):
+    """Budget guard: past the deadline the pass stops without fetching, so a
+    first-run backfill of hundreds of ids cannot overrun the 90s refresh guard.
+    Already-persisted rows keep their values; remaining ids wait for the next
+    (cache-first) refresh."""
+    from normalize import from_summary
+
+    gw = mock.Mock()
+    gw.cache_dir = tmp_path
+    acts = [from_summary(_raw(5001)), from_summary(_raw(5002))]
+
+    d._backfill_rpe_weather(gw, acts, deadline=time.monotonic() - 1)
+
+    gw.fetch_activity_summary.assert_not_called()
+    gw.fetch_activity_weather.assert_not_called()
+    assert all(a.rpe_10 is None and a.wx_temp is None for a in acts)
+
+
+def test_refresh_garmin_bounds_backfill_deadline_inside_fetch_timeout(monkeypatch, tmp_path):
+    """The deadline handed to the backfill sits FETCH_TIMEOUT - BACKFILL_RESERVE_S
+    after the refresh started — backfill cannot consume the whole 90s guard."""
+    captured = {}
+
+    def _spy(gw, acts, deadline):
+        captured["deadline"] = deadline
+        captured["now"] = time.monotonic()
+
+    monkeypatch.setattr(d, "_backfill_rpe_weather", _spy)
+    _gw, store = _refresh_backfill_setup(monkeypatch, tmp_path, [_raw(5001)])
+
+    d.refresh_garmin()
+
+    remaining = captured["deadline"] - captured["now"]
+    assert 0 < remaining <= d.FETCH_TIMEOUT - d.BACKFILL_RESERVE_S + 1
+    store.close()
 
 
 def test_period_bounds_min_and_end_from_dates():

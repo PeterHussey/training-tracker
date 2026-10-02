@@ -90,6 +90,19 @@ class _FakeGateway:
     def fetch_activity_details(self, activity_id):
         return {}
 
+    def fetch_activity_summary(self, activity_id):
+        return {"summaryDTO": {"directWorkoutRpe": 75, "directWorkoutFeel": 100}}
+
+    def fetch_activity_weather(self, activity_id):
+        return {
+            "temp": 46.0,
+            "apparentTemp": 44.0,
+            "relativeHumidity": 55.0,
+            "windSpeed": 6.0,
+            "windDirectionCompassPoint": "NNE",
+            "weatherTypeDTO": {"desc": "Mostly Cloudy"},
+        }
+
     def fetch_lactate_threshold(self):
         return {}
 
@@ -165,8 +178,18 @@ def test_period_widget_key_resets_after_refresh_that_adds_activities(seeded_app)
         from store import MetricStore
 
         store_after = MetricStore(str(seeded_app))
-        assert 999999 in {a.activity_id for a in store_after.load_activities()}
+        rows = {a.activity_id: a for a in store_after.load_activities()}
         store_after.close()
+        assert 999999 in rows
+        # The refresh backfills RPE/Feel/weather before save_activities, so the
+        # new columns must be populated on the persisted row (not NULLed).
+        added = rows[999999]
+        assert added.rpe_10 == 7.5
+        assert added.feel == "Very Strong"
+        assert added.wx_temp == 46.0
+        assert added.wx_wind_dir == "NNE"
+        assert added.wx_desc == "Mostly Cloudy"
+        assert added.wx_unit == "F"
 
         at.run()
         di_stick = _find_period(at)
