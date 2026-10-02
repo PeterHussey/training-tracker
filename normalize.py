@@ -135,6 +135,17 @@ class Activity:
     lat: float | None = None
     lon: float | None = None
     name: str | None = None
+    # RPE / Feel / weather — backfilled from the summary & weather endpoints
+    # (parse_rpe_feel / parse_weather); None until that backfill runs.
+    rpe_10: float | None = None
+    feel: str | None = None
+    wx_temp: float | None = None
+    wx_feels: float | None = None
+    wx_humidity: float | None = None
+    wx_wind: float | None = None
+    wx_wind_dir: str | None = None
+    wx_desc: str | None = None
+    wx_unit: str | None = None
     raw: dict = field(default_factory=dict, repr=False)
 
     @property

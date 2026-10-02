@@ -169,6 +169,7 @@ def test_load_runner_profile_configured_roundtrip(tmp_path):
 def test_load_runner_profile_selected_volume_agg_default(tmp_path):
     """selected_volume_agg defaults to 'weekly' when not persisted."""
     from profile import default_profile
+
     db = tmp_path / "t.db"
     store = MetricStore(str(db))
     p = default_profile(age=40, hrrest=60, sex="M")
@@ -396,3 +397,129 @@ def test_migrate_adds_elapsed_backfilled_from_duration(tmp_path):
     loaded = store.load_activities()
     store.close()
     assert loaded[0].elapsed_s == 6300.0
+
+
+# The 9 RPE / Feel / weather columns added in 2026-10. Ordering matches the
+# controller ruling: rpe_10 REAL, feel TEXT, wx_temp/wx_feels/wx_humidity/
+# wx_wind REAL, wx_wind_dir/wx_desc/wx_unit TEXT.
+RPE_WX_COLS = (
+    "rpe_10",
+    "feel",
+    "wx_temp",
+    "wx_feels",
+    "wx_humidity",
+    "wx_wind",
+    "wx_wind_dir",
+    "wx_desc",
+    "wx_unit",
+)
+
+
+def test_rpe_weather_roundtrip_populated_and_null(tmp_path):
+    """Populated values survive the store; NULLs stay None; REAL columns
+    coerce int input to float (SQLite REAL affinity)."""
+    from dataclasses import replace
+
+    db = tmp_path / "t.db"
+    store = MetricStore(str(db))
+    full = replace(
+        ACT,
+        rpe_10=7,  # int in -> float out (REAL affinity)
+        feel="Strong",
+        wx_temp=71.6,
+        wx_feels=70.2,
+        wx_humidity=55.0,
+        wx_wind=8.2,
+        wx_wind_dir="NNE",
+        wx_desc="Fair",
+        wx_unit="F",
+    )
+    store.save_activities([full, SECOND_ACT])  # SECOND_ACT: all 9 fields None
+    loaded = {a.activity_id: a for a in store.load_activities()}
+    store.close()
+    first = loaded[1]
+    assert first.rpe_10 == 7.0
+    assert isinstance(first.rpe_10, float)
+    assert first.feel == "Strong"
+    assert first.wx_temp == 71.6
+    assert first.wx_feels == 70.2
+    assert first.wx_humidity == 55.0
+    assert first.wx_wind == 8.2
+    assert first.wx_wind_dir == "NNE"
+    assert first.wx_desc == "Fair"
+    assert first.wx_unit == "F"
+    second = loaded[2]
+    for col in RPE_WX_COLS:
+        assert getattr(second, col) is None, col
+
+
+def test_migrate_adds_rpe_weather_columns_to_old_database(tmp_path):
+    """A pre-change database (old activities schema) gains the 9 columns on
+    open; existing rows load with NULLs and their old values survive."""
+    db = str(tmp_path / "t.db")
+    conn = __import__("sqlite3").connect(db)
+    # Verbatim copy of the activities CREATE TABLE before RPE/weather.
+    conn.execute(
+        "CREATE TABLE activities ("
+        "  activity_id        INTEGER PRIMARY KEY,"
+        "  activity_date      TEXT NOT NULL,"
+        "  sport              TEXT NOT NULL,"
+        "  distance_m         REAL NOT NULL DEFAULT 0,"
+        "  duration_s         REAL NOT NULL DEFAULT 0,"
+        "  elapsed_s          REAL NOT NULL DEFAULT 0,"
+        "  ele_gain_m         REAL,"
+        "  vo2max             REAL,"
+        "  avg_hr             REAL,"
+        "  max_hr             REAL,"
+        "  aerobic_te         REAL,"
+        "  anaerobic_te       REAL,"
+        "  avg_speed          REAL,"
+        "  fastest_split_1609 REAL,"
+        "  zone_s             TEXT NOT NULL DEFAULT '{}',"
+        "  route              TEXT NOT NULL DEFAULT '{}',"
+        "  name               TEXT,"
+        "  has_intervals      INTEGER NOT NULL DEFAULT 0"
+        ")"
+    )
+    conn.execute(
+        "INSERT INTO activities (activity_id, activity_date, sport, distance_m, "
+        "duration_s, elapsed_s, name) VALUES (9, '2026-03-01', 'running', 18000.0, "
+        "6300.0, 6400.0, 'Old Row')"
+    )
+    conn.commit()
+    conn.close()
+    store = MetricStore(db)
+    cols = {r[1] for r in store.conn.execute("PRAGMA table_info(activities)").fetchall()}
+    assert set(RPE_WX_COLS) <= cols
+    loaded = store.load_activities()
+    store.close()
+    assert len(loaded) == 1
+    row = loaded[0]
+    # Old values survive the migration.
+    assert row.name == "Old Row"
+    assert row.elapsed_s == 6400.0
+    assert row.distance_m == 18000.0
+    # New columns arrive NULL.
+    for col in RPE_WX_COLS:
+        assert getattr(row, col) is None, col
+
+
+def test_migrate_rpe_weather_idempotent_on_reopen(tmp_path):
+    """Reopening an already-migrated DB is a no-op: each new column appears
+    exactly once and saved values survive the second open."""
+    db = str(tmp_path / "t.db")
+    from dataclasses import replace
+
+    store = MetricStore(db)
+    store.save_activities([replace(ACT, rpe_10=6.5, feel="Weak", wx_temp=50.0)])
+    store.close()
+    reopened = MetricStore(db)
+    cur = reopened.conn.execute("PRAGMA table_info(activities)")
+    names = [r[1] for r in cur.fetchall()]
+    for col in RPE_WX_COLS:
+        assert names.count(col) == 1, f"{col} duplicated by re-migration"
+    loaded = reopened.load_activities()
+    reopened.close()
+    assert loaded[0].rpe_10 == 6.5
+    assert loaded[0].feel == "Weak"
+    assert loaded[0].wx_temp == 50.0

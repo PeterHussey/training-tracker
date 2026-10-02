@@ -31,7 +31,16 @@ CREATE TABLE IF NOT EXISTS activities (
    zone_s             TEXT NOT NULL DEFAULT '{}',
    route              TEXT NOT NULL DEFAULT '{}',
    name               TEXT,
-   has_intervals      INTEGER NOT NULL DEFAULT 0
+   has_intervals      INTEGER NOT NULL DEFAULT 0,
+   rpe_10             REAL,
+   feel               TEXT,
+   wx_temp            REAL,
+   wx_feels           REAL,
+   wx_humidity        REAL,
+   wx_wind            REAL,
+   wx_wind_dir        TEXT,
+   wx_desc            TEXT,
+   wx_unit            TEXT
 );
 CREATE TABLE IF NOT EXISTS metric_series (
   metric TEXT NOT NULL,
@@ -77,6 +86,27 @@ class MetricStore:
             self.conn.execute(
                 "UPDATE activities SET elapsed_s = duration_s WHERE elapsed_s IS NULL"
             )
+        # RPE / Feel / weather columns: arrive NULL and stay NULL until the
+        # summary/weather backfill rewrites them (no conservative backfill
+        # needed — absent data genuinely is absent).
+        if "rpe_10" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN rpe_10 REAL")
+        if "feel" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN feel TEXT")
+        if "wx_temp" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN wx_temp REAL")
+        if "wx_feels" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN wx_feels REAL")
+        if "wx_humidity" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN wx_humidity REAL")
+        if "wx_wind" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN wx_wind REAL")
+        if "wx_wind_dir" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN wx_wind_dir TEXT")
+        if "wx_desc" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN wx_desc TEXT")
+        if "wx_unit" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN wx_unit TEXT")
         # Best-effort LTHR anchors replaced the rolling-mean fallback: prune
         # the dead keys so stale rows don't linger in old databases. These
         # keys are never written again, so unconditional pruning is safe.
@@ -158,14 +188,25 @@ class MetricStore:
                 ),
                 a.name,
                 1 if a.has_intervals else 0,
+                a.rpe_10,
+                a.feel,
+                a.wx_temp,
+                a.wx_feels,
+                a.wx_humidity,
+                a.wx_wind,
+                a.wx_wind_dir,
+                a.wx_desc,
+                a.wx_unit,
             )
             for a in activities
         ]
         self.conn.executemany(
             "INSERT OR REPLACE INTO activities (activity_id, activity_date, sport, "
             "distance_m, duration_s, elapsed_s, ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, "
-            "anaerobic_te, avg_speed, fastest_split_1609, zone_s, route, name, has_intervals) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "anaerobic_te, avg_speed, fastest_split_1609, zone_s, route, name, has_intervals, "
+            "rpe_10, feel, wx_temp, wx_feels, wx_humidity, wx_wind, wx_wind_dir, wx_desc, "
+            "wx_unit) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         self.conn.commit()
@@ -232,7 +273,9 @@ class MetricStore:
         rows = self.conn.execute(
             "SELECT activity_id, activity_date, sport, distance_m, duration_s, elapsed_s, "
             "ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, anaerobic_te, "
-            "avg_speed, fastest_split_1609, zone_s, route, name, has_intervals FROM activities "
+            "avg_speed, fastest_split_1609, zone_s, route, name, has_intervals, "
+            "rpe_10, feel, wx_temp, wx_feels, wx_humidity, wx_wind, wx_wind_dir, wx_desc, "
+            "wx_unit FROM activities "
             "ORDER BY activity_date, activity_id"
         ).fetchall()
         return [self._activity_from_row(r) for r in rows]
@@ -258,6 +301,15 @@ class MetricStore:
             route_s,
             name,
             has_intervals,
+            rpe_10,
+            feel,
+            wx_temp,
+            wx_feels,
+            wx_humidity,
+            wx_wind,
+            wx_wind_dir,
+            wx_desc,
+            wx_unit,
         ) = row
         zones: dict[int, float] = {}
         if zone_s:
@@ -294,6 +346,15 @@ class MetricStore:
             fastest_split_1609=fastest_split_1609,
             name=name,
             has_intervals=bool(has_intervals),
+            rpe_10=rpe_10,
+            feel=feel,
+            wx_temp=wx_temp,
+            wx_feels=wx_feels,
+            wx_humidity=wx_humidity,
+            wx_wind=wx_wind,
+            wx_wind_dir=wx_wind_dir,
+            wx_desc=wx_desc,
+            wx_unit=wx_unit,
             lat=route.get("lat"),
             lon=route.get("lon"),
             location=route.get("location"),

@@ -3,7 +3,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-from normalize import from_summary, sport_of, workout_code
+from normalize import Activity, from_summary, sport_of, workout_code
 
 FIXTURE = Path(__file__).parent / "fixtures" / "activities_sample.json"
 DATA = json.loads(FIXTURE.read_text())
@@ -76,3 +76,42 @@ def test_has_intervals_absent_defaults_false():
     summary = dict(_first("running"))
     summary.pop("hasIntensityIntervals", None)
     assert from_summary(summary).has_intervals is False
+
+
+RPE_WX_FIELDS = (
+    "rpe_10",
+    "feel",
+    "wx_temp",
+    "wx_feels",
+    "wx_humidity",
+    "wx_wind",
+    "wx_wind_dir",
+    "wx_desc",
+    "wx_unit",
+)
+
+
+def test_activity_rpe_weather_fields_default_none():
+    """The 9 RPE/Feel/weather fields default to None; wx_unit is supplied by
+    parse_weather at parse time, not by the dataclass."""
+    a = Activity(
+        activity_id=1,
+        sport="running",
+        date=date(2026, 1, 1),
+        ts_ms=0,
+        distance_m=0.0,
+        duration_s=0.0,
+        elapsed_s=0.0,
+        avg_hr=None,
+        max_hr=None,
+    )
+    for f in RPE_WX_FIELDS:
+        assert getattr(a, f) is None, f
+
+
+def test_from_summary_does_not_populate_rpe_weather():
+    """from_summary (list payload) leaves RPE/Feel/weather None until the
+    summary/weather backfill wires them in (Task 3)."""
+    a = from_summary(_first("running"))
+    for f in RPE_WX_FIELDS:
+        assert getattr(a, f) is None, f
