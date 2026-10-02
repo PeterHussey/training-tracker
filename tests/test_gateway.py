@@ -449,15 +449,32 @@ def test_garmin_http_summary_and_weather_use_activity_service_paths():
     http.get_json.assert_called_once_with("/activity-service/activity/42/weather")
 
 
-def test_garmin_http_weather_404_returns_empty_other_errors_raise():
-    http = GarminHttp(mock.Mock())
-    http.get_json = mock.Mock(
-        side_effect=GarminHttpError("API 404 for /activity-service/activity/1/weather: {}")
-    )
+def test_garmin_http_weather_404_returns_empty_other_errors_raise(monkeypatch):
+    """End-to-end through get_json: a real 404 response must become {} (and
+    the raise site must attach status_code so the wrapper can key on it) —
+    any other status still raises with its code preserved."""
+
+    def _respond(status):
+        def fake_get(url, headers=None, params=None, timeout=5.0):
+            r = mock.Mock(status_code=status)
+            r.text = "not found" if status == 404 else "boom"
+            return r
+
+        return fake_get
+
+    ts = mock.Mock()
+    ts.timeout = 5.0
+    ts.expires_soon.return_value = False
+    ts.access_token.return_value = "tok"
+    http = GarminHttp(ts, max_retries=0)
+
+    monkeypatch.setattr("garmin_http.requests.get", _respond(404))
     assert http.fetch_activity_weather(1) == {}
-    http.get_json = mock.Mock(side_effect=GarminHttpError("API 500 for /x: boom"))
-    with pytest.raises(GarminHttpError):
+
+    monkeypatch.setattr("garmin_http.requests.get", _respond(500))
+    with pytest.raises(GarminHttpError) as exc:
         http.fetch_activity_weather(1)
+    assert exc.value.status_code == 500
 
 
 def test_garmin_http_fetch_coerces_non_dict_payload_to_empty():

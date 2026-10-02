@@ -177,7 +177,15 @@ ACTIVITIES_PATH = "/activitylist-service/activities/search/activities"
 
 
 class GarminHttpError(Exception):
-    """Raised when a Garmin connectapi call fails (network or non-200)."""
+    """Raised when a Garmin connectapi call fails (network or non-200).
+
+    `status_code` is the HTTP status when the failure came from a non-200
+    response, else None (stalls, non-JSON bodies, display-name failures).
+    """
+
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class GarminHttp:
@@ -206,7 +214,10 @@ class GarminHttp:
             try:
                 r = _threaded_get(url, headers=headers, params=params, budget=budget)
                 if r.status_code != 200:
-                    raise GarminHttpError(f"API {r.status_code} for {path}: {r.text[:200]}")
+                    raise GarminHttpError(
+                        f"API {r.status_code} for {path}: {r.text[:200]}",
+                        status_code=r.status_code,
+                    )
                 try:
                     return r.json()
                 except ValueError as e:
@@ -274,7 +285,7 @@ class GarminHttp:
         except GarminHttpError as e:
             # Indoor/no-station activities 404; treated as "no weather" so the
             # gateway can cache the empty payload instead of failing forever.
-            if str(e).startswith("API 404 "):
+            if e.status_code == 404:
                 return {}
             raise
         return payload if isinstance(payload, dict) else {}

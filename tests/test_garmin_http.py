@@ -149,6 +149,41 @@ def test_get_json_raises_on_error_status(tokenstore, monkeypatch):
         gh.get_json("/x")
 
 
+def test_get_json_error_carries_status_code(tokenstore, monkeypatch):
+    """A non-200 failure must expose the HTTP status on the exception, so
+    callers (e.g. the activity-weather 404 → {} handling) key on
+    `e.status_code` instead of parsing the message text."""
+    calls = {"n": 0}
+
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        calls["n"] += 1
+        r = mock.Mock(status_code=404)
+        r.text = "not found"
+        return r
+
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    gh = GarminHttp(tokenstore, max_retries=0)
+    with pytest.raises(GarminHttpError) as exc:
+        gh.get_json("/activity-service/activity/1/weather")
+    assert exc.value.status_code == 404
+    assert calls["n"] == 1
+
+
+def test_get_json_non_json_error_has_no_status_code(tokenstore, monkeypatch):
+    """Non-HTTP failures keep status_code=None (attribute always present)."""
+
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        r = mock.Mock(status_code=200)
+        r.json.side_effect = ValueError("not json")
+        return r
+
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    gh = GarminHttp(tokenstore, max_retries=0)
+    with pytest.raises(GarminHttpError) as exc:
+        gh.get_json("/x")
+    assert exc.value.status_code is None
+
+
 def test_fetch_activities_uses_limit_100_and_offset(tokenstore, monkeypatch):
     seen = []
 
