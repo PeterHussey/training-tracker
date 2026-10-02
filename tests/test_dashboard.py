@@ -989,3 +989,147 @@ def test_render_activities_best_mile_and_graded(monkeypatch):
     metrics = [a for name, a in fake.calls if name == "metric"]
     assert any("Best mile" in str(m[0]) for m in metrics)
     assert recorded and "graded" in recorded[0][0].columns
+
+
+# --- Fastest-30s on demand (repetition comparison) ---
+
+
+def _details_payload(speed=4.0, n=60, step_ms=1000.0, hr=170.0):
+    """Live-shape details payload: n samples at a fixed speed, uniform step."""
+    return {
+        "metricDescriptors": [
+            {"key": "directHeartRate", "metricsIndex": 0},
+            {"key": "directSpeed", "metricsIndex": 1},
+            {"key": "directTimestamp", "metricsIndex": 2},
+        ],
+        "activityDetailMetrics": [{"metrics": [hr, speed, i * step_ms]} for i in range(n)],
+    }
+
+
+def _coded_act(activity_id, name, day, sport="running"):
+    return Activity(
+        activity_id=activity_id,
+        sport=sport,
+        date=date(2026, 8, day),
+        ts_ms=0,
+        distance_m=8000.0,
+        duration_s=2400.0,
+        elapsed_s=2500.0,
+        avg_hr=150.0,
+        max_hr=170.0,
+        zone_s={},
+        ele_gain_m=15.0,
+        avg_speed=3.3,
+        name=name,
+    )
+
+
+def _rep_gateway(fetched, fail_ids=()):
+    """Gateway double: records fetch attempts, raises for fail_ids."""
+
+    class _Gw:
+        def __init__(self, cache_dir=None):
+            self.cache_dir = cache_dir
+
+        def fetch_activity_details(self, activity_id):
+            fetched.append(activity_id)
+            if activity_id in fail_ids:
+                raise RuntimeError("dead details endpoint")
+            return _details_payload()
+
+    return _Gw
+
+
+def _record_pace(monkeypatch):
+    """Capture (decimal_minutes, units) calls of the row-data pace formatter."""
+    calls = []
+    monkeypatch.setattr(d, "_fmt_pace_min", lambda v, u: calls.append((v, u)) or f"{v:.3f}")
+    return calls
+
+
+def test_render_repetitions_fetches_missing_group_details(monkeypatch, tmp_path):
+    """Selecting a coded workout fetches details only for that group's reps
+    that lack a disk cache — never for other activities, never from the
+    network for an id already cached."""
+    acts = [
+        _coded_act(1, "Winnetka - RF24 (Foundation Run)", 10),
+        _coded_act(2, "Lincoln - RF24 (Foundation Run)", 15),
+        _coded_act(3, "Lincoln - RHR22 (Hill Repetitions Run)", 20),  # other code
+    ]
+    _cached_details(tmp_path, 1, minutes=60)  # rep 1 already on disk
+
+    fetched = []
+    monkeypatch.setattr(d, "APP_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(d, "GarminGateway", _rep_gateway(fetched))
+    pace_calls = _record_pace(monkeypatch)
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+
+    d.render_repetitions(acts, 2, "km")
+
+    assert fetched == [2]  # id 1 served from disk cache, id 3 is another code
+    # both reps produced a pace in row data: disk-cached 3.0 m/s, fetched 4.0 m/s
+    assert len(pace_calls) == 2
+    (v1, u1), (v2, u2) = pace_calls
+    assert (v1, u1) == (pytest.approx(1000.0 / 3.0 / 60.0), "km")
+    assert (v2, u2) == (pytest.approx(1000.0 / 4.0 / 60.0), "km")
+    # the value rides in the row data only — the Fast30s column render is Task 5's
+    shown = [a for name, a in fake.calls if name == "dataframe"][0][0]
+    assert shown and all("fast30s" not in row for row in shown)
+
+
+def test_render_repetitions_failed_fetch_does_not_break_group(monkeypatch, tmp_path):
+    """One dead details fetch leaves that rep's value None; the rest of the
+    group still fetches and computes (never raises)."""
+    acts = [
+        _coded_act(11, "Winnetka - RF24 (Foundation Run)", 10),
+        _coded_act(12, "Lincoln - RF24 (Foundation Run)", 15),
+    ]
+    fetched = []
+    monkeypatch.setattr(d, "APP_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(d, "GarminGateway", _rep_gateway(fetched, fail_ids={11}))
+    pace_calls = _record_pace(monkeypatch)
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+
+    d.render_repetitions(acts, 12, "km")  # must not raise
+
+    assert sorted(fetched) == [11, 12]  # both attempted; the dead one didn't abort the rest
+    assert len(pace_calls) == 1  # only the healthy rep produced a pace value
+    assert pace_calls[0] == (pytest.approx(1000.0 / 4.0 / 60.0), "km")
+
+
+def test_render_repetitions_fetches_only_outdoor_running_reps(monkeypatch, tmp_path):
+    """Strength/cross reps have no meaningful pace: never fetched, value None."""
+    acts = [
+        _coded_act(21, "Winnetka - RF24 (Foundation Run)", 10, sport="running"),
+        _coded_act(22, "Winnetka - RF24 (Foundation Run)", 15, sport="strength"),
+    ]
+    fetched = []
+    monkeypatch.setattr(d, "APP_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(d, "GarminGateway", _rep_gateway(fetched))
+    pace_calls = _record_pace(monkeypatch)
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+
+    d.render_repetitions(acts, 21, "km")
+
+    assert fetched == [21]  # the strength rep's details are never requested
+    assert len(pace_calls) == 1  # only the outdoor run got a pace value
+
+
+def test_render_activities_no_selection_never_fetches_details(monkeypatch):
+    """Without a selected row there is no comparison group → no gateway, no fetch."""
+    acts = [
+        _coded_act(31, "Winnetka - RF24 (Foundation Run)", 10),
+        _coded_act(32, "Lincoln - RF24 (Foundation Run)", 15),
+    ]
+    gw_factory = mock.Mock(side_effect=AssertionError("gateway built without a selection"))
+    monkeypatch.setattr(d, "GarminGateway", gw_factory)
+    fake = _FakeSt()
+    fake.dataframe = lambda *a, **k: mock.Mock(selection=mock.Mock(rows=[]))
+    monkeypatch.setattr(d, "st", fake)
+
+    d.render_activities(acts, date(2026, 8, 1), date(2026, 8, 31), "km", PROFILE_40M)
+
+    gw_factory.assert_not_called()

@@ -194,6 +194,51 @@ def test_best_window_time_domain_sparse_sampling_accepted():
     assert w["mean_hr"] == pytest.approx(172.0)
 
 
+# --- 30 s window (fastest-30s pace, on-demand for repetition comparison) ---
+
+
+def _hz_ts_series(segments: list[tuple[float, float, int]]) -> tuple[list, list, list]:
+    """1 Hz (hr, speed, ts_ms) series from (hr, speed, n_samples) segments."""
+    hr: list[float] = []
+    speed: list[float] = []
+    ts: list[float] = []
+    for h, s, n in segments:
+        for _ in range(n):
+            hr.append(h)
+            speed.append(s)
+            ts.append(len(ts) * 1000.0)
+    return hr, speed, ts
+
+
+def test_best_window_30s_finds_fastest_burst():
+    # 60 s slow + 40 s fast + 60 s slow at 1 Hz with timestamps: a window
+    # straddling a burst boundary drags the slow sample in, so the winner is
+    # the window fully inside the fast burst.
+    hr, speed, ts = _hz_ts_series([(150.0, 2.8, 60), (172.0, 4.2, 40), (150.0, 2.8, 60)])
+    w = best_window(hr, speed, 30, ts_ms=ts)
+    assert w is not None
+    assert w["mean_speed"] == pytest.approx(4.2)
+    assert w["mean_hr"] == pytest.approx(172.0)
+
+
+def test_best_window_30s_tolerates_short_dropout():
+    # A 2 s optical-HR dropout inside the fast burst stays within the
+    # adaptive gap tolerance: the window remains valid and the mean is taken
+    # over the surviving samples (speed is uniform, so 4.2 either way).
+    hr, speed, ts = _hz_ts_series([(150.0, 2.8, 60), (172.0, 4.2, 40), (150.0, 2.8, 60)])
+    hr[70] = None
+    hr[71] = None
+    w = best_window(hr, speed, 30, ts_ms=ts)
+    assert w is not None
+    assert w["mean_speed"] == pytest.approx(4.2)
+
+
+def test_best_window_30s_short_series_returns_none():
+    # 20 s of data can never cover a 30 s window (needs >= 25 s valid span).
+    hr, speed, ts = _hz_ts_series([(172.0, 4.2, 20)])
+    assert best_window(hr, speed, 30, ts_ms=ts) is None
+
+
 # --- best-effort cross-activity anchor ---
 
 

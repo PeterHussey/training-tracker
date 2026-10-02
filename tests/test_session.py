@@ -14,6 +14,7 @@ from session import (
     activity_graded_pct,
     best_mile,
     build_session_view,
+    fastest_30s_pace,
     in_period,
     resolve_activities,
     run_with_timeout,
@@ -477,3 +478,39 @@ def test_volume_weekly_resample_drops_empty_weeks():
     # Verify no week has a sum of 0 (which would indicate an empty bucket)
     for idx, val in resampled.items():
         assert val != 0 or idx not in resampled.index, "Empty week should be dropped"
+
+
+# --- Fastest-30s pace (on-demand for the repetition comparison) ---
+
+
+def _fast30_series(slow_s: int, fast_s: int, slow_speed: float, fast_speed: float):
+    """1 Hz (hr, speed, ts_ms): slow burst, fast burst, slow burst."""
+    hr = [150.0] * slow_s + [172.0] * fast_s + [150.0] * slow_s
+    speed = [slow_speed] * slow_s + [fast_speed] * fast_s + [slow_speed] * slow_s
+    ts = [float(i * 1000) for i in range(len(hr))]
+    return hr, speed, ts
+
+
+def test_fastest_30s_pace_returns_fastest_window_speed():
+    series = {7: _fast30_series(60, 40, 2.8, 4.5)}
+    assert fastest_30s_pace(series, 7) == pytest.approx(4.5)
+
+
+def test_fastest_30s_pace_missing_id_returns_none():
+    series = {7: _fast30_series(60, 40, 2.8, 4.5)}
+    assert fastest_30s_pace(series, 99) is None
+    assert fastest_30s_pace({}, 7) is None
+
+
+def test_fastest_30s_pace_too_short_returns_none():
+    # 10 s of data can never fill the 30 s window.
+    series = {7: _fast30_series(10, 0, 2.8, 4.5)}
+    assert fastest_30s_pace(series, 7) is None
+
+
+def test_fastest_30s_pace_standstill_returns_none():
+    # Valid samples but no forward speed: never emit a 0 m/s "pace".
+    hr = [120.0] * 60
+    speed = [0.0] * 60
+    ts = [float(i * 1000) for i in range(60)]
+    assert fastest_30s_pace({7: (hr, speed, ts)}, 7) is None

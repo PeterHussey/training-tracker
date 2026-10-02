@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from metrics import age_grading, volume
+from metrics.threshold import best_window
 from pipeline import compute_metric_rows
 
 if TYPE_CHECKING:
@@ -286,6 +287,26 @@ def repetition_rows(activities, code: str) -> list[dict]:
             }
         )
     return sorted(rows, key=lambda r: r["date"])
+
+
+def fastest_30s_pace(series_by_id: dict, activity_id: int) -> float | None:
+    """Fastest 30 s mean speed (m/s) from a cached details series, else None.
+
+    On-demand companion to the 20/30-min best-effort anchors: reuses
+    metrics.threshold.best_window's time-domain path with a 30 s window, so
+    live 1-7 s sampling and short optical-HR dropouts get the same adaptive
+    gap treatment. Returns None when the activity has no cached series, when
+    the series is too short for a valid 30 s window, or when the winning
+    window carries no forward speed (standstill / all-dropout data).
+    """
+    series = series_by_id.get(activity_id)
+    if not series:
+        return None
+    hr, speed, ts = series
+    best = best_window(hr, speed, 30, ts_ms=ts)
+    if best is None or best["mean_speed"] <= 0:
+        return None
+    return best["mean_speed"]
 
 
 def resolve_activities(store, session_state, key="activities"):

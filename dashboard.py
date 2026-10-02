@@ -34,6 +34,7 @@ from session import (
     activity_graded_pct,
     best_mile,
     build_session_view,
+    fastest_30s_pace,
     resolve_activities,
     run_with_timeout,
 )
@@ -1389,6 +1390,49 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
         st.write("No elevation data in this window.")
 
 
+def _fetch_details_for_reps(reps: list, cache_dir: Path) -> dict[int, tuple]:
+    """Group-scoped, cache-first details fetch for the repetition comparison.
+
+    Like _fetch_series_for, but scoped to one workout group: disk cache first
+    (``activity_details_{id}.json``), network only for ids with no cached
+    file, per-call ``run_with_timeout``, and a broad per-rep skip so one dead
+    fetch (timeout, auth failure, malformed payload) never aborts the rest of
+    the group. The gateway is constructed only when at least one id actually
+    needs the network. Never raises — missing/failed reps are simply absent
+    from the result and callers degrade them to None.
+    """
+    out: dict[int, tuple] = {}
+    pending = []
+    for a in reps:
+        path = cache_dir / f"activity_details_{a.activity_id}.json"
+        if not path.exists():
+            pending.append(a)
+            continue
+        try:
+            parsed = parse_details_series(json.loads(path.read_text()))
+            if parsed[0]:
+                out[a.activity_id] = parsed
+        except Exception:  # noqa: BLE001 - unreadable cache → skip (matches _fetch_series_for)
+            pass
+    if not pending:
+        return out
+    try:
+        gw = GarminGateway(cache_dir=cache_dir)
+    except Exception:  # noqa: BLE001 - auth unavailable → fastest-30s degrades to None
+        return out
+    for a in pending:
+        try:
+            details = run_with_timeout(
+                gw.fetch_activity_details, timeout=DETAILS_TIMEOUT_S, activity_id=a.activity_id
+            )
+            parsed = parse_details_series(details)
+            if parsed[0]:
+                out[a.activity_id] = parsed
+        except Exception:  # noqa: BLE001 - one dead rep must not abort the group
+            pass
+    return out
+
+
 def render_repetitions(activities, activity_id: int, units: str) -> None:
     """Comparison table + chart for every repetition of the selected workout.
 
@@ -1409,6 +1453,13 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
     if len(reps) < 2:
         st.caption(f"Only one repetition of **{code}** found — add more to compare.")
         return
+    # Fastest-30s, computed on demand for THIS comparison group only: details
+    # are ensured cache-first for the group's outdoor-running reps (never
+    # persisted, never in the refresh path). Strength/cross reps have no
+    # meaningful pace and missing/failed details stay None.
+    candidates = [a for a in reps if a.sport == "running"]
+    series = _fetch_details_for_reps(candidates, APP_CACHE_DIR)
+    fast30 = {a.activity_id: fastest_30s_pace(series, a.activity_id) for a in candidates}
     table = []
     for a in reps:
         m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
@@ -1431,6 +1482,11 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
                 "elev gain": _fmt(a.ele_gain_m, {"unit": "m"}, units)
                 if a.ele_gain_m is not None
                 else "—",
+                "fast30s": (
+                    _fmt_pace_min((m_per_unit / fast30[a.activity_id]) / 60.0, units)
+                    if fast30.get(a.activity_id)
+                    else None
+                ),
             }
         )
     st.subheader(f"Repeated workout **{code}**")
@@ -1439,7 +1495,13 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
         "GAP = Grade-Adjusted Pace (compensates for elevation). TE = Garmin Training Effect. "
         "Compare pace/HR/GAP across reps to track fitness progression on the same workout."
     )
-    st.dataframe(table, width='stretch', hide_index=True)
+    # fast30s is row-data-only plumbing for now: the visible Fast30s column
+    # (incl. "—" rendering for None) lands with Task 5's comparison-table work.
+    st.dataframe(
+        [{k: v for k, v in row.items() if k != "fast30s"} for row in table],
+        width='stretch',
+        hide_index=True,
+    )
 
     xs = [a.date for a in reps]
     m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
