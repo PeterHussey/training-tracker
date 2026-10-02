@@ -12,6 +12,16 @@ STRENGTH_KEYS = {"strength_training"}
 
 WORKOUT_CODE_RE = re.compile(r"-\s*([A-Z]+\d{1,2})\s*\(")
 
+# Watch-side feel enum: raw value -> label. Unknown values render as
+# f"{raw}?" downstream instead of raising (see parse_rpe_feel).
+FEEL_LABELS = {
+    0: "Very Weak",
+    25: "Weak",
+    50: "Normal",
+    75: "Strong",
+    100: "Very Strong",
+}
+
 
 def workout_code(name: str | None) -> str | None:
     """Extract the 80/20 plan workout code (e.g. 'RF24') from an activity name.
@@ -40,6 +50,63 @@ def sport_of(summary: dict) -> str:
 def _f(summary: dict, key: str) -> Any:
     v = summary.get(key)
     return v if v is not None else None
+
+
+def _num(value: Any) -> float | None:
+    return value if isinstance(value, (int, float)) else None
+
+
+def parse_rpe_feel(summary: dict | None) -> dict:
+    """Watch-side RPE/Feel from a full activity payload (summaryDTO).
+
+    Returns the canonical downstream keys `{rpe_10, feel}`: RPE is Garmin's
+    0-100 `directWorkoutRpe` divided to the 0-10 display scale, Feel is a
+    FEEL_LABELS label (unknown raw values become f"{raw}?", never raise).
+    Missing/malformed payload or fields yield None.
+    """
+    dto = summary.get("summaryDTO") if isinstance(summary, dict) else None
+    if not isinstance(dto, dict):
+        dto = {}
+    rpe = _num(dto.get("directWorkoutRpe"))
+    feel_raw = dto.get("directWorkoutFeel")
+    feel = None
+    if feel_raw is not None:
+        try:
+            label = FEEL_LABELS[feel_raw]
+        except (KeyError, TypeError):  # unknown value or unhashable — never raise
+            label = None
+        feel = label if label is not None else f"{feel_raw}?"
+    return {"rpe_10": rpe / 10.0 if rpe is not None else None, "feel": feel}
+
+
+def parse_weather(weather: dict | None) -> dict:
+    """Flat canonical weather dict from the activity-weather payload.
+
+    Returns `{wx_temp, wx_feels, wx_humidity, wx_wind, wx_wind_dir, wx_desc,
+    wx_unit}`. Values pass through as returned by Garmin (no unit conversion;
+    `wx_unit` records the assumed unit, default "F"). Missing/malformed
+    payload or fields yield None for every value.
+    """
+    wx = weather if isinstance(weather, dict) else {}
+    wtype = wx.get("weatherTypeDTO")
+    desc = wtype.get("desc") if isinstance(wtype, dict) else None
+    compass = wx.get("windDirectionCompassPoint")
+    degrees = _num(wx.get("windDirection"))
+    if isinstance(compass, str) and compass:
+        wind_dir: str | None = compass
+    elif degrees is not None:
+        wind_dir = str(degrees)
+    else:
+        wind_dir = None
+    return {
+        "wx_temp": _num(wx.get("temp")),
+        "wx_feels": _num(wx.get("apparentTemp")),
+        "wx_humidity": _num(wx.get("relativeHumidity")),
+        "wx_wind": _num(wx.get("windSpeed")),
+        "wx_wind_dir": wind_dir,
+        "wx_desc": desc if isinstance(desc, str) and desc else None,
+        "wx_unit": "F",
+    }
 
 
 @dataclass

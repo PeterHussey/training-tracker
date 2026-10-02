@@ -262,6 +262,23 @@ class GarminHttp:
             offset += limit
         return out
 
+    def fetch_activity_summary(self, activity_id: int) -> dict:
+        """Full single-activity payload; summaryDTO carries RPE/Feel fields."""
+        payload = self.get_json(f"/activity-service/activity/{activity_id}")
+        return payload if isinstance(payload, dict) else {}
+
+    def fetch_activity_weather(self, activity_id: int) -> dict:
+        """Outdoor weather for an activity; 404 (indoor/no station) → {}."""
+        try:
+            payload = self.get_json(f"/activity-service/activity/{activity_id}/weather")
+        except GarminHttpError as e:
+            # Indoor/no-station activities 404; treated as "no weather" so the
+            # gateway can cache the empty payload instead of failing forever.
+            if str(e).startswith("API 404 "):
+                return {}
+            raise
+        return payload if isinstance(payload, dict) else {}
+
     def fetch_lactate_threshold(self) -> dict:
         import datetime as _dt
 

@@ -7,13 +7,14 @@ from unittest import mock
 import pytest
 
 import gateway
-from garmin_http import GarminHttp, GarminTokenStore
+from garmin_http import GarminHttp, GarminHttpError, GarminTokenStore
 from gateway import (
     GarminGateway,
     choose_token_source,
     load_op_creds,
     migrate_mcp_token,
 )
+from normalize import parse_rpe_feel, parse_weather
 
 
 def _jwt(payload: dict) -> str:
@@ -375,3 +376,184 @@ def test_gateway_includes_original_error_when_tokenstore_fails(tmp_path):
         pytest.raises(RuntimeError, match="PermissionError"),
     ):
         GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=v2)
+
+
+# --- Task 1: activity summary/weather fetch + RPE/Feel/weather parses ---
+
+
+def _gateway_with_http(monkeypatch, tmp_path, fh):
+    """GarminGateway wired to a fake owned-HTTP layer (no network)."""
+    v2 = tmp_path / "v2_tokenstore.json"
+    v2.write_text(json.dumps({"di_token": "t", "di_refresh_token": "r", "di_client_id": "c"}))
+    ts = GarminTokenStore(v2, timeout=5.0)
+    ts.load()
+    monkeypatch.setattr("gateway.GarminTokenStore", lambda p, timeout=None: ts)
+    monkeypatch.setattr("gateway.GarminHttp", lambda _ts: fh)
+    monkeypatch.setattr("gateway.choose_token_source", lambda *a, **k: ("path", str(v2)))
+    with mock.patch("gateway.load_op_creds", return_value=(None, None)):
+        return GarminGateway(cache_dir=tmp_path / "cache", tokenstore_v2=v2)
+
+
+def test_gateway_fetch_activity_summary_caches_payload(monkeypatch, tmp_path):
+    fh = mock.Mock(spec=GarminHttp)
+    payload = {"summaryDTO": {"directWorkoutRpe": 50, "directWorkoutFeel": 25}}
+    fh.fetch_activity_summary.return_value = payload
+    gw = _gateway_with_http(monkeypatch, tmp_path, fh)
+    out = gw.fetch_activity_summary(7)
+    assert out == payload
+    fh.fetch_activity_summary.assert_called_once_with(7)
+    cached = json.loads((tmp_path / "cache" / "activity_summary_7.json").read_text())
+    assert cached == payload
+
+
+def test_gateway_fetch_activity_weather_caches_payload(monkeypatch, tmp_path):
+    fh = mock.Mock(spec=GarminHttp)
+    payload = {"temp": 66, "apparentTemp": 66, "relativeHumidity": 88}
+    fh.fetch_activity_weather.return_value = payload
+    gw = _gateway_with_http(monkeypatch, tmp_path, fh)
+    out = gw.fetch_activity_weather(9)
+    assert out == payload
+    fh.fetch_activity_weather.assert_called_once_with(9)
+    cached = json.loads((tmp_path / "cache" / "activity_weather_9.json").read_text())
+    assert cached == payload
+
+
+def test_gateway_fetch_weather_empty_payload_cached_as_empty_dict(monkeypatch, tmp_path):
+    """Indoor runs yield {} (404 or empty) — cached so refresh skips refetch."""
+    fh = mock.Mock(spec=GarminHttp)
+    fh.fetch_activity_weather.return_value = {}
+    gw = _gateway_with_http(monkeypatch, tmp_path, fh)
+    assert gw.fetch_activity_weather(11) == {}
+    cached = json.loads((tmp_path / "cache" / "activity_weather_11.json").read_text())
+    assert cached == {}
+
+
+def test_gateway_fetch_wrappers_default_none_to_empty(monkeypatch, tmp_path):
+    fh = mock.Mock(spec=GarminHttp)
+    fh.fetch_activity_summary.return_value = None
+    fh.fetch_activity_weather.return_value = None
+    gw = _gateway_with_http(monkeypatch, tmp_path, fh)
+    assert gw.fetch_activity_summary(3) == {}
+    assert gw.fetch_activity_weather(3) == {}
+    assert json.loads((tmp_path / "cache" / "activity_summary_3.json").read_text()) == {}
+    assert json.loads((tmp_path / "cache" / "activity_weather_3.json").read_text()) == {}
+
+
+def test_garmin_http_summary_and_weather_use_activity_service_paths():
+    http = GarminHttp(mock.Mock())
+    http.get_json = mock.Mock(return_value={"ok": True})
+    assert http.fetch_activity_summary(42) == {"ok": True}
+    http.get_json.assert_called_once_with("/activity-service/activity/42")
+    http.get_json.reset_mock()
+    assert http.fetch_activity_weather(42) == {"ok": True}
+    http.get_json.assert_called_once_with("/activity-service/activity/42/weather")
+
+
+def test_garmin_http_weather_404_returns_empty_other_errors_raise():
+    http = GarminHttp(mock.Mock())
+    http.get_json = mock.Mock(
+        side_effect=GarminHttpError("API 404 for /activity-service/activity/1/weather: {}")
+    )
+    assert http.fetch_activity_weather(1) == {}
+    http.get_json = mock.Mock(side_effect=GarminHttpError("API 500 for /x: boom"))
+    with pytest.raises(GarminHttpError):
+        http.fetch_activity_weather(1)
+
+
+def test_garmin_http_fetch_coerces_non_dict_payload_to_empty():
+    http = GarminHttp(mock.Mock())
+    http.get_json = mock.Mock(return_value=[{"activityId": 1}])
+    assert http.fetch_activity_summary(1) == {}
+    assert http.fetch_activity_weather(1) == {}
+
+
+def test_parse_rpe_feel_maps_rpe_and_feel():
+    parsed = parse_rpe_feel({"summaryDTO": {"directWorkoutRpe": 50, "directWorkoutFeel": 25}})
+    assert parsed == {"rpe_10": 5.0, "feel": "Weak"}
+
+
+def test_parse_rpe_feel_five_labels_and_zero_values_present():
+    labels = {0: "Very Weak", 25: "Weak", 50: "Normal", 75: "Strong", 100: "Very Strong"}
+    for raw, label in labels.items():
+        assert parse_rpe_feel({"summaryDTO": {"directWorkoutFeel": raw}})["feel"] == label
+    # RPE 0 is a present value, not a missing one.
+    assert parse_rpe_feel({"summaryDTO": {"directWorkoutRpe": 0}})["rpe_10"] == 0.0
+
+
+def test_parse_rpe_feel_out_of_range_feel_gets_question_suffix():
+    assert parse_rpe_feel({"summaryDTO": {"directWorkoutFeel": 60}})["feel"] == "60?"
+    assert parse_rpe_feel({"summaryDTO": {"directWorkoutFeel": -5}})["feel"] == "-5?"
+
+
+def test_parse_rpe_feel_none_safe_on_empty_or_malformed_payload():
+    for payload in (None, {}, {"summaryDTO": None}, {"summaryDTO": []}, {"summaryDTO": {}}):
+        assert parse_rpe_feel(payload) == {"rpe_10": None, "feel": None}
+    malformed = {"summaryDTO": {"directWorkoutRpe": "bad", "directWorkoutFeel": [1, 2]}}
+    assert parse_rpe_feel(malformed) == {"rpe_10": None, "feel": "[1, 2]?"}
+
+
+def test_parse_weather_maps_verified_payload():
+    parsed = parse_weather(
+        {
+            "temp": 66,
+            "apparentTemp": 66,
+            "dewPoint": 63,
+            "relativeHumidity": 88,
+            "windDirection": 200,
+            "windDirectionCompassPoint": "ssw",
+            "windSpeed": 3,
+            "windGust": None,
+            "weatherStationDTO": {"name": "some-station"},
+            "weatherTypeDTO": {"desc": "Fair"},
+        }
+    )
+    assert parsed == {
+        "wx_temp": 66,
+        "wx_feels": 66,
+        "wx_humidity": 88,
+        "wx_wind": 3,
+        "wx_wind_dir": "ssw",
+        "wx_desc": "Fair",
+        "wx_unit": "F",
+    }
+
+
+def test_parse_weather_none_safe_on_empty_or_malformed_payload():
+    all_none = {
+        "wx_temp": None,
+        "wx_feels": None,
+        "wx_humidity": None,
+        "wx_wind": None,
+        "wx_wind_dir": None,
+        "wx_desc": None,
+        "wx_unit": "F",
+    }
+    for payload in (
+        None,
+        {},
+        [],
+        {"weatherTypeDTO": None},
+        {"weatherTypeDTO": "oops"},
+        {"weatherTypeDTO": {"desc": 5}},
+        {"temp": "warm", "relativeHumidity": "humid", "apparentTemp": None},
+    ):
+        assert parse_weather(payload) == all_none
+
+
+def test_parse_weather_wind_dir_falls_back_to_degrees():
+    assert parse_weather({"windDirection": 200})["wx_wind_dir"] == "200"
+
+
+def test_parse_helpers_emit_canonical_task2_keys():
+    """Guard for the ledger's Ruling 1: downstream (Task 2) consumes exactly
+    these keys — no dew_point, no wx_temp_f, no renames."""
+    assert set(parse_rpe_feel({})) == {"rpe_10", "feel"}
+    assert set(parse_weather({})) == {
+        "wx_temp",
+        "wx_feels",
+        "wx_humidity",
+        "wx_wind",
+        "wx_wind_dir",
+        "wx_desc",
+        "wx_unit",
+    }
