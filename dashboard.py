@@ -46,6 +46,19 @@ FETCH_DAYS = 365
 FETCH_TIMEOUT = 90  # hard cap on the whole Garmin refresh (auth + fetches)
 BACKFILL_CALL_TIMEOUT_S = 8  # per summary/weather fetch during RPE/weather backfill
 BACKFILL_RESERVE_S = 15  # stop RPE/weather backfill this many seconds before FETCH_TIMEOUT
+# The persisted RPE/Feel/weather columns (Task 2 schema) — the catch-up pass
+# selects stored rows still holding NULLs among these.
+_RPE_WX_FIELDS = (
+    "rpe_10",
+    "feel",
+    "wx_temp",
+    "wx_feels",
+    "wx_humidity",
+    "wx_wind",
+    "wx_wind_dir",
+    "wx_desc",
+    "wx_unit",
+)
 DEFAULT_WINDOW_DAYS = 180
 PERIOD_KEY = "period"
 CACHE_DIR_NAME = "app_cache"
@@ -241,6 +254,7 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
     """
     end = date.today()
     started = time.monotonic()  # anchors the backfill budget to the 90s guard
+    _deadline = started + FETCH_TIMEOUT - BACKFILL_RESERVE_S
     store = get_store()
     if fetch_mode == "historical":
         earliest = store.earliest_activity_date()
@@ -274,14 +288,24 @@ def refresh_garmin(fetch_mode: str = "incremental") -> tuple[list, dict, list, l
             raise RuntimeError("Garmin returned no activities")
         if fetch_mode == "historical":
             raise RuntimeError("No older activities found in this date range")
-        # Incremental mode with no new activities is a normal no-op.
+        # Incremental mode with no new activities is a normal no-op — and the
+        # moment the store-driven catch-up pass does its work: rows left NULL
+        # by an earlier refresh's budget stop or fetch failure resume here.
+        _backfill_catchup(gw, store, _deadline)
         return [], lt, race, vo2
     acts = [from_summary(a) for a in raw]
-    # RPE/Feel/weather backfill runs BEFORE the caller's store.save_activities
-    # (save_activities is INSERT OR REPLACE — merging here means one save
-    # persists everything and never NULLs previously backfilled rows). Bounded
-    # so a first-run backfill of hundreds of ids cannot overrun FETCH_TIMEOUT.
-    _backfill_rpe_weather(gw, acts, started + FETCH_TIMEOUT - BACKFILL_RESERVE_S)
+    # Pass (a) — freshness wins: RPE/Feel/weather backfill runs BEFORE the
+    # caller's store.save_activities (save_activities is INSERT OR REPLACE —
+    # merging here means one save persists everything and never NULLs
+    # previously backfilled rows). Bounded by the deadline so a first-run
+    # backfill of hundreds of ids cannot overrun FETCH_TIMEOUT.
+    _backfill_rpe_weather(gw, acts, _deadline)
+    # Pass (b) — store-driven catch-up: stored rows still holding NULLs (a
+    # budget stop or fetch failure on an earlier refresh) get whatever budget
+    # remains; it saves its own merges, so recovery also happens on refreshes
+    # with no new activities. If the budget is gone, remaining NULL rows
+    # resume on the next refresh — that is the recovery mechanism.
+    _backfill_catchup(gw, store, _deadline)
     return acts, lt, race, vo2
 
 
@@ -297,37 +321,91 @@ def _cached_or_fetch(gw: GarminGateway, activity_id: int, name: str, fetch) -> d
     return run_with_timeout(fetch, timeout=BACKFILL_CALL_TIMEOUT_S, activity_id=activity_id)
 
 
-def _backfill_rpe_weather(gw: GarminGateway, acts: list, deadline: float) -> None:
-    """Merge RPE/Feel/weather onto freshly fetched activities before they are saved.
+def _needs_backfill(a) -> bool:
+    """True while any persisted RPE/Feel/weather column is still NULL.
 
-    Cache-first per endpoint (disk payload beats network), per-call timeout via
-    `run_with_timeout`, and the whole pass stops at `deadline` (refresh start +
-    FETCH_TIMEOUT - BACKFILL_RESERVE_S): whatever does not fit the budget stays
-    uncached and is picked up on the next refresh. Any fetch/parse failure on
-    one activity is logged to stderr and skipped — backfill never blocks or
-    raises the refresh.
+    Genuinely-absent data (indoor `{}` weather, no watch RPE) leaves columns
+    NULL forever, so such rows stay candidates — but `_cached_or_fetch` then
+    serves them from disk, so absent data never causes repeated *network*
+    calls; only an endpoint whose fetch never succeeded (no cache file) is
+    fetched again.
     """
-    total = len(acts)
-    for i, a in enumerate(acts):
-        aid = a.activity_id
+    return any(getattr(a, f) is None for f in _RPE_WX_FIELDS)
+
+
+def _backfill_activity(gw: GarminGateway, a, deadline: float) -> bool:
+    """Backfill one activity, cache-first, deadline-checked between endpoints.
+
+    Returns True if any backfill field changed. Each endpoint's fetch+parse+
+    merge sits in its own try — a failure is logged and skipped, never raised.
+    """
+    aid = a.activity_id
+
+    def _snapshot() -> tuple:
+        return tuple(getattr(a, f) for f in _RPE_WX_FIELDS)
+
+    before = _snapshot()
+    try:
+        summary = _cached_or_fetch(gw, aid, "activity_summary", gw.fetch_activity_summary)
+        for key, value in parse_rpe_feel(summary).items():
+            setattr(a, key, value)
+    except Exception as exc:  # noqa: BLE001 - skip-on-failure: refresh must never block
+        _log_backfill_skip(aid, "summary", exc)
+    if time.monotonic() >= deadline:
+        return _snapshot() != before  # no budget left for weather; summary counts
+    try:
+        weather = _cached_or_fetch(gw, aid, "activity_weather", gw.fetch_activity_weather)
+        for key, value in parse_weather(weather).items():
+            setattr(a, key, value)
+    except Exception as exc:  # noqa: BLE001 - skip-on-failure: refresh must never block
+        _log_backfill_skip(aid, "weather", exc)
+    return _snapshot() != before
+
+
+def _backfill_rpe_weather(gw: GarminGateway, acts: list, deadline: float) -> list:
+    """Merge RPE/Feel/weather onto a list of activities.
+
+    Shared by pass (a) (freshly fetched activities) and `_backfill_catchup`
+    (pass (b): stored rows still holding NULLs). Cache-first per endpoint
+    (disk payload beats network), per-call timeout via `run_with_timeout`,
+    whole pass bounded by `deadline` (refresh start + FETCH_TIMEOUT -
+    BACKFILL_RESERVE_S). Returns the activities whose backfill fields changed.
+    Rows not reached before the deadline keep their NULLs and are resumed by
+    the catch-up pass on a later refresh; any fetch/parse failure is logged
+    and skipped — backfill never blocks or raises the refresh.
+    """
+    changed: list = []
+    attempted = 0
+    for a in acts:
         if time.monotonic() >= deadline:
-            _log_backfill_budget(i, total)
             break
-        try:
-            summary = _cached_or_fetch(gw, aid, "activity_summary", gw.fetch_activity_summary)
-            for key, value in parse_rpe_feel(summary).items():
-                setattr(a, key, value)
-        except Exception as exc:  # noqa: BLE001 - skip-on-failure: refresh must never block
-            _log_backfill_skip(aid, "summary", exc)
-        if time.monotonic() >= deadline:
-            _log_backfill_budget(i, total)
-            break
-        try:
-            weather = _cached_or_fetch(gw, aid, "activity_weather", gw.fetch_activity_weather)
-            for key, value in parse_weather(weather).items():
-                setattr(a, key, value)
-        except Exception as exc:  # noqa: BLE001 - skip-on-failure: refresh must never block
-            _log_backfill_skip(aid, "weather", exc)
+        attempted += 1
+        if _backfill_activity(gw, a, deadline):
+            changed.append(a)
+    if attempted < len(acts):
+        _log_backfill_budget(attempted, len(acts))
+    return changed
+
+
+def _backfill_catchup(gw: GarminGateway, store, deadline: float) -> None:
+    """Store-driven catch-up pass (b): backfill stored rows still holding NULLs.
+
+    Runs after the fresh-activity pass with whatever budget remains (freshness
+    wins), over `store.load_activities()` rows selected by `_needs_backfill`.
+    Same cache-first / per-call-timeout / skip-on-failure rules as pass (a).
+    Only rows whose fields actually changed are written back — merges are
+    persisted here because the caller only saves fresh activities. If the
+    budget runs out mid-pass, the untouched rows stay NULL in the store and
+    resume on the next refresh: that is the recovery mechanism.
+    """
+    if time.monotonic() >= deadline:
+        return  # no budget left after pass (a); resume on the next refresh
+    candidates = [a for a in store.load_activities() if _needs_backfill(a)]
+    if not candidates:
+        return
+    changed = _backfill_rpe_weather(gw, candidates, deadline)
+    if changed:
+        store.save_activities(changed)
 
 
 def _log_backfill_skip(activity_id: int, what: str, exc: Exception) -> None:
@@ -340,8 +418,8 @@ def _log_backfill_skip(activity_id: int, what: str, exc: Exception) -> None:
 
 def _log_backfill_budget(done: int, total: int) -> None:
     print(
-        f"[backfill] time budget exhausted after {done}/{total} activities; "
-        "the rest is picked up on the next refresh",
+        f"[backfill] time budget exhausted after {done}/{total} rows; "
+        "resumed by the next refresh's catch-up pass",
         file=sys.stderr,
         flush=True,
     )
@@ -1522,8 +1600,13 @@ def main() -> None:
             )
             if acts:
                 store.save_activities(acts)
-                st.session_state["activities"] = store.load_activities()
                 st.session_state["_period_needs_reset"] = True
+            # Reload after every successful refresh: main's save above AND the
+            # catch-up pass inside refresh_garmin both write rows, and a
+            # catch-up-only rewrite doesn't move the activities fingerprint
+            # (row count / elapsed total unchanged), so resolve_activities
+            # alone would keep serving stale objects.
+            st.session_state["activities"] = store.load_activities()
             # Trend payloads update even when there are no new activities.
             st.session_state["lt_payload"] = lt
             st.session_state["race_payload"] = race

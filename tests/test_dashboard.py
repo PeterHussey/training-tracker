@@ -54,6 +54,7 @@ def test_refresh_garmin_narrows_window_when_store_has_activities(monkeypatch, tm
 
     fake_store = mock.Mock()
     fake_store.latest_activity_date.return_value = latest
+    fake_store.load_activities.return_value = []  # catch-up pass (b) finds nothing
     monkeypatch.setattr("dashboard.get_store", lambda: fake_store)
 
     fake_gw = mock.Mock()
@@ -94,6 +95,7 @@ def test_refresh_garmin_full_window_when_store_empty(monkeypatch, tmp_path):
 
     fake_store = mock.Mock()
     fake_store.latest_activity_date.return_value = None
+    fake_store.load_activities.return_value = []  # catch-up pass (b) finds nothing
     monkeypatch.setattr("dashboard.get_store", lambda: fake_store)
 
     fake_gw = mock.Mock()
@@ -127,6 +129,7 @@ def test_refresh_garmin_no_activities_is_noop_when_store_has_data(monkeypatch):
 
     fake_store = mock.Mock()
     fake_store.latest_activity_date.return_value = latest
+    fake_store.load_activities.return_value = []  # catch-up pass (b) finds nothing
     monkeypatch.setattr("dashboard.get_store", lambda: fake_store)
 
     fake_gw = mock.Mock()
@@ -271,7 +274,8 @@ def test_refresh_garmin_backfill_cache_hit_skips_fetch(monkeypatch, tmp_path):
 def test_refresh_garmin_backfill_skips_failed_activity(monkeypatch, tmp_path):
     """Skip-on-failure: fetches raising for one id must not block the refresh —
     the remaining activities still backfill and persist; the failed one stays
-    None (its payloads land in the cache on a later successful retry)."""
+    NULL and is re-selected by the next refresh's store-driven catch-up pass
+    (`_backfill_catchup`) once its fetch succeeds."""
     gw, store = _refresh_backfill_setup(monkeypatch, tmp_path, [_raw(5001), _raw(5002)])
 
     def _summary(activity_id):
@@ -311,8 +315,9 @@ def test_refresh_garmin_backfill_skips_failed_activity(monkeypatch, tmp_path):
 def test_backfill_stops_when_time_budget_exhausted(tmp_path):
     """Budget guard: past the deadline the pass stops without fetching, so a
     first-run backfill of hundreds of ids cannot overrun the 90s refresh guard.
-    Already-persisted rows keep their values; remaining ids wait for the next
-    (cache-first) refresh."""
+    Rows already persisted keep their values; the untouched (NULL) rows resume
+    via the next refresh's catch-up pass — see
+    test_refresh_garmin_catchup_backfills_stored_null_rows."""
     from normalize import from_summary
 
     gw = mock.Mock()
@@ -343,6 +348,71 @@ def test_refresh_garmin_bounds_backfill_deadline_inside_fetch_timeout(monkeypatc
     remaining = captured["deadline"] - captured["now"]
     assert 0 < remaining <= d.FETCH_TIMEOUT - d.BACKFILL_RESERVE_S + 1
     store.close()
+
+
+def test_refresh_garmin_catchup_backfills_stored_null_rows(monkeypatch, tmp_path):
+    """Ruling 7 recovery: a stored row still holding NULL backfill columns is
+    fetched by the store-driven catch-up pass on a later refresh even though it
+    was NOT in the fresh fetch (incremental windows never re-request it)."""
+    from normalize import from_summary
+
+    # Nothing new from Garmin (incremental no-op) — (b) must still run.
+    gw, store = _refresh_backfill_setup(monkeypatch, tmp_path, [])
+    # Row saved earlier with NULL columns (e.g. budget-stopped on a prior run).
+    store.save_activities([from_summary(_raw(6001))])
+    gw.fetch_activity_summary.return_value = _SUMMARY_OK
+    gw.fetch_activity_weather.return_value = _WEATHER_OK
+
+    acts, *_ = d.refresh_garmin()
+
+    assert acts == []
+    gw.fetch_activity_summary.assert_called_once_with(activity_id=6001)
+    gw.fetch_activity_weather.assert_called_once_with(activity_id=6001)
+    # The catch-up pass persists its own merges — acts is empty, so no
+    # caller-level save happens on this path.
+    row = {a.activity_id: a for a in store.load_activities()}[6001]
+    store.close()
+    assert row.rpe_10 == 7.5
+    assert row.feel == "Very Strong"
+    assert row.wx_temp == 46.0
+    assert row.wx_desc == "Mostly Cloudy"
+
+
+def test_backfill_budget_exhausted_resumes_on_later_refresh(monkeypatch, tmp_path):
+    """When pass (a) exhausts the budget, pass (b) does nothing too — but the
+    NULL rows are persisted, and a later refresh resumes them (freshness first,
+    catch-up after): NULL rows shrink over successive refreshes."""
+    from normalize import from_summary
+
+    gw, store = _refresh_backfill_setup(monkeypatch, tmp_path, [_raw(7001)])
+    store.save_activities([from_summary(_raw(7000))])  # older stored row, all NULL
+    gw.fetch_activity_summary.return_value = _SUMMARY_OK
+    gw.fetch_activity_weather.return_value = _WEATHER_OK
+
+    # Refresh 1: deadline == refresh start → no budget for either pass.
+    monkeypatch.setattr(d, "BACKFILL_RESERVE_S", d.FETCH_TIMEOUT)
+    acts1, *_ = d.refresh_garmin()
+    assert len(acts1) == 1  # fresh activity fetched, backfill skipped
+    gw.fetch_activity_summary.assert_not_called()  # (a) skipped AND (b) skipped
+    gw.fetch_activity_weather.assert_not_called()
+    store.save_activities(acts1)  # main() persists the fresh list (still NULLs)
+    rows = {a.activity_id: a for a in store.load_activities()}
+    assert rows[7000].rpe_10 is None and rows[7001].rpe_10 is None
+
+    # Refresh 2: budget back → (a) covers the fresh id first, then (b) catches
+    # up the stored NULL row.
+    monkeypatch.setattr(d, "BACKFILL_RESERVE_S", 15)
+    acts2, *_ = d.refresh_garmin()
+    store.save_activities(acts2)  # main() save
+    ids = [c.kwargs["activity_id"] for c in gw.fetch_activity_summary.call_args_list]
+    assert ids[0] == 7001  # freshness wins: pass (a) ran before the catch-up
+    assert 7000 in ids  # catch-up resumed the stored NULL row
+    rows = {a.activity_id: a for a in store.load_activities()}
+    store.close()
+    assert rows[7000].rpe_10 == 7.5
+    assert rows[7000].wx_temp == 46.0
+    assert rows[7001].rpe_10 == 7.5  # NULL rows shrank to zero
+    assert rows[7001].wx_desc == "Mostly Cloudy"
 
 
 def test_period_bounds_min_and_end_from_dates():
