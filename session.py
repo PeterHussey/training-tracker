@@ -260,12 +260,14 @@ def build_repetitions(activities) -> dict[str, list]:
     return groups
 
 
-def repetition_rows(activities, code: str) -> list[dict]:
+def repetition_rows(activities, code: str, fast30s_by_id: dict | None = None) -> list[dict]:
     """Per-repetition comparison rows for one workout code, oldest first.
 
     Each row carries the fields the dashboard plots/musters for a single
-    repetition (pace is kept as m/s in avg_speed and distance as km, so the
-    view owns unit formatting).
+    repetition (pace is kept as m/s in avg_speed, distance as km, and
+    fastest-30s as m/s, so the view owns unit formatting). RPE/Feel/weather
+    ride along raw from the Activity; `fast30s` is the on-demand fastest-30s
+    speed keyed by activity id (None when the caller has no value for a rep).
     """
     rows = []
     for a in activities:
@@ -284,6 +286,16 @@ def repetition_rows(activities, code: str) -> list[dict]:
                 "aerobic_te": a.aerobic_te,
                 "anaerobic_te": a.anaerobic_te,
                 "ele_gain_m": a.ele_gain_m,
+                "rpe_10": a.rpe_10,
+                "feel": a.feel,
+                "wx_temp": a.wx_temp,
+                "wx_feels": a.wx_feels,
+                "wx_humidity": a.wx_humidity,
+                "wx_wind": a.wx_wind,
+                "wx_wind_dir": a.wx_wind_dir,
+                "wx_desc": a.wx_desc,
+                "wx_unit": a.wx_unit,
+                "fast30s": (fast30s_by_id or {}).get(a.activity_id),
             }
         )
     return sorted(rows, key=lambda r: r["date"])

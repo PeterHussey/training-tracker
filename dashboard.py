@@ -655,6 +655,62 @@ def _fmt_pace_min(v: float, units: str) -> str:
     return f"{m}:{s:02d} {unit}"
 
 
+def _fmt_rpe(rpe_10) -> str:
+    """RPE on the 0–10 display scale: 6.0 → '6/10', 7.5 → '7.5/10'."""
+    if rpe_10 is None:
+        return "—"
+    return f"{int(rpe_10)}/10" if float(rpe_10).is_integer() else f"{rpe_10:.1f}/10"
+
+
+def _fmt_wx_temp(value, units: str, wx_unit: str | None = None) -> str:
+    """Format a stored temperature; converts for display only, never mutates.
+
+    Stored raw values are °F (`wx_unit` default 'F', per the parse); °C is
+    shown only when the units toggle displays metric, and vice versa when a
+    row somehow stores °C. Missing → '—'.
+    """
+    if value is None:
+        return "—"
+    src_c = str(wx_unit or "F").upper() == "C"
+    metric = units in ("km", "metric")
+    if metric and not src_c:
+        value = (value - 32.0) * 5.0 / 9.0
+    elif not metric and src_c:
+        value = value * 9.0 / 5.0 + 32.0
+    return f"{value:.0f}°{'C' if metric else 'F'}"
+
+
+def _fmt_wx_hum(value) -> str:
+    """Relative humidity as a whole percentage; missing → '—'."""
+    return f"{value:.0f}%" if value is not None else "—"
+
+
+def _fmt_wx_wind(value, units: str, wind_dir: str | None = None) -> str:
+    """Format stored wind speed (raw mph from the US weather station).
+
+    Shown in km/h only when the units toggle displays metric (same display-only
+    rule as temperature); direction rides along when recorded. Missing → '—'.
+    """
+    if value is None:
+        return "—"
+    text = f"{value * 1.609344:.0f} km/h" if units in ("km", "metric") else f"{value:.0f} mph"
+    return f"{text} {wind_dir}" if wind_dir else text
+
+
+def _rpe_wx_cols(a, units: str) -> dict:
+    """RPE/Feel/weather display columns shared by the flat activities list and
+    the repetition-comparison table. Pure formatting over stored values (never
+    a fetch — older rows degrade to '—' until a refresh backfills them)."""
+    return {
+        "RPE": _fmt_rpe(a.rpe_10),
+        "Feel": a.feel or "—",
+        "Temp": _fmt_wx_temp(a.wx_temp, units, a.wx_unit),
+        "Hum": _fmt_wx_hum(a.wx_humidity),
+        "Wind": _fmt_wx_wind(a.wx_wind, units, a.wx_wind_dir),
+        "Wx": a.wx_desc or "—",
+    }
+
+
 def anchor_point(view, hr_key: str, pace_key: str) -> dict | None:
     """Latest best-effort anchor from the UNFILTERED view series.
 
@@ -1454,10 +1510,12 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
         st.caption(f"Only one repetition of **{code}** found — add more to compare.")
         return
     # Fastest-30s, computed on demand for THIS comparison group only: details
-    # are ensured cache-first for the group's outdoor-running reps (never
-    # persisted, never in the refresh path). Strength/cross reps have no
-    # meaningful pace and missing/failed details stay None.
-    candidates = [a for a in reps if a.sport == "running"]
+    # are ensured cache-first for the group's pace-capable reps (running +
+    # treadmill — treadmill pace is real; missing speed falls out via
+    # best_window → None). Never persisted, never in the refresh path.
+    # Strength/cross reps have no meaningful pace and missing/failed details
+    # stay None.
+    candidates = [a for a in reps if a.sport in ("running", "treadmill")]
     series = _fetch_details_for_reps(candidates, APP_CACHE_DIR)
     fast30 = {a.activity_id: fastest_30s_pace(series, a.activity_id) for a in candidates}
     table = []
@@ -1482,10 +1540,11 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
                 "elev gain": _fmt(a.ele_gain_m, {"unit": "m"}, units)
                 if a.ele_gain_m is not None
                 else "—",
+                **_rpe_wx_cols(a, units),
                 "fast30s": (
                     _fmt_pace_min((m_per_unit / fast30[a.activity_id]) / 60.0, units)
                     if fast30.get(a.activity_id)
-                    else None
+                    else "—"
                 ),
             }
         )
@@ -1493,12 +1552,12 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
     st.caption(
         "📊 **How to read:** Table shows every repetition of this workout (same 80/20 code), oldest first. "
         "GAP = Grade-Adjusted Pace (compensates for elevation). TE = Garmin Training Effect. "
+        "RPE/Feel = watch-side rating (— until backfilled); weather columns are Garmin-recorded "
+        "conditions; Fast30s = fastest 30 s pace of the rep. "
         "Compare pace/HR/GAP across reps to track fitness progression on the same workout."
     )
-    # fast30s is row-data-only plumbing for now: the visible Fast30s column
-    # (incl. "—" rendering for None) lands with Task 5's comparison-table work.
     st.dataframe(
-        [{k: v for k, v in row.items() if k != "fast30s"} for row in table],
+        table,
         width='stretch',
         hide_index=True,
     )
@@ -1514,6 +1573,10 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
             gap_paces.append(m_per_unit / gap_speed / 60.0 if gap_speed > 0 else None)
         else:
             gap_paces.append(None)
+    fast30_paces = [
+        m_per_unit / fast30[a.activity_id] / 60.0 if fast30.get(a.activity_id) else None
+        for a in reps
+    ]
     hrs = [a.avg_hr for a in reps]
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=xs, y=paces, mode="lines+markers", name="avg pace (min/unit)"))
@@ -1524,6 +1587,15 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
             mode="lines+markers",
             name="GAP (min/unit)",
             line={"color": "#A23B72", "dash": "dot"},
+        ),
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=xs,
+            y=fast30_paces,
+            mode="lines+markers",
+            name="Fast30s (min/unit)",
+            line={"color": "#2E86AB", "dash": "dash"},
         ),
     )
     fig.add_trace(
@@ -1538,8 +1610,9 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
     )
     st.plotly_chart(fig, width='stretch')
     st.caption(
-        "📊 **How to read:** Blue = average pace. Purple dashed = GAP (pace adjusted for hills — "
-        "compares effort across hilly/flat routes). Orange = average HR (right axis). "
+        "📊 **How to read:** Blue = average pace. Purple dotted = GAP (pace adjusted for hills — "
+        "compares effort across hilly/flat routes). Teal dashed = Fast30s (fastest 30 s pace of "
+        "each rep; gaps mean no pace data). Average HR = right axis. "
         "Improving fitness = pace/GAP gets faster at same or lower HR."
     )
 
@@ -1553,6 +1626,8 @@ def render_activities(activities, since, until, units, profile) -> None:
         - **TE** = Garmin Training Effect (aerobic/anaerobic).
         - **VO2max** = Per-run Firstbeat estimate.
         - **Graded** = WMA age-graded % of open world record (outdoor runs ≥3 km).
+        - **RPE/Feel** = watch-side session rating; **Temp/Hum/Wind/Wx** =
+          Garmin-recorded conditions (°C/km/h when Units = km, °F/mph when miles).
         """
     )
     bm_period = best_mile([a for a in activities if since <= a.date <= until])
@@ -1594,6 +1669,10 @@ def render_activities(activities, since, until, units, profile) -> None:
                 "elev gain": _fmt(a.ele_gain_m, {"unit": "m"}, units)
                 if a.ele_gain_m is not None
                 else "—",
+                # RPE/Feel/weather only — no Fast30s here: computing it for
+                # every row would need per-row details fetches (the precompute
+                # the owner rejected); it lives in the comparison table only.
+                **_rpe_wx_cols(a, units),
                 "activity_id": a.activity_id,
             }
         )

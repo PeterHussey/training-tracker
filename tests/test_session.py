@@ -16,6 +16,7 @@ from session import (
     build_session_view,
     fastest_30s_pace,
     in_period,
+    repetition_rows,
     resolve_activities,
     run_with_timeout,
     week_start,
@@ -514,3 +515,64 @@ def test_fastest_30s_pace_standstill_returns_none():
     speed = [0.0] * 60
     ts = [float(i * 1000) for i in range(60)]
     assert fastest_30s_pace({7: (hr, speed, ts)}, 7) is None
+
+
+# --- repetition_rows: comparison-table row data (Task 5) ---
+
+
+def _rep_act(activity_id, day, **fields):
+    """Coded outdoor run for repetition-row tests."""
+    return Activity(
+        activity_id=activity_id,
+        sport="running",
+        date=date(2026, 8, day),
+        ts_ms=0,
+        distance_m=5600.0,
+        duration_s=2100.0,
+        elapsed_s=2200.0,
+        avg_hr=140.0,
+        max_hr=160.0,
+        name="Lincoln - RF24 (Foundation Run)",
+        **fields,
+    )
+
+
+def test_repetition_rows_carry_rpe_feel_weather_and_fast30s():
+    """Rows carry the new persisted fields raw (the view formats them) plus
+    the on-demand fastest-30s speed when the caller supplies one."""
+    full = _rep_act(
+        9,
+        15,
+        rpe_10=6.0,
+        feel="Normal",
+        wx_temp=46.0,
+        wx_feels=44.0,
+        wx_humidity=65.0,
+        wx_wind=8.0,
+        wx_wind_dir="nw",
+        wx_desc="Fair",
+        wx_unit="F",
+    )
+    bare = _rep_act(11, 19)  # pre-backfill row: every new field is None
+
+    rows = {r["activity_id"]: r for r in repetition_rows([full, bare], "RF24", {9: 3.4})}
+
+    assert rows[9]["rpe_10"] == 6.0
+    assert rows[9]["feel"] == "Normal"
+    assert rows[9]["wx_temp"] == 46.0
+    assert rows[9]["wx_feels"] == 44.0
+    assert rows[9]["wx_humidity"] == 65.0
+    assert rows[9]["wx_wind"] == 8.0
+    assert rows[9]["wx_wind_dir"] == "nw"
+    assert rows[9]["wx_desc"] == "Fair"
+    assert rows[9]["wx_unit"] == "F"
+    assert rows[9]["fast30s"] == 3.4  # raw m/s — the view owns unit formatting
+
+    assert rows[11]["rpe_10"] is None
+    assert rows[11]["feel"] is None
+    assert rows[11]["wx_temp"] is None
+    assert rows[11]["wx_desc"] is None
+    assert rows[11]["fast30s"] is None  # id absent from the mapping
+
+    # No mapping supplied at all → every row's fast30s degrades to None.
+    assert repetition_rows([full], "RF24")[0]["fast30s"] is None

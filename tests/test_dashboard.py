@@ -1073,9 +1073,14 @@ def test_render_repetitions_fetches_missing_group_details(monkeypatch, tmp_path)
     (v1, u1), (v2, u2) = pace_calls
     assert (v1, u1) == (pytest.approx(1000.0 / 3.0 / 60.0), "km")
     assert (v2, u2) == (pytest.approx(1000.0 / 4.0 / 60.0), "km")
-    # the value rides in the row data only — the Fast30s column render is Task 5's
+    # Task 5 flip: the Fast30s column is visible (strip removed), in reps'
+    # chronological order, formatted by _fmt_pace_min (stubbed above)
     shown = [a for name, a in fake.calls if name == "dataframe"][0][0]
-    assert shown and all("fast30s" not in row for row in shown)
+    assert shown and all("fast30s" in row for row in shown)
+    assert [row["fast30s"] for row in shown] == ["5.556", "4.167"]
+    # plus the shared RPE/Feel/weather columns — all unbackfilled → '—'
+    for row in shown:
+        assert all(row[k] == "—" for k in ("RPE", "Feel", "Temp", "Hum", "Wind", "Wx"))
 
 
 def test_render_repetitions_failed_fetch_does_not_break_group(monkeypatch, tmp_path):
@@ -1097,13 +1102,19 @@ def test_render_repetitions_failed_fetch_does_not_break_group(monkeypatch, tmp_p
     assert sorted(fetched) == [11, 12]  # both attempted; the dead one didn't abort the rest
     assert len(pace_calls) == 1  # only the healthy rep produced a pace value
     assert pace_calls[0] == (pytest.approx(1000.0 / 4.0 / 60.0), "km")
+    # the dead rep degrades to '—' in the visible Fast30s column (oldest first)
+    shown = [a for name, a in fake.calls if name == "dataframe"][0][0]
+    assert [row["fast30s"] for row in shown] == ["—", "4.167"]
 
 
-def test_render_repetitions_fetches_only_outdoor_running_reps(monkeypatch, tmp_path):
-    """Strength/cross reps have no meaningful pace: never fetched, value None."""
+def test_render_repetitions_gate_includes_treadmill_excludes_strength(monkeypatch, tmp_path):
+    """Ruling 8: treadmill pace is real — it passes the fetch gate alongside
+    outdoor running. Strength/cross reps have no meaningful pace: never
+    fetched, value '—'."""
     acts = [
         _coded_act(21, "Winnetka - RF24 (Foundation Run)", 10, sport="running"),
         _coded_act(22, "Winnetka - RF24 (Foundation Run)", 15, sport="strength"),
+        _coded_act(23, "Winnetka - RF24 (Foundation Run)", 20, sport="treadmill"),
     ]
     fetched = []
     monkeypatch.setattr(d, "APP_CACHE_DIR", tmp_path)
@@ -1114,8 +1125,11 @@ def test_render_repetitions_fetches_only_outdoor_running_reps(monkeypatch, tmp_p
 
     d.render_repetitions(acts, 21, "km")
 
-    assert fetched == [21]  # the strength rep's details are never requested
-    assert len(pace_calls) == 1  # only the outdoor run got a pace value
+    assert fetched == [21, 23]  # the strength rep's details are never requested
+    assert len(pace_calls) == 2  # running + treadmill both got a pace value
+    shown = [a for name, a in fake.calls if name == "dataframe"][0][0]
+    # both fetched reps parse to 4.0 m/s → 1000/4/60 = 4.167; strength → '—'
+    assert [row["fast30s"] for row in shown] == ["4.167", "—", "4.167"]
 
 
 def test_render_activities_no_selection_never_fetches_details(monkeypatch):
@@ -1133,3 +1147,164 @@ def test_render_activities_no_selection_never_fetches_details(monkeypatch):
     d.render_activities(acts, date(2026, 8, 1), date(2026, 8, 31), "km", PROFILE_40M)
 
     gw_factory.assert_not_called()
+
+
+# --- RPE / Feel / weather columns + Fast30s chart trace (Task 5) ---
+
+
+def _wx_act(activity_id, day, **wx):
+    """Outdoor run carrying the persisted RPE/Feel/weather fields."""
+    fields = {
+        "rpe_10": 6.0,
+        "feel": "Normal",
+        "wx_temp": 46.0,
+        "wx_feels": 44.0,
+        "wx_humidity": 65.0,
+        "wx_wind": 8.0,
+        "wx_wind_dir": "nw",
+        "wx_desc": "Fair",
+        "wx_unit": "F",
+    }
+    fields.update(wx)
+    return Activity(
+        activity_id,
+        "running",
+        date(2026, 1, day),
+        0,
+        5000.0,
+        1000.0,
+        1000.0,
+        150.0,
+        170.0,
+        **fields,
+    )
+
+
+def _render_activities_rows(monkeypatch, acts, units):
+    """Render the flat list and return its rows keyed by date."""
+    recorded = []
+    fake = _FakeSt()
+
+    def _df(*a, **k):
+        recorded.append(a)
+        return mock.Mock(selection=mock.Mock(rows=[]))
+
+    fake.dataframe = _df
+    monkeypatch.setattr(d, "st", fake)
+    d.render_activities(acts, date(2026, 1, 1), date(2026, 1, 31), units, PROFILE_40M)
+    df = recorded[0][0]
+    return df, {row["date"]: row for row in df.to_dict("records")}
+
+
+def test_render_activities_rpe_feel_weather_rows_metric(monkeypatch):
+    """Flat list shows RPE/Feel/Temp/Hum/Wind/Wx — '—' when a field is missing
+    (pre-backfill rows), °C/km/h display when Units = km, and never a Fast30s
+    column (the owner-rejected precompute stays comparison-only)."""
+    acts = [
+        _wx_act(1, 10),  # full backfill
+        _wx_act(
+            2,
+            17,
+            rpe_10=7.5,
+            feel="60?",  # out-of-range Feel keeps the parse's '?' suffix, as-is
+            wx_temp=41.0,
+            wx_humidity=None,
+            wx_wind=None,
+            wx_wind_dir=None,
+            wx_desc=None,
+        ),  # partial
+        _wx_act(
+            3,
+            24,
+            rpe_10=None,
+            feel=None,
+            wx_temp=None,
+            wx_feels=None,
+            wx_humidity=None,
+            wx_wind=None,
+            wx_wind_dir=None,
+            wx_desc=None,
+            wx_unit=None,
+        ),  # never backfilled
+    ]
+    df, rows = _render_activities_rows(monkeypatch, acts, "km")
+
+    assert "Fast30s" not in df.columns and "fast30s" not in df.columns
+    for col in ("RPE", "Feel", "Temp", "Hum", "Wind", "Wx"):
+        assert col in df.columns
+
+    full = rows["2026-01-10"]
+    assert full["RPE"] == "6/10"
+    assert full["Feel"] == "Normal"
+    assert full["Temp"] == "8°C"  # 46°F converted for display only
+    assert full["Hum"] == "65%"
+    assert full["Wind"] == "13 km/h nw"  # 8 mph → km/h for metric display
+    assert full["Wx"] == "Fair"
+
+    partial = rows["2026-01-17"]
+    assert partial["RPE"] == "7.5/10"  # one decimal kept for half RPEs
+    assert partial["Feel"] == "60?"  # raw label (with '?') rendered unchanged
+    assert partial["Temp"] == "5°C"  # 41°F → 5°C
+    assert partial["Hum"] == "—"
+    assert partial["Wind"] == "—"
+    assert partial["Wx"] == "—"
+
+    bare = rows["2026-01-24"]
+    assert all(bare[col] == "—" for col in ("RPE", "Feel", "Temp", "Hum", "Wind", "Wx"))
+
+
+def test_render_activities_weather_rows_imperial_keeps_stored_units(monkeypatch):
+    """Miles display shows the stored °F/mph raw values — no conversion, no
+    mutation of what's on the Activity."""
+    act = _wx_act(1, 10)
+    df, rows = _render_activities_rows(monkeypatch, [act], "miles")
+
+    assert "Fast30s" not in df.columns
+    row = rows["2026-01-10"]
+    assert row["Temp"] == "46°F"
+    assert row["Wind"] == "8 mph nw"
+    assert row["Hum"] == "65%"
+    assert row["RPE"] == "6/10"
+    # display formatting never writes back into the model
+    assert act.wx_temp == 46.0 and act.wx_wind == 8.0 and act.rpe_10 == 6.0
+
+
+def test_render_repetitions_chart_adds_dashed_fast30s_trace(monkeypatch, tmp_path):
+    """The performance-over-repetitions chart gains a Fast30s pace trace as
+    the third pace series (between GAP and avg HR), dashed; reps without pace
+    data plot a gap instead of a value."""
+    acts = [
+        _coded_act(41, "Winnetka - RF24 (Foundation Run)", 10, sport="running"),
+        _coded_act(42, "Winnetka - RF24 (Foundation Run)", 15, sport="strength"),
+        _coded_act(43, "Winnetka - RF24 (Foundation Run)", 20, sport="treadmill"),
+    ]
+    _cached_details(tmp_path, 41)  # disk cache: speed 3.0 m/s
+    fetched = []
+    monkeypatch.setattr(d, "APP_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(d, "GarminGateway", _rep_gateway(fetched))  # payload: 4.0 m/s
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+
+    d.render_repetitions(acts, 41, "km")
+
+    assert fetched == [43]  # 41 cached, 42 strength never fetched
+    figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
+    fig = next(
+        f
+        for f in figs
+        if "Performance over repetitions" in str(getattr(f.layout.title, "text", ""))
+    )
+    names = [t.name for t in fig.data]
+    assert names == [
+        "avg pace (min/unit)",
+        "GAP (min/unit)",
+        "Fast30s (min/unit)",
+        "avg HR (bpm)",
+    ]
+    fast = fig.data[names.index("Fast30s (min/unit)")]
+    assert fast.line.dash == "dash"
+    assert list(fast.y) == [
+        pytest.approx(1000.0 / 3.0 / 60.0),
+        None,  # strength rep: no pace data → gap
+        pytest.approx(1000.0 / 4.0 / 60.0),
+    ]
