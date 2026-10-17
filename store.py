@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS activities (
    wx_wind            REAL,
    wx_wind_dir        TEXT,
    wx_desc            TEXT,
-   wx_unit            TEXT
+   wx_unit            TEXT,
+   event_type         TEXT
 );
 CREATE TABLE IF NOT EXISTS metric_series (
   metric TEXT NOT NULL,
@@ -107,6 +108,10 @@ class MetricStore:
             self.conn.execute("ALTER TABLE activities ADD COLUMN wx_desc TEXT")
         if "wx_unit" not in cols:
             self.conn.execute("ALTER TABLE activities ADD COLUMN wx_unit TEXT")
+        # Garmin event type (e.g. "race"): nullable, arrives NULL until the
+        # activity is next refreshed; absent data genuinely is absent.
+        if "event_type" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN event_type TEXT")
         # Best-effort LTHR anchors replaced the rolling-mean fallback: prune
         # the dead keys so stale rows don't linger in old databases. These
         # keys are never written again, so unconditional pruning is safe.
@@ -197,6 +202,7 @@ class MetricStore:
                 a.wx_wind_dir,
                 a.wx_desc,
                 a.wx_unit,
+                a.event_type,
             )
             for a in activities
         ]
@@ -205,8 +211,8 @@ class MetricStore:
             "distance_m, duration_s, elapsed_s, ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, "
             "anaerobic_te, avg_speed, fastest_split_1609, zone_s, route, name, has_intervals, "
             "rpe_10, feel, wx_temp, wx_feels, wx_humidity, wx_wind, wx_wind_dir, wx_desc, "
-            "wx_unit) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "wx_unit, event_type) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         self.conn.commit()
@@ -275,7 +281,7 @@ class MetricStore:
             "ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, anaerobic_te, "
             "avg_speed, fastest_split_1609, zone_s, route, name, has_intervals, "
             "rpe_10, feel, wx_temp, wx_feels, wx_humidity, wx_wind, wx_wind_dir, wx_desc, "
-            "wx_unit FROM activities "
+            "wx_unit, event_type FROM activities "
             "ORDER BY activity_date, activity_id"
         ).fetchall()
         return [self._activity_from_row(r) for r in rows]
@@ -310,6 +316,7 @@ class MetricStore:
             wx_wind_dir,
             wx_desc,
             wx_unit,
+            event_type,
         ) = row
         zones: dict[int, float] = {}
         if zone_s:
@@ -346,6 +353,7 @@ class MetricStore:
             fastest_split_1609=fastest_split_1609,
             name=name,
             has_intervals=bool(has_intervals),
+            event_type=event_type,
             rpe_10=rpe_10,
             feel=feel,
             wx_temp=wx_temp,
