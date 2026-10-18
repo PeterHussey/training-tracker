@@ -1865,7 +1865,7 @@ def render_activities(activities, since, until, units, profile) -> None:
 
 
 def render_paces_table(windowed, units) -> None:
-    """Runalyze training paces from the current shape — Overview's last block.
+    """Runalyze training paces from the current shape — the Fitness tab's last block.
 
     Derived in-session, never stored (spec layout "B"). Hidden when the window
     has no `vdot.shape` rows: there is no current shape to read paces from.
@@ -2099,6 +2099,8 @@ def main() -> None:
         render_load_tab(view, windowed, units)
     with tab_fitness:
         render_fitness_tab(view, windowed, units, profile.selected_race)
+        # Runalyze training paces close the Fitness tab (spec layout "B").
+        render_paces_table(windowed, units)
     with tab_volume:
         render_volume_tab(activities, view, windowed, units, volume_agg)
     with tab_acts:
@@ -2110,9 +2112,6 @@ def main() -> None:
         """)
         for line in GLOSSARY:
             st.markdown(f"- {line}")
-
-    # Bottom of Overview (spec layout "B"): Runalyze training paces.
-    render_paces_table(windowed, units)
 
 
 if __name__ == "__main__":

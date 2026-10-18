@@ -215,3 +215,23 @@ def test_period_widget_survives_noop_refresh(seeded_app):
         assert di_after is not None
         assert di_after.key == before_key
         assert di_after.value == before_value
+
+
+def test_paces_table_lives_in_the_fitness_tab(seeded_app):
+    """Runalyze training paces are the Fitness tab's last block (layout "B").
+
+    Emitted outside the ``st.tabs`` containers instead, the table renders below
+    the tab strip and so appears under every tab — and the other tabs' content
+    no longer lines up with the running order of the page.
+    """
+    with (
+        patch("gateway.GarminGateway", _FakeGateway),
+        patch("gateway.choose_token_source", return_value=("fake", "fake")),
+    ):
+        at = AppTest.from_file("../dashboard.py", default_timeout=30)
+        at.run()
+
+    paces = "Training paces (Runalyze vVO2max)"
+    assert [s.value for s in at.tabs[1].subheader][-1] == paces
+    for other in (0, 2, 3):
+        assert paces not in [s.value for s in at.tabs[other].subheader]
