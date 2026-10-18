@@ -47,6 +47,20 @@ def sport_of(summary: dict) -> str:
     return "cross"
 
 
+def event_type_of(summary: dict) -> str | None:
+    """Garmin activity event type (`eventType.typeKey`), or None when absent.
+
+    Carries the raw Garmin key through unchanged (e.g. "uncategorized",
+    "race") — it is the only race marker the payload provides, and race
+    anchoring keys on it downstream. Older cached payloads and fixtures
+    predating the field, malformed shapes, and empty keys all yield None
+    rather than a sentinel string.
+    """
+    et = summary.get("eventType")
+    tk = et.get("typeKey") if isinstance(et, dict) else None
+    return tk if isinstance(tk, str) and tk else None
+
+
 def _f(summary: dict, key: str) -> Any:
     v = summary.get(key)
     return v if v is not None else None
@@ -135,6 +149,9 @@ class Activity:
     lat: float | None = None
     lon: float | None = None
     name: str | None = None
+    # Garmin `eventType.typeKey`, e.g. "uncategorized" / "race"; None for
+    # payloads that predate the field. Race anchoring reads this downstream.
+    event_type: str | None = None
     # RPE / Feel / weather — backfilled from the summary & weather endpoints
     # (parse_rpe_feel / parse_weather); None until that backfill runs.
     rpe_10: float | None = None
@@ -199,5 +216,6 @@ def from_summary(summary: dict) -> Activity:
         lat=_f(summary, "startLatitude"),
         lon=_f(summary, "startLongitude"),
         name=_f(summary, "activityName"),
+        event_type=event_type_of(summary),
         raw=summary,
     )

@@ -504,6 +504,113 @@ def test_migrate_adds_rpe_weather_columns_to_old_database(tmp_path):
         assert getattr(row, col) is None, col
 
 
+def test_event_type_roundtrip_and_overwrite(tmp_path):
+    """The race tag survives save/load through the real path, including an
+    INSERT OR REPLACE overwrite of the same activity (the refresh path
+    re-saves known ids), and untagged rows stay None."""
+    from dataclasses import replace
+
+    db = str(tmp_path / "t.db")
+    store = MetricStore(db)
+    race = replace(ACT, event_type="race")
+    store.save_activities([race, SECOND_ACT])
+    loaded = {a.activity_id: a for a in store.load_activities()}
+    assert loaded[1].event_type == "race"
+    assert loaded[2].event_type is None
+    # Refresh re-saves id 1: same activity_id, new distance. The tag must not
+    # be lost by the replace.
+    store.save_activities([replace(race, distance_m=10500.0)])
+    again = {a.activity_id: a for a in store.load_activities()}
+    store.close()
+    assert again[1].event_type == "race"
+    assert again[1].distance_m == 10500.0
+
+
+def test_event_type_untagged_migrated_row_is_none(tmp_path):
+    """A row saved without a tag reads back as None, not "" or "uncategorized"."""
+    store = MetricStore(str(tmp_path / "t.db"))
+    store.save_activities([ACT])
+    loaded = store.load_activities()
+    store.close()
+    assert loaded[0].event_type is None
+
+
+# The activities CREATE TABLE as it stood after the 2026-10 RPE/weather
+# columns and before Task 7's event_type.
+PRE_EVENT_TYPE_SCHEMA = (
+    "CREATE TABLE activities ("
+    "  activity_id        INTEGER PRIMARY KEY,"
+    "  activity_date      TEXT NOT NULL,"
+    "  sport              TEXT NOT NULL,"
+    "  distance_m         REAL NOT NULL DEFAULT 0,"
+    "  duration_s         REAL NOT NULL DEFAULT 0,"
+    "  elapsed_s          REAL NOT NULL DEFAULT 0,"
+    "  ele_gain_m         REAL,"
+    "  vo2max             REAL,"
+    "  avg_hr             REAL,"
+    "  max_hr             REAL,"
+    "  aerobic_te         REAL,"
+    "  anaerobic_te       REAL,"
+    "  avg_speed          REAL,"
+    "  fastest_split_1609 REAL,"
+    "  zone_s             TEXT NOT NULL DEFAULT '{}',"
+    "  route              TEXT NOT NULL DEFAULT '{}',"
+    "  name               TEXT,"
+    "  has_intervals      INTEGER NOT NULL DEFAULT 0,"
+    "  rpe_10             REAL,"
+    "  feel               TEXT,"
+    "  wx_temp            REAL,"
+    "  wx_feels           REAL,"
+    "  wx_humidity        REAL,"
+    "  wx_wind            REAL,"
+    "  wx_wind_dir        TEXT,"
+    "  wx_desc            TEXT,"
+    "  wx_unit            TEXT"
+    ")"
+)
+
+
+def test_migrate_adds_event_type_to_old_database(tmp_path):
+    """A pre-Task-7 database gains a nullable event_type column on open;
+    existing rows load with None and their old values survive."""
+    db = str(tmp_path / "t.db")
+    conn = __import__("sqlite3").connect(db)
+    conn.execute(PRE_EVENT_TYPE_SCHEMA)
+    conn.execute(
+        "INSERT INTO activities (activity_id, activity_date, sport, distance_m, "
+        "duration_s, elapsed_s, name) VALUES (9, '2026-03-01', 'running', 18000.0, "
+        "6300.0, 6400.0, 'Old Row')"
+    )
+    conn.commit()
+    conn.close()
+    store = MetricStore(db)
+    cols = {r[1] for r in store.conn.execute("PRAGMA table_info(activities)").fetchall()}
+    assert "event_type" in cols
+    loaded = store.load_activities()
+    store.close()
+    assert len(loaded) == 1
+    assert loaded[0].name == "Old Row"
+    assert loaded[0].distance_m == 18000.0
+    assert loaded[0].event_type is None
+
+
+def test_migrate_event_type_idempotent_on_reopen(tmp_path):
+    """Reopening an already-migrated DB does not duplicate the column and the
+    saved tag survives the second open."""
+    from dataclasses import replace
+
+    db = str(tmp_path / "t.db")
+    store = MetricStore(db)
+    store.save_activities([replace(ACT, event_type="race")])
+    store.close()
+    reopened = MetricStore(db)
+    names = [r[1] for r in reopened.conn.execute("PRAGMA table_info(activities)").fetchall()]
+    assert names.count("event_type") == 1
+    loaded = reopened.load_activities()
+    reopened.close()
+    assert loaded[0].event_type == "race"
+
+
 def test_migrate_rpe_weather_idempotent_on_reopen(tmp_path):
     """Reopening an already-migrated DB is a no-op: each new column appears
     exactly once and saved values survive the second open."""

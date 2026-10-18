@@ -9,6 +9,7 @@ while the first refresh (empty store) keeps the full window.
 
 import json
 import time
+from contextlib import nullcontext
 from datetime import date, timedelta
 from profile import RunnerProfile
 from unittest import mock
@@ -1308,3 +1309,413 @@ def test_render_repetitions_chart_adds_dashed_fast30s_trace(monkeypatch, tmp_pat
         None,  # strength rep: no pace data → gap
         pytest.approx(1000.0 / 4.0 / 60.0),
     ]
+
+
+# --- Task 9: Runalyze VDOT surfaces (shape overlay, prognosis, paces) ---
+
+RUNALYZE_PROFILE = RunnerProfile(hrmax=190, hrrest=55, sex="M", birth_year=1986, units="metric")
+RUNALYZE_SINCE = date(2026, 6, 1)
+RUNALYZE_UNTIL = date(2026, 7, 5)
+
+
+def _runalyze_run(activity_id, day, distance_m, duration_s, hr, event_type=None):
+    return Activity(
+        activity_id,
+        "running",
+        day,
+        0,
+        float(distance_m),
+        float(duration_s),
+        float(duration_s),
+        float(hr),
+        float(hr) + 10,
+        event_type=event_type,
+    )
+
+
+def _runalyze_acts():
+    """Synthetic qualifying runs plus one race-tagged run.
+
+    The race tag anchors the corrector (shape × best-3 ratio).
+    """
+    acts = [
+        _runalyze_run(
+            100 + i, date(2026, 6, 1) + timedelta(days=i * 2), 9000 + i * 100, 2700 + i * 20, 150
+        )
+        for i in range(14)
+    ]
+    acts.append(_runalyze_run(200, date(2026, 6, 28), 21097.5, 5400, 168, event_type="race"))
+    acts.append(_runalyze_run(201, date(2026, 7, 2), 30000, 9000, 148))
+    acts.append(_runalyze_run(202, date(2026, 7, 5), 12000, 4000, 140))
+    return acts
+
+
+def _runalyze_view():
+    """`_runalyze_acts()` with the Garmin VO2max payload the overlay pairs with."""
+    from session import build_session_view
+
+    vo2max = [
+        {"generic": {"calendarDate": "2026-06-15", "vo2MaxPreciseValue": 48.5}},
+        {"generic": {"calendarDate": "2026-07-05", "vo2MaxPreciseValue": 47.0}},
+    ]
+    return build_session_view(_runalyze_acts(), RUNALYZE_PROFILE, None, None, vo2max)
+
+
+def _runalyze_shape_only_view():
+    """Same runs, no Garmin payload: `vdot.shape` exists, `fitness.vo2max` does not."""
+    from session import build_session_view
+
+    return build_session_view(_runalyze_acts(), RUNALYZE_PROFILE, None, None, None)
+
+
+def _runalyze_windowed(view):
+    return view.windowed(RUNALYZE_SINCE, RUNALYZE_UNTIL)
+
+
+def _captured(fake, name):
+    return [a[0] for n, a in fake.calls if n == name]
+
+
+def _one_row(value, day="2026-07-05"):
+    """One-row daily series, the shape `windowed` hands the surface helpers."""
+    import pandas as pd
+
+    return pd.Series([value], index=pd.DatetimeIndex([pd.Timestamp(day)]))
+
+
+def _prognosis_series(values):
+    """Windowed-like mapping of the seven `prognosis.<dist>` keys."""
+    return {
+        f"prognosis.{km:g}": _one_row(value)
+        for km, value in zip((1.0, 3.0, 5.0, 10.0, 21.1, 42.2, 50.0), values, strict=True)
+    }
+
+
+def _prognosis_values():
+    return (204.375, 681.5, 1177.15, 2440.43, 5405.23, 11265.42, 13429.69)
+
+
+def test_prognosis_rows_columns_and_absence_rules():
+    """Raw always present; Damped only where damped rows exist; the block's
+    hide rule is the missing `prognosis.5` row, never a filler cell."""
+    from dashboard import prognosis_rows
+
+    windowed = _prognosis_series(_prognosis_values())
+    rows = prognosis_rows(windowed)
+    assert [r["Distance"] for r in rows] == [
+        "1 km",
+        "3 km",
+        "5 km",
+        "10 km",
+        "21.1 km",
+        "42.2 km",
+        "50 km",
+    ]
+    assert all(set(r) == {"Distance", "Raw"} for r in rows)  # no damped rows → no column
+    assert [r["Raw"] for r in rows] == [
+        "3:24",
+        "11:22",
+        "19:37",
+        "40:40",
+        "1:30:05",
+        "3:07:45",
+        "3:43:50",
+    ]
+
+    # A damped series for one distance only → the column appears, and every
+    # distance without one is '—' (never a filler time).
+    windowed["prognosis.42.2_damped"] = _one_row(15266.18)
+    rows = prognosis_rows(windowed)
+    assert [r["Damped"] for r in rows] == ["—"] * 5 + ["4:14:26", "—"]
+
+    del windowed["prognosis.5"]
+    assert prognosis_rows(windowed) == []
+
+
+def test_pace_table_rows_uses_rounded_shape_and_full_ladder():
+    """Runalyze's tools page rounds the current shape before the pace lookup;
+    the ladder is 65..110 % in 5 % steps."""
+    from dashboard import pace_table_rows
+
+    rows = pace_table_rows(50.93441, "km")
+    assert [r["% vVO2max"] for r in rows] == [f"{p}%" for p in range(65, 111, 5)]
+    assert rows[0]["Pace"] == "5:21 /km"  # 65 % of 51 → 321 s/km
+    assert rows[7]["Pace"] == "3:46 /km"  # 100 % → 226 s/km (unrounded shape → 227)
+    assert rows[-1]["Pace"] == "3:30 /km"  # 110 % → 210 s/km
+    assert pace_table_rows(None, "km") == []
+
+
+def test_pace_table_rows_converts_for_miles():
+    from dashboard import pace_table_rows
+
+    rows = pace_table_rows(51, "miles")
+    assert rows[0]["Pace"] == "8:36 /mi"  # 321 s/km × 1.609344 = 516.6 s/mi
+
+
+def test_render_fitness_tab_shape_overlay(monkeypatch):
+    """Surface 1: `vdot.shape` rides the existing Garmin VO2max figure as a
+    second (orange) scatter, with its caption above the intact Garmin one."""
+    view = _runalyze_view()
+    windowed = _runalyze_windowed(view)
+    assert not windowed["fitness.vo2max"].empty and not windowed["vdot.shape"].empty
+    # The race tag is live in this fixture: the shape carries the best-3 corrector.
+    assert view.context["vdot.shape"]["flags"]["corrector"] != pytest.approx(1.0)
+
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_fitness_tab(view, windowed, "km")
+
+    figs = _captured(fake, "plotly_chart")
+    fig = next(f for f in figs if "Firstbeat" in str(getattr(f.layout.title, "text", "")))
+    assert [t.name for t in fig.data] == ["VO2max", "Runalyze shape"]
+    shape_trace = fig.data[1]
+    assert list(shape_trace.y) == [pytest.approx(v) for v in windowed["vdot.shape"].values]
+    assert shape_trace.line.color == "#F18F01"
+
+    captions = _captured(fake, "caption")
+    shape_caption = next(c for c in captions if c.startswith("Runalyze-style shape:"))
+    assert "30-day duration-weighted mean of per-run pace+HR VO2max" in shape_caption
+    assert "× race corrector (best-3). Independent of Garmin Firstbeat." in shape_caption
+    garmin_caption = next(c for c in captions if "Daily Garmin Firstbeat VO2max estimate" in c)
+    assert captions.index(shape_caption) < captions.index(garmin_caption)
+
+
+def test_render_fitness_tab_prognosis_table_and_marathon_detail(monkeypatch):
+    """Surface 2 + 3: the prognosis table (Distance | Raw | Damped) and the
+    marathon-shape detail tiles sit under the race-predictions block."""
+    view = _runalyze_view()
+    windowed = _runalyze_windowed(view)
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_fitness_tab(view, windowed, "km")
+
+    frames = [f for f in _captured(fake, "dataframe") if f and "Distance" in f[0]]
+    assert len(frames) == 1
+    table = frames[0]
+    assert len(table) == 7
+    assert all(list(row) == ["Distance", "Raw", "Damped"] for row in table)
+    assert table[2] == {"Distance": "5 km", "Raw": "19:37", "Damped": "19:37"}
+    assert table[5] == {"Distance": "42.2 km", "Raw": "3:07:45", "Damped": "4:14:26"}
+
+    captions = _captured(fake, "caption")
+    assert any(
+        c.startswith(
+            "Runalyze-style prognosis ( Daniels-Gilbert, bisection-inverted; "
+            "damped = marathon-shape-normalized)."
+        )
+        for c in captions
+    )
+    assert any(
+        c.startswith(
+            "Races you tag in Garmin Connect (event type `Race`) anchor these — the tag must "
+            "be present at the activity's first fetch here; later tags are not picked up."
+        )
+        for c in captions
+    )
+
+    metrics = [a for n, a in fake.calls if n == "metric"]
+    assert ("Marathon shape", "23%") in metrics
+    assert ("Target weekly volume", "86.59 km") in metrics
+    assert ("Target long jog", "30.53 km") in metrics
+
+
+def test_render_prognosis_block_hidden_without_5k(monkeypatch):
+    """No `prognosis.5` row (the emission ruling's empty-window case) → the
+    whole block vanishes, marathon detail included."""
+    view = _runalyze_view()
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_prognosis_block({}, view, "km")
+    assert not [c for c in fake.calls if c[0] in ("dataframe", "subheader", "caption", "columns")]
+
+
+def test_render_paces_table_from_current_shape(monkeypatch):
+    """Surface 4: paces at 65..110 % of the current (rounded) shape, derived
+    in-session — ten rows, no stored metric."""
+    view = _runalyze_view()
+    windowed = _runalyze_windowed(view)
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_paces_table(windowed, "km")
+
+    frames = _captured(fake, "dataframe")
+    assert len(frames) == 1 and len(frames[0]) == 10
+    assert list(frames[0][0]) == ["% vVO2max", "Pace"]
+    assert frames[0][0] == {"% vVO2max": "65%", "Pace": "5:21 /km"}
+    assert frames[0][-1] == {"% vVO2max": "110%", "Pace": "3:30 /km"}
+
+
+def test_render_paces_table_hidden_without_shape(monkeypatch):
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_paces_table({}, "km")
+    assert not [c for c in fake.calls if c[0] in ("dataframe", "subheader", "caption")]
+
+
+# --- Task 9 review fixes: shape-only hint, guarded pct lookup, call sites ---
+
+
+def test_render_fitness_tab_shape_only_keeps_garmin_hint(monkeypatch):
+    """Shape-only fallback must not swallow the Garmin refresh prompt.
+
+    With `vdot.shape` present and `fitness.vo2max` absent the chart still
+    renders *and* the hint survives. A revert to `if vo2 is None or vo2.empty`
+    would emit the hint and no chart, failing the figure assertion below.
+    """
+    view = _runalyze_shape_only_view()
+    windowed = _runalyze_windowed(view)
+    vo2 = windowed.get("fitness.vo2max")
+    assert vo2 is None or vo2.empty
+    assert not windowed["vdot.shape"].empty
+
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_fitness_tab(view, windowed, "km")
+
+    figs = _captured(fake, "plotly_chart")
+    fig = next(
+        f
+        for f in figs
+        if "Runalyze shape (no Garmin VO2max trend)" in str(getattr(f.layout.title, "text", ""))
+    )
+    assert [t.name for t in fig.data] == ["Runalyze shape"]
+
+    writes = _captured(fake, "write")
+    assert any("Use **Refresh from Garmin**" in w and "/maxmet/daily" in w for w in writes)
+    assert any(c.startswith("Runalyze-style shape:") for c in _captured(fake, "caption"))
+
+
+def test_render_fitness_tab_hint_when_neither_series_exists(monkeypatch):
+    """Neither series → the hint alone, no empty chart."""
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_fitness_tab(_runalyze_view(), {}, "km")
+
+    writes = _captured(fake, "write")
+    assert d.GARMIN_VO2MAX_HINT in writes
+    assert not _captured(fake, "plotly_chart")
+
+
+def test_render_prognosis_block_without_marathon_shape_does_not_crash(monkeypatch):
+    """The sibling guard: a missing or unset `marathon.shape_pct` must render
+    the table and skip the detail tiles, not `.dropna()` on `None`."""
+    view = _runalyze_view()
+    windowed = _prognosis_series(_prognosis_values())
+    assert "marathon.shape_pct" not in windowed
+
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    d.render_prognosis_block(windowed, view, "km")
+    assert len(_captured(fake, "dataframe")) == 1
+    assert not [a for n, a in fake.calls if n == "metric"]
+
+    fake2 = _FakeSt()
+    monkeypatch.setattr(d, "st", fake2)
+    d.render_prognosis_block({**windowed, "marathon.shape_pct": None}, view, "km")
+    assert len(_captured(fake2, "dataframe")) == 1
+    assert not [a for n, a in fake2.calls if n == "metric"]
+
+
+def test_render_fitness_tab_calls_prognosis_block(monkeypatch):
+    """Surface 2 call site: the prognosis block is invoked unconditionally from
+    `render_fitness_tab` — deleting the call drops the table silently."""
+    view = _runalyze_view()
+    windowed = _runalyze_windowed(view)
+    fake = _FakeSt()
+    monkeypatch.setattr(d, "st", fake)
+    block = mock.Mock()
+    monkeypatch.setattr(d, "render_prognosis_block", block)
+
+    d.render_fitness_tab(view, windowed, "km")
+
+    assert block.call_count == 1
+    assert block.call_args.args == (windowed, view, "km")
+
+
+class _MainSt:
+    """Streamlit stub for a whole `main()` pass: widgets return usable values,
+    containers are null context managers, calls are recorded."""
+
+    def __init__(self, session_state):
+        self.session_state = session_state
+        self.calls = []
+
+    @property
+    def sidebar(self):
+        return self
+
+    def _rec(self, name, *args):
+        self.calls.append((name, args))
+
+    def radio(self, label, options, index=0, **kwargs):
+        self._rec("radio", label, options)
+        return options[index]
+
+    def date_input(self, label, value=None, **kwargs):
+        self._rec("date_input", label, value)
+        return value
+
+    def multiselect(self, label, options, default=None, **kwargs):
+        self._rec("multiselect", label, options)
+        return list(default or [])
+
+    def button(self, *args, **kwargs):
+        self._rec("button", *args)
+        return False
+
+    def tabs(self, labels):
+        self._rec("tabs", labels)
+        return [nullcontext() for _ in labels]
+
+    def expander(self, *args, **kwargs):
+        self._rec("expander", *args)
+        return nullcontext()
+
+    def __getattr__(self, name):
+        def _rec(*args, **kwargs):
+            self.calls.append((name, args))
+
+        return _rec
+
+
+def test_main_calls_paces_table_at_page_bottom(monkeypatch):
+    """Surface 4 placement: `main()` must reach `render_paces_table` (bottom of
+    Overview) last — dropping the call fails this test."""
+    acts = _runalyze_acts()
+    view = _runalyze_shape_only_view()
+    _min_d, default_since, max_d = d.period_bounds([a.date for a in acts])
+
+    state = {"activities": acts, "_details_period_key": (default_since, max_d)}
+    fake = _MainSt(state)
+    monkeypatch.setattr(d, "st", fake)
+
+    store = mock.Mock()
+    store.load_runner_profile.return_value = RUNALYZE_PROFILE
+    monkeypatch.setattr(d, "get_store", lambda: store)
+    monkeypatch.setattr(d, "resolve_activities", lambda *a, **k: None)
+    monkeypatch.setattr(d, "profile_from_widgets", lambda acts_, persisted: RUNALYZE_PROFILE)
+    monkeypatch.setattr(d, "build_session_view", lambda *a, **k: view)
+    monkeypatch.setattr(d, "persist_session_metrics", lambda *a, **k: None)
+    for name in (
+        "render_kpis",
+        "render_load_tab",
+        "render_fitness_tab",
+        "render_volume_tab",
+        "render_activities",
+    ):
+        monkeypatch.setattr(d, name, mock.Mock())
+
+    paces = mock.Mock()
+    monkeypatch.setattr(d, "render_paces_table", paces)
+
+    d.main()
+
+    assert paces.call_count == 1
+    windowed, units = paces.call_args.args
+    assert units == "km"
+    assert windowed.get("vdot.shape") is not None
+    # ...drawn under the Technical Reference expander (its markdown is the last
+    # call before the table), i.e. at the page bottom.
+    names = [c[0] for c in fake.calls]
+    assert "expander" in names
+    assert names.index("expander") < names.index("markdown", names.index("expander"))

@@ -4,6 +4,7 @@ Ingested reference metrics (LT, race predictions) enter through optional
 payload arguments — the gateway fetchers call them in, not the pipeline.
 """
 
+import bisect
 from profile import RunnerProfile
 
 import pandas as pd
@@ -13,18 +14,51 @@ from metrics import (
     acwr,
     age_grading,
     decoupling,
+    effective_vo2max,
     elevation,
     gap,
     injury,
+    marathon_shape,
     pmc,
+    prognosis,
     racepredict,
     threshold,
     trimp,
+    vdot_shape,
     vo2max,
     volume,
 )
 from normalize import Activity
 from store import MetricStore
+
+# Runalyze JD\Shape.php `VO2MAX_DAYS`: the shape window is 30 days.
+VDOT_SHAPE_WINDOW_DAYS = 30
+
+
+def _qualifying_window_days(
+    activities: list[Activity], hrmax: float | None, index: pd.DatetimeIndex
+) -> pd.DatetimeIndex:
+    """Days in ``index`` whose trailing shape window holds a qualifying run.
+
+    The port's emission rule: a date-keyed Runalyze series emits no row at all
+    on a day whose 30-day window is empty, so a gap longer than the window
+    stays a gap in the chart rather than a filler zero. Membership is decided
+    exactly as ``vdot_shape.shape_at`` decides it -- same timestamp fallback
+    and same end-of-day window boundary -- so the filter keeps precisely the
+    days on which that function saw at least one qualifying activity.
+    """
+    stamps = sorted(vdot_shape._activity_ts(a) for a in vdot_shape.qualifying(activities, hrmax))
+    if not stamps:
+        return index[:0]
+
+    kept = []
+    for day in index:
+        day_end = vdot_shape._day_end_ts(pd.Timestamp(day).to_pydatetime())
+        window_start = day_end - VDOT_SHAPE_WINDOW_DAYS * 86_400
+        position = bisect.bisect_left(stamps, window_start)
+        if position < len(stamps) and stamps[position] <= day_end:
+            kept.append(day)
+    return pd.DatetimeIndex(kept)
 
 
 def compute_metric_rows(
@@ -348,6 +382,105 @@ def compute_metric_rows(
                     params={"unit": "fraction", "n": agg["n"], "stdev": agg["stdev"]},
                     flags={"basis": "route_cluster_mean"},
                 )
+
+    # Runalyze VDOT chain (spec docs/superpowers/specs/2026-10-17-...): 30-day
+    # duration-weighted shape, the best-3 race corrector, marathon preparedness
+    # and the race-prognosis table. Pure composition of the metrics/ port
+    # modules -- no formula lives here. Races are the qualifying runs the user
+    # tagged with Garmin's event type "race".
+    hrmax = profile.hrmax
+    runs = vdot_shape.qualifying(activities, hrmax)
+    race_ratios: list[float] = []
+    race_vdots: list[float] = []
+    if runs and hrmax > 0:
+        for a in runs:
+            # `qualifying` already excludes missing HR; the check keeps the
+            # division type-safe for mypy.
+            if a.event_type != "race" or a.avg_hr is None:
+                continue
+            # Moving time (`duration_s`), never elapsed time (Review Focus 3).
+            race_ratios.append(
+                effective_vo2max.race_ratio(a.distance_km, a.duration_s, a.avg_hr / hrmax)
+            )
+            race_vdots.append(effective_vo2max.race_vdot_by_time(a.distance_km, a.duration_s))
+    # The raw max of the best-3 ratios; 1.0 only when no race yields a positive
+    # ratio (never floored at 1.0 -- a sub-1 factor is legitimate).
+    corrector = effective_vo2max.corrector_factor(race_ratios, race_vdots=race_vdots)
+
+    shape = vdot_shape.shape_series(
+        activities, hrmax, window_days=VDOT_SHAPE_WINDOW_DAYS, corrector=corrector
+    )
+    if not shape.empty:
+        # Drop empty-window days: a >30-day gap is a gap, never a zero row.
+        shape = shape[_qualifying_window_days(activities, hrmax, shape.index)]
+        rows += rows_from_series(
+            "vdot.shape",
+            shape,
+            "computed",
+            params={"window_days": VDOT_SHAPE_WINDOW_DAYS, "unit": "ml/kg/min"},
+            flags={
+                "basis": "duration_weighted_mean",
+                "corrector": round(corrector, 6),
+                "hrmax_source": profile.hrmax_source,
+            },
+        )
+
+        # Marathon preparedness and race prognosis ride the same day set. The
+        # targets resolve from the current (latest) corrected shape for every
+        # as-of day; only the run windows are as-of each day
+        # (BasicEndurance::asArray, spec 6).
+        # Runalyze's Prognose panel instead normalizes per as-of day
+        # (plugin/RunalyzePluginPanel_Prognose/Plot.Form.php:115, per-day
+        # setEffectiveVO2max($Data[$currentIndex]['vo2max'])), and the resulting
+        # level shift in the historical curve is the accepted deviation.
+        earliest_date = min(a.date for a in activities)
+        target_vdot = float(shape.iloc[-1])
+        shape_pct: list[float] = []
+        raw_seconds: dict[float, list[float | None]] = {d: [] for d in prognosis.DISTS}
+        damped_seconds: dict[float, list[float | None]] = {d: [] for d in prognosis.DISTS}
+        for day, day_value in shape.items():
+            as_of = pd.Timestamp(day).date()
+            days_for_week_km = marathon_shape.clamped_week_days((as_of - earliest_date).days)
+            history = [((as_of - a.date).days, a.distance_km) for a in runs if a.date <= as_of]
+            pct = marathon_shape.percentage(history, target_vdot, days_for_week_km=days_for_week_km)
+            shape_pct.append(pct)
+            vdot_today = float(day_value)
+            for distance in prognosis.DISTS:
+                raw_seconds[distance].append(prognosis.prognosis_seconds(vdot_today, distance))
+                damped_seconds[distance].append(
+                    prognosis.prognosis_seconds(vdot_today, distance, marathon_shape_pct=pct)
+                )
+
+        rows += rows_from_series(
+            "marathon.shape_pct",
+            pd.Series(shape_pct, index=shape.index, dtype=float),
+            "computed",
+            params={
+                "pct_week": marathon_shape.PERCENTAGE_WEEK_KM,
+                "pct_lj": marathon_shape.PERCENTAGE_LONGJOGS,
+                "unit": "pct",
+            },
+            flags={"basis": "basic_endurance", "target_vdot": round(target_vdot, 5)},
+        )
+        for distance in prognosis.DISTS:
+            # `distance:g` keeps the plan's dotted keys (prognosis.1, .21.1);
+            # the default str() of the float renders 1.0 / 10.0 / 50.0.
+            key = f"prognosis.{distance:g}"
+            params = {"distance_km": distance, "unit": "s"}
+            rows += rows_from_series(
+                key,
+                pd.Series(raw_seconds[distance], index=shape.index, dtype=float),
+                "computed",
+                params=params,
+                flags={"basis": "daniels_gilbert_bisection"},
+            )
+            rows += rows_from_series(
+                f"{key}_damped",
+                pd.Series(damped_seconds[distance], index=shape.index, dtype=float),
+                "computed",
+                params=params,
+                flags={"basis": "daniels_gilbert_bisection", "damped_by": "marathon_shape"},
+            )
 
     return rows
 

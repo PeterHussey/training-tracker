@@ -69,6 +69,22 @@ CONDITIONAL_METRICS = {
     "load.decoupling": "requires route-matched flat 90min+ outdoor runs with HR/speed details",
     "load.decoupling_mean": "requires >=6 route-matched flat 90min+ sessions (single-run values are noise)",
     "age_graded.pct": "requires outdoor-running activities >= 3km (WMA 2023 grading)",
+    "vdot.shape": "requires qualifying runs with HR data (Runalyze 30-day duration-weighted shape)",
+    "marathon.shape_pct": "requires qualifying runs with HR data (Runalyze marathon-preparedness percentage)",
+    "prognosis.1": "requires qualifying runs with HR data (Daniels-Gilbert bisection)",
+    "prognosis.1_damped": "requires the raw prognosis plus a marathon-shape value for the damping factor",
+    "prognosis.3": "requires qualifying runs with HR data (Daniels-Gilbert bisection)",
+    "prognosis.3_damped": "requires the raw prognosis plus a marathon-shape value for the damping factor",
+    "prognosis.5": "requires qualifying runs with HR data (Daniels-Gilbert bisection)",
+    "prognosis.5_damped": "requires the raw prognosis plus a marathon-shape value for the damping factor",
+    "prognosis.10": "requires qualifying runs with HR data (Daniels-Gilbert bisection)",
+    "prognosis.10_damped": "requires the raw prognosis plus a marathon-shape value for the damping factor",
+    "prognosis.21.1": "requires qualifying runs with HR data (Daniels-Gilbert bisection)",
+    "prognosis.21.1_damped": "requires the raw prognosis plus a marathon-shape value for the damping factor",
+    "prognosis.42.2": "requires qualifying runs with HR data (Daniels-Gilbert bisection)",
+    "prognosis.42.2_damped": "requires the raw prognosis plus a marathon-shape value for the damping factor",
+    "prognosis.50": "requires qualifying runs with HR data (Daniels-Gilbert bisection)",
+    "prognosis.50_damped": "requires the raw prognosis plus a marathon-shape value for the damping factor",
 }
 
 

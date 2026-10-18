@@ -49,6 +49,7 @@ fetchers in v2 — the `RunnerProfile` dataclass (with `default_profile` /
 | activityUUID | uuid | volume |  |
 | activityType.typeKey | enum | volume, cross_training | Nested under 'activityType'. Classification in normalize.py is typeKey-only (running / treadmill_running / else cross); absent or unknown typeKey is classified as cross. There is **no** sportTypeId fallback. |
 | sportTypeId | id | — | Present in the payload (1/2/4 in the frozen sample) but **not read by normalize.py**; the registry's "backup for classification when typeKey is missing" claim is not implemented in v2. Classification relies solely on activityType.typeKey. Kept for reference only. |
+| eventType.typeKey | enum | vdot_shape | Garmin Connect event tag; `race` anchors the Runalyze race corrector. Known only if the user tagged the activity in Garmin Connect; older cached payloads and fixtures predating the field yield NULL (never a sentinel string). Every activity in the frozen sample carries `uncategorized` (typeId 9) — no `race` example is captured. |
 | startTimeLocal | ISO datetime | volume | Drives local calendar day/week bucketing. Timezone id recorded separately in timeZoneId. |
 | beginTimestamp | epoch ms | volume |  |
 | distance | m | volume, elevation | 0.0 for indoor_cycling; absent for strength. Convert to km for human-facing series. |

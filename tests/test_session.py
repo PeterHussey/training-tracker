@@ -11,6 +11,7 @@ from metrics import volume
 from normalize import Activity, from_summary
 from session import (
     CONDITIONAL_METRICS,
+    EXPECTED_METRICS,
     activity_graded_pct,
     best_mile,
     build_session_view,
@@ -353,6 +354,25 @@ def test_activity_graded_pct():
 
 def test_age_graded_pct_is_conditional_metric():
     assert "age_graded.pct" in CONDITIONAL_METRICS
+
+
+def test_session_conditional_contains_vdot_family():
+    """The Runalyze keys are conditional, never expected: a first run with no
+    qualifying runs or tagged races must not fail the e2e contract."""
+    raw = {
+        "prognosis.1",
+        "prognosis.3",
+        "prognosis.5",
+        "prognosis.10",
+        "prognosis.21.1",
+        "prognosis.42.2",
+        "prognosis.50",
+    }
+    keys = {"vdot.shape", "marathon.shape_pct"} | raw | {f"{k}_damped" for k in raw}
+    assert keys <= set(CONDITIONAL_METRICS)
+    assert not (keys & set(EXPECTED_METRICS))
+    for key in keys:
+        assert CONDITIONAL_METRICS[key], f"{key} needs a reason string"
 
 
 def test_volume_daily_resampled_to_weekly_monday():

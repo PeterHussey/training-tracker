@@ -39,6 +39,90 @@
   **NOT emitted by `run_pipeline`** — module + tests shipped; emission waits on
   the activity-details ingest path.
 
+### 2.4 Runalyze VDOT families (ported 2026-10-17)
+Faithful port of Runalyze 4.3.x's legacy VO2max chain (AGPL; formulas by
+Daniels/Gilbert; branch `support/4.3.x`, source hash
+`5669237a78c7d3512df969052fd0d97e5dca6820`). Verbatim pseudocode, provenance map
+and per-module attribution live in
+`docs/superpowers/specs/2026-10-17-runalyze-vdot-port-design.md`. Registry keys
+`vdot_shape`, `marathon_shape`, `prognosis` (see §8); stored series keys:
+- `vdot.shape`: daily effective VO2max [mL/kg/min] — duration-weighted mean of
+  the per-run pace+HR estimates over the trailing 30-day window, × the race
+  corrector (best 3 races by race VDOT; 1.0 when no race qualifies).
+- `marathon.shape_pct`: marathon preparedness [%] — 0.67 × weekly-km term +
+  0.33 × long-jog term against VO2max-derived targets; 100 = marathon-ready,
+  >100 possible.
+- `prognosis.<dist>` (dist ∈ 1, 3, 5, 10, 21.1, 42.2, 50 km) and its damped twin
+  `prognosis.<dist>_damped`: race time [s] from bisection-inverting the
+  Daniels–Gilbert race estimate against the day's shape; the damped twin
+  multiplies the shape by the marathon-shape factor before the inversion.
+
+Formulas (bullet summary; the design spec carries the pseudocode verbatim):
+- Effective VO2max (pace + HR): `DG.estimate(v / exp((hr_pct - 1.00466) / 0.68725))`
+  with `v = 60000 * km / s` [m/min] and `hr_pct = avgHR / HRmax`.
+- Daniels–Gilbert: `estimate(v) = max(0, -4.6 + 0.182253*v + 0.000104*v^2)`. The
+  `v ∈ [50, 1000]` m/min guard is **not** in this function: it lives in
+  `estimate_from_race_result` and in the qualifying filter below. A race estimate
+  divides by the drop-dead factor
+  `0.8 + 0.1894393*exp(-0.012778*t) + 0.2989558*exp(-0.1932605*t)`.
+- Velocity inverse: `v = -876 + sqrt(876^2 + (4.6 + vdot) / 0.000104)` m/min.
+- Corrector: `max(race_vdot_by_time / race_training_vdot)` over the best 3 races
+  by race VDOT; `1.0` only when no race yields a positive ratio (the raw max is
+  kept — it is never floored at 1.0).
+- Shape: `round(Σ(vdot_i * s_i) / Σ(s_i), 5)` over `[t-30d, t]` (both ends
+  inclusive), the per-run `vdot_i` already carrying the corrector.
+- Marathon shape: `round(100 * (0.67 * week_km*7/window/target_week_km
+  + 0.33 * lj_points*7/70))`, where the weekly-km term is divided by
+  `target_week_km = pow(max(vdot, 25.0), 1.135)` and
+  `window = min(182, max(70, days_since_first))`; long jogs are runs over 13 km
+  within 70 days, linearly down-weighted with age.
+- Prognosis: bisect `s ∈ [2*60*dist, 10*60*dist]` for
+  `estimate_from_race(dist, s) == vdot`; damped vdot =
+  `vdot * min(1, 0.6 + 0.4*max(0, 1 - (dist^1.23 - shape_pct)/100))`.
+
+Qualifying filter (shared by all five computations): sport `running`/`treadmill`,
+distance > 0, moving time > 0, average HR present and ≤ profile HRmax, and raw
+Daniels–Gilbert velocity within `[50, 1000]` m/min; with no resolvable HRmax
+(`hrmax is None`) nothing qualifies. This is the port's stateless
+stand-in for Runalyze's manual `use_vo2max` curation, so two consequences follow:
+runs without usable HR are excluded and `vdot.shape`/`marathon.shape_pct` can read
+lower than a Runalyze instance that counts them; and the marathon-shape targets
+always resolve from the **current** corrected shape even for a historical as-of
+day (Runalyze-faithful, not self-consistent history), while the 182-day week-km
+window's minimum-clamp input is the earliest activity date in the store (Runalyze
+keys it on the account registration date).
+
+Race anchoring: a race is an activity tagged in **Garmin Connect** with event type
+`Race`, carried through as `eventType.typeKey == "race"` (`normalize.py` →
+`Activity.event_type`; see `docs/v2/garmin-field-mapping.md`). Tag it **before the
+first refresh that ingests the activity** — the tag arrives with that first
+ingestion. A tag added to an activity this dashboard has already stored is **not**
+picked up: neither refresh mode revisits stored activities (incremental starts at
+`latest_activity_date + 1 day`; historical fetches backwards from the earliest
+stored date). With no tagged race the corrector stays at 1.0 — a graceful dormant
+state, never a filler factor.
+
+A tag added after ingestion is repaired with the script, not a refresh: run
+`.venv/bin/python backfill_event_types.py` (dry run by default) to see which
+stored rows would change, then rerun with `--apply` to write. It re-reads the
+**live** activity-list payload for the store's date range — never the cached
+`activity_summary_{id}.json` files, which predate the tagging — and narrow-
+UPDATEs only the `event_type` column, so backfilled RPE/Feel/weather survive.
+
+Null behavior (never a filler value): the `vdot.shape` series function emits `0.0`
+for a day whose 30-day window is empty, but the **pipeline** drops those days from
+the stored rows, so a day whose window holds no qualifying activity stores no row
+at all — a gap longer than the window stays a gap. The one surviving zero is a
+window holding only activities whose estimate is 0 (e.g. `avg_hr == 0`): the day
+counts as non-empty and stores a real `0.0`. `prognosis.*` rows are absent where
+the bisection has no valid answer — the raw row when the raw vdot is outside
+`[15, 90]`, a damped row when the **damped** vdot is. The prognosis table and the
+paces table are hidden when their inputs are absent.
+
+Training paces: a display-only table at 65 → 110 % of vVO2max in 5 % steps, from
+the current shape rounded half-up via `daniels_gilbert.pace_s_per_km`. It is
+derived in-session (bottom of Overview) and is **never stored**.
+
 ## 3. Formulas
 - Banister TRIMP = dur_min * dHR * 0.64 * exp(b * dHR); dHR = (avgHR - HRrest)/
   (HRmax - HRrest), clamped [0,1]; b = 1.92 (M) / 1.67 (F).
@@ -95,7 +179,7 @@
 volume, elevation, gap, trimp_edwards, trimp_banister, ctl, atl,
 tsb, acwr, decoupling, vo2max, lt_hr, lt_pace, cs_approx,
 race_5k, race_10k, race_half, race_full, load_reference,
-cross_training
+cross_training, vdot_shape, marathon_shape, prognosis
 ```
 
 Canonical metric keys (source of truth: `v2/garmin_fields.py` `METRICS`; do not

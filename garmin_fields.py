@@ -29,6 +29,9 @@ METRICS = frozenset(
         "race_full",
         "load_reference",
         "cross_training",
+        "vdot_shape",
+        "marathon_shape",
+        "prognosis",
     }
 )
 
@@ -67,6 +70,14 @@ FIELD_REGISTRY = (
         "Numeric sport type id",
         ("volume", "cross_training"),
         "Backup for classification when typeKey is missing; mapping table maintained in normalize.py.",
+    ),
+    GarminField(
+        "eventType.typeKey",
+        "activity_list",
+        "enum",
+        "Garmin Connect event tag; 'race' anchors the corrector (Runalyze port)",
+        ("vdot_shape",),
+        "Known only if the user tagged it in Garmin Connect.",
     ),
     GarminField(
         "startTimeLocal",

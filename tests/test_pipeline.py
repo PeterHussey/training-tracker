@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from metric_series import rows_from_series
+from metrics import effective_vo2max, marathon_shape, prognosis, vdot_shape
 from normalize import Activity, from_summary
 from pipeline import compute_metric_rows, run_pipeline
 from store import MetricStore
@@ -473,9 +474,7 @@ def test_pipeline_emits_daily_volume_rows(tmp_path):
     data = json.loads(FIXTURE.read_text())
     acts = [from_summary(a) for a in data]
     db = tmp_path / "metrics_daily.db"
-    run_pipeline(
-        acts, default_profile(age=40, hrrest=60, sex="M"), str(db)
-    )
+    run_pipeline(acts, default_profile(age=40, hrrest=60, sex="M"), str(db))
     store = MetricStore(str(db))
     # Daily distance total exists
     daily_dist = store.read_metric("volume.distance_total_daily")
@@ -497,9 +496,7 @@ def test_pipeline_daily_volume_consistency_with_weekly(tmp_path):
     data = json.loads(FIXTURE.read_text())
     acts = [from_summary(a) for a in data]
     db = tmp_path / "metrics_consistency.db"
-    run_pipeline(
-        acts, default_profile(age=40, hrrest=60, sex="M"), str(db)
-    )
+    run_pipeline(acts, default_profile(age=40, hrrest=60, sex="M"), str(db))
     store = MetricStore(str(db))
     # Get weekly distance total rows
     weekly_rows = store.read_metric("volume.distance_total")
@@ -511,13 +508,12 @@ def test_pipeline_daily_volume_consistency_with_weekly(tmp_path):
         # Sum daily distance rows that fall in this week
         daily_rows = store.read_metric("volume.distance_total_daily")
         week_daily_sum = sum(
-            r["value"] for r in daily_rows
-            if week_start <= pd.Timestamp(r["date"]) <= week_end
+            r["value"] for r in daily_rows if week_start <= pd.Timestamp(r["date"]) <= week_end
         )
         # The weekly value should equal the sum of its daily components
-        assert (
-            row["value"] == pytest.approx(week_daily_sum)
-        ), f"Weekly distance {row['value']} != daily sum {week_daily_sum} for week starting {week_start.date()}"
+        assert row["value"] == pytest.approx(week_daily_sum), (
+            f"Weekly distance {row['value']} != daily sum {week_daily_sum} for week starting {week_start.date()}"
+        )
     store.close()
 
 
@@ -528,9 +524,7 @@ def test_pipeline_daily_volume_strength_absent_distance_present_duration():
     # Filter to only strength activities
     strength_acts = [a for a in acts if a.sport == "strength"]
     assert strength_acts, "Need strength activities for this test"
-    rows = compute_metric_rows(
-        strength_acts, default_profile(age=40, hrrest=60, sex="M")
-    )
+    rows = compute_metric_rows(strength_acts, default_profile(age=40, hrrest=60, sex="M"))
     metrics = {r["metric"] for r in rows}
     # distance_strength_daily should be absent (no running distance for strength)
     assert "volume.distance_strength_daily" not in metrics, (
@@ -542,4 +536,253 @@ def test_pipeline_daily_volume_strength_absent_distance_present_duration():
     )
 
 
+# --- Runalyze VDOT chain wiring (Task 8) ----------------------------------
 
+PROFILE_40M_VDOT = RunnerProfile(hrmax=180, hrrest=60, sex="M", birth_year=1986)
+
+PROGNOSIS_RAW_KEYS = {
+    "prognosis.1",
+    "prognosis.3",
+    "prognosis.5",
+    "prognosis.10",
+    "prognosis.21.1",
+    "prognosis.42.2",
+    "prognosis.50",
+}
+
+
+def _vdot_run(
+    activity_id,
+    day,
+    dist_m=10000.0,
+    dur_s=3000.0,
+    hr=150.0,
+    *,
+    sport="running",
+    event_type=None,
+    elapsed_s=None,
+):
+    """Qualifying synthetic run for the Runalyze wiring tests.
+
+    elapsed_s defaults to dur_s; pass a larger value to make the moving-vs-
+    elapsed distinction observable.
+    """
+    return Activity(
+        activity_id=activity_id,
+        sport=sport,
+        date=day,
+        ts_ms=0,
+        distance_m=dist_m,
+        duration_s=dur_s,
+        elapsed_s=dur_s if elapsed_s is None else elapsed_s,
+        avg_hr=hr,
+        max_hr=hr + 5,
+        event_type=event_type,
+    )
+
+
+def test_pipeline_emits_vdot_shape_with_qualifying_runs():
+    acts = [
+        _vdot_run(1, date(2026, 1, 10)),
+        _vdot_run(2, date(2026, 1, 12)),
+        _vdot_run(3, date(2026, 1, 14)),
+        _vdot_run(4, date(2026, 1, 15), sport="treadmill"),
+        _vdot_run(5, date(2026, 1, 16), sport="cross"),
+    ]
+    rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
+
+    shape = [r for r in rows if r["metric"] == "vdot.shape"]
+    assert [r["date"] for r in shape] == [f"2026-01-{d:02d}" for d in range(10, 17)]
+    assert all(r["source"] == "computed" for r in shape)
+
+    expected = vdot_shape.shape_series(acts, 180.0)
+    for r in shape:
+        assert r["value"] == pytest.approx(expected[pd.Timestamp(r["date"])])
+
+    params = json.loads(shape[0]["params"])
+    assert params["window_days"] == 30
+    flags = json.loads(shape[0]["flags"])
+    assert flags["corrector"] == 1.0
+    assert flags["hrmax_source"] == PROFILE_40M_VDOT.hrmax_source
+
+    # marathon + every prognosis variant ride the same day set
+    for metric in (
+        ("marathon.shape_pct",)
+        + tuple(PROGNOSIS_RAW_KEYS)
+        + tuple(f"{k}_damped" for k in PROGNOSIS_RAW_KEYS)
+    ):
+        assert [r["date"] for r in rows if r["metric"] == metric] == [r["date"] for r in shape], (
+            f"{metric} day set diverges from vdot.shape"
+        )
+
+
+def test_pipeline_omits_prognosis_when_no_qualifying():
+    """Only strength/cross activities: no shape, no marathon, no prognosis."""
+    acts = [
+        Activity(1, "strength", date(2026, 1, 10), 0, 0.0, 3600.0, 3600.0, 120.0, 140.0),
+        Activity(2, "cross", date(2026, 1, 11), 0, 0.0, 3000.0, 3000.0, 130.0, 150.0),
+    ]
+    rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
+    metrics = {r["metric"] for r in rows}
+    assert "vdot.shape" not in metrics
+    assert "marathon.shape_pct" not in metrics
+    assert not any(m.startswith("prognosis.") for m in metrics)
+
+
+def test_pipeline_emits_exact_seven_prognosis_keys():
+    acts = [
+        _vdot_run(1, date(2026, 1, 10)),
+        _vdot_run(2, date(2026, 1, 12)),
+        _vdot_run(3, date(2026, 1, 14)),
+    ]
+    rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
+    metrics = {r["metric"] for r in rows}
+    raw = {m for m in metrics if m.startswith("prognosis.") and not m.endswith("_damped")}
+    damped = {m for m in metrics if m.endswith("_damped")}
+    assert raw == PROGNOSIS_RAW_KEYS
+    assert damped == {f"{k}_damped" for k in PROGNOSIS_RAW_KEYS}
+    # A plain f"prognosis.{d}" renders float distances as 1.0/10.0/50.0.
+    assert "prognosis.1.0" not in metrics
+    assert "prognosis.10.0" not in metrics
+    assert "prognosis.50.0" not in metrics
+
+    # The prognosis is the Daniels-Gilbert inverse of that day's corrected
+    # shape; the damped twin feeds the day's marathon shape into the factor.
+    shape = {r["date"]: r["value"] for r in rows if r["metric"] == "vdot.shape"}
+    pct = {r["date"]: r["value"] for r in rows if r["metric"] == "marathon.shape_pct"}
+    for r in rows:
+        if r["metric"] == "prognosis.5":
+            assert r["value"] == pytest.approx(prognosis.prognosis_seconds(shape[r["date"]], 5.0))
+    damped_42 = {r["date"]: r["value"] for r in rows if r["metric"] == "prognosis.42.2_damped"}
+    for r in rows:
+        if r["metric"] != "prognosis.42.2":
+            continue
+        day = r["date"]
+        assert damped_42[day] == pytest.approx(
+            prognosis.prognosis_seconds(shape[day], 42.2, marathon_shape_pct=pct[day])
+        )
+        assert damped_42[day] > r["value"], "marathon-shape damping must slow the marathon"
+
+
+def test_pipeline_vdot_shape_skips_empty_window_days():
+    """A gap longer than the 30-day window emits no rows at all (never 0.0)."""
+    acts = [_vdot_run(1, date(2026, 1, 1)), _vdot_run(2, date(2026, 3, 5))]
+    rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
+
+    shape_dates = [r["date"] for r in rows if r["metric"] == "vdot.shape"]
+    assert shape_dates[0] == "2026-01-01"
+    assert shape_dates[-1] == "2026-03-05"
+    # Run 1 (noon 01-01) lights the trailing-window days 01-01..01-30; run 2
+    # (noon 03-05) only lights its own day, since the series stops there.
+    assert "2026-01-30" in shape_dates
+    assert "2026-01-31" not in shape_dates
+    assert "2026-02-02" not in shape_dates
+    assert "2026-03-04" not in shape_dates
+    assert "2026-03-05" in shape_dates
+    assert all(r["value"] > 0 for r in rows if r["metric"] == "vdot.shape")
+    assert [r["date"] for r in rows if r["metric"] == "marathon.shape_pct"] == shape_dates
+    assert [r["date"] for r in rows if r["metric"] == "prognosis.5"] == shape_dates
+
+
+def test_pipeline_marathon_targets_resolve_from_latest_shape():
+    """Targets resolve from the current shape for every as-of day (spec 6)."""
+    acts = [
+        _vdot_run(1, date(2026, 1, 1), 25000.0, 12000.0, 140.0),
+        _vdot_run(2, date(2026, 3, 5), 25000.0, 5000.0, 175.0),
+    ]
+    rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
+    shape = {r["date"]: r["value"] for r in rows if r["metric"] == "vdot.shape"}
+    pct = {r["date"]: r["value"] for r in rows if r["metric"] == "marathon.shape_pct"}
+    latest = shape["2026-03-05"]
+
+    early_day = date(2026, 1, 1)
+    runs_as_of_early = [
+        ((early_day - a.date).days, a.distance_km) for a in acts if a.date <= early_day
+    ]
+    days_for_week_km = marathon_shape.clamped_week_days(
+        (early_day - min(a.date for a in acts)).days
+    )
+
+    from_latest = marathon_shape.percentage(
+        runs_as_of_early, latest, days_for_week_km=days_for_week_km
+    )
+    from_early = marathon_shape.percentage(
+        runs_as_of_early, shape["2026-01-01"], days_for_week_km=days_for_week_km
+    )
+    assert from_latest != from_early, "test data does not discriminate the two readings"
+    assert pct["2026-01-01"] == from_latest
+
+
+def test_corrector_factor_comes_from_race_tagged_activities():
+    acts = [
+        _vdot_run(1, date(2026, 1, 10)),
+        _vdot_run(2, date(2026, 1, 12)),
+        _vdot_run(3, date(2026, 1, 14)),
+        _vdot_run(
+            4, date(2026, 1, 20), 10000.0, 2400.0, 178.0, event_type="race", elapsed_s=3000.0
+        ),
+        _vdot_run(5, date(2026, 1, 27), 5000.0, 1140.0, 178.0, event_type="race"),
+    ]
+    races = [a for a in acts if a.event_type == "race"]
+    factor = effective_vo2max.corrector_factor(
+        [effective_vo2max.race_ratio(a.distance_km, a.duration_s, a.avg_hr / 180.0) for a in races],
+        race_vdots=[effective_vo2max.race_vdot_by_time(a.distance_km, a.duration_s) for a in races],
+    )
+    assert factor != pytest.approx(1.0)
+
+    rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
+    got = {r["date"]: r["value"] for r in rows if r["metric"] == "vdot.shape"}
+    raw = vdot_shape.shape_series(acts, 180.0)
+    assert len(got) == len(raw)
+    for day in raw.index:
+        assert got[day.strftime("%Y-%m-%d")] == pytest.approx(raw[day] * factor, rel=1e-4)
+
+    # Moving time is the input: the race ratio changes when elapsed time is used.
+    race4 = races[0]
+    ratio_moving = effective_vo2max.race_ratio(race4.distance_km, race4.duration_s, 178.0 / 180.0)
+    ratio_elapsed = effective_vo2max.race_ratio(race4.distance_km, race4.elapsed_s, 178.0 / 180.0)
+    assert ratio_moving != pytest.approx(ratio_elapsed)
+
+    # Without any race tag the corrector stays neutral.
+    untagged = [
+        _vdot_run(1, date(2026, 1, 10)),
+        _vdot_run(2, date(2026, 1, 12)),
+        _vdot_run(3, date(2026, 1, 14)),
+    ]
+    plain = {
+        r["date"]: r["value"]
+        for r in compute_metric_rows(untagged, PROFILE_40M_VDOT)
+        if r["metric"] == "vdot.shape"
+    }
+    raw_plain = vdot_shape.shape_series(untagged, 180.0)
+    for day in raw_plain.index:
+        assert plain[day.strftime("%Y-%m-%d")] == pytest.approx(raw_plain[day])
+
+
+def test_pipeline_corrector_is_not_floored_at_one():
+    """A low-HR race can push the corrector below 1.0; the raw max is kept."""
+    acts = [
+        _vdot_run(1, date(2026, 1, 20), 10000.0, 2400.0, 120.0, event_type="race"),
+        _vdot_run(2, date(2026, 1, 22)),
+    ]
+    factor = effective_vo2max.corrector_factor(
+        [effective_vo2max.race_ratio(10.0, 2400.0, 120.0 / 180.0)],
+        race_vdots=[effective_vo2max.race_vdot_by_time(10.0, 2400.0)],
+    )
+    assert factor < 1.0
+
+    rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
+    got = {r["date"]: r["value"] for r in rows if r["metric"] == "vdot.shape"}
+    raw = vdot_shape.shape_series(acts, 180.0)
+    for day in raw.index:
+        assert got[day.strftime("%Y-%m-%d")] == pytest.approx(raw[day] * factor, rel=1e-4)
+
+
+def test_pipeline_omits_prognosis_when_shape_out_of_range():
+    """A shape below 15 is not a reasonable vdot: no prognosis rows, no filler."""
+    acts = [_vdot_run(1, date(2026, 1, 10), 5000.0, 6000.0, 180.0)]
+    rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
+    metrics = {r["metric"] for r in rows}
+    assert "vdot.shape" in metrics
+    assert "marathon.shape_pct" in metrics
+    assert not any(m.startswith("prognosis.") for m in metrics)

@@ -115,3 +115,64 @@ def test_from_summary_does_not_populate_rpe_weather():
     a = from_summary(_first("running"))
     for f in RPE_WX_FIELDS:
         assert getattr(a, f) is None, f
+
+
+def test_event_type_of_reads_garmin_event_type_key():
+    """Garmin's `eventType.typeKey` is carried through verbatim — it is the
+    only race marker in the payload that Task 8's race anchoring can use."""
+    from normalize import event_type_of
+
+    assert event_type_of({"eventType": {"typeId": 1, "typeKey": "race"}}) == "race"
+    uncategorized = {"eventType": {"typeId": 9, "typeKey": "uncategorized"}}
+    assert event_type_of(uncategorized) == "uncategorized"
+
+
+def test_event_type_of_missing_returns_none():
+    """Older cached payloads and fixtures have no `eventType`; the helper must
+    return None rather than a sentinel string so those keep working."""
+    from normalize import event_type_of
+
+    assert event_type_of({}) is None
+    assert event_type_of({"eventType": {}}) is None
+    assert event_type_of({"eventType": None}) is None
+    assert event_type_of({"eventType": {"typeId": 9}}) is None
+    assert event_type_of({"eventType": "race"}) is None  # malformed shape, still None
+    assert event_type_of({"eventType": {"typeKey": ""}}) is None
+
+
+def test_from_summary_maps_fixture_event_type():
+    """Fixture activity #0 is tagged `uncategorized` (verified); no fixture row
+    carries a race tag, so the race case is synthetic (below)."""
+    assert from_summary(DATA[0]).event_type == "uncategorized"
+
+
+def test_from_summary_maps_race_event_type():
+    """A copy of the fixture shape tagged as a race parses to `event_type ==
+    "race"` — the exact value Task 8 keys on."""
+    tagged = dict(DATA[0])
+    tagged["eventType"] = {"typeId": 1, "typeKey": "race", "sortOrder": 1}
+    assert from_summary(tagged).event_type == "race"
+
+
+def test_from_summary_missing_event_type_is_none():
+    """A payload with the field stripped still parses, with event_type None."""
+    stripped = dict(DATA[0])
+    stripped.pop("eventType", None)
+    assert from_summary(stripped).event_type is None
+
+
+def test_activity_event_type_defaults_none():
+    """The dataclass field defaults to None so every pre-existing construction
+    site (store loads, tests) keeps working unchanged."""
+    a = Activity(
+        activity_id=1,
+        sport="running",
+        date=date(2026, 1, 1),
+        ts_ms=0,
+        distance_m=0.0,
+        duration_s=0.0,
+        elapsed_s=0.0,
+        avg_hr=None,
+        max_hr=None,
+    )
+    assert a.event_type is None
