@@ -429,6 +429,10 @@ def compute_metric_rows(
         # targets resolve from the current (latest) corrected shape for every
         # as-of day; only the run windows are as-of each day
         # (BasicEndurance::asArray, spec 6).
+        # Runalyze's Prognose panel instead normalizes per as-of day
+        # (plugin/RunalyzePluginPanel_Prognose/Plot.Form.php:115, per-day
+        # setEffectiveVO2max($Data[$currentIndex]['vo2max'])), and the resulting
+        # level shift in the historical curve is the accepted deviation.
         earliest_date = min(a.date for a in activities)
         target_vdot = float(shape.iloc[-1])
         shape_pct: list[float] = []
