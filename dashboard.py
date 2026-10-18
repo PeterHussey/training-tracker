@@ -1413,8 +1413,8 @@ def render_prognosis_block(windowed, view, units) -> None:
         "Runalyze-style prognosis ( Daniels-Gilbert, bisection-inverted; damped = marathon-shape-normalized)."
     )
     st.caption(
-        "Races you tag in Garmin Connect (event type `Race`) anchor these once picked up in a "
-        "historical fetch — incremental refresh won't revisit old activities."
+        "Races you tag in Garmin Connect (event type `Race`) anchor these — the tag must "
+        "be present at the activity's first fetch here; later tags are not picked up."
     )
 
     pct_series = windowed.get("marathon.shape_pct")

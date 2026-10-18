@@ -1507,8 +1507,8 @@ def test_render_fitness_tab_prognosis_table_and_marathon_detail(monkeypatch):
     )
     assert any(
         c.startswith(
-            "Races you tag in Garmin Connect (event type `Race`) anchor these once picked up "
-            "in a historical fetch — incremental refresh won't revisit old activities."
+            "Races you tag in Garmin Connect (event type `Race`) anchor these — the tag must "
+            "be present at the activity's first fetch here; later tags are not picked up."
         )
         for c in captions
     )
