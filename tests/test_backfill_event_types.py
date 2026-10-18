@@ -18,32 +18,32 @@ def _summary(aid, type_key=None, *, with_event_type=True):
 
 
 def test_plan_writes_race_over_null():
-    stored = {1: None}
-    raw = [_summary(1, "race")]
+    stored: dict[int, str | None] = {1: None}
+    raw: list[dict] = [_summary(1, "race")]
     assert plan_event_type_updates(stored, raw) == [(1, "race")]
 
 
 def test_plan_writes_uncategorized_over_null():
-    stored = {1: None}
-    raw = [_summary(1, "uncategorized")]
+    stored: dict[int, str | None] = {1: None}
+    raw: list[dict] = [_summary(1, "uncategorized")]
     assert plan_event_type_updates(stored, raw) == [(1, "uncategorized")]
 
 
 def test_plan_mirrors_downgrade_race_to_uncategorized():
-    stored = {1: "race"}
-    raw = [_summary(1, "uncategorized")]
+    stored: dict[int, str | None] = {1: "race"}
+    raw: list[dict] = [_summary(1, "uncategorized")]
     assert plan_event_type_updates(stored, raw) == [(1, "uncategorized")]
 
 
 def test_plan_skips_equal_value():
-    stored = {1: "race"}
-    raw = [_summary(1, "race")]
+    stored: dict[int, str | None] = {1: "race"}
+    raw: list[dict] = [_summary(1, "race")]
     assert plan_event_type_updates(stored, raw) == []
 
 
 def test_plan_skips_absent_empty_or_malformed_event_type():
-    stored = {1: None, 2: None, 3: None, 4: None}
-    raw = [
+    stored: dict[int, str | None] = {1: None, 2: None, 3: None, 4: None}
+    raw: list[dict] = [
         _summary(1, with_event_type=False),  # key absent from the payload
         _summary(2, {}),  # eventType without typeKey
         _summary(3, False),  # eventType is not a dict
@@ -53,8 +53,8 @@ def test_plan_skips_absent_empty_or_malformed_event_type():
 
 
 def test_plan_skips_unknown_or_non_int_activity_id():
-    stored = {1: None, 2: None}
-    raw = [
+    stored: dict[int, str | None] = {1: None, 2: None}
+    raw: list[dict] = [
         {"activityId": 999, "eventType": {"typeKey": "race"}},  # not in store
         {"activityId": None, "eventType": {"typeKey": "race"}},  # absent id
         {"eventType": {"typeKey": "race"}},  # no activityId key
@@ -64,8 +64,8 @@ def test_plan_skips_unknown_or_non_int_activity_id():
 
 
 def test_plan_output_is_sorted_by_activity_id():
-    stored = {3: None, 1: None, 2: None}
-    raw = [_summary(3, "race"), _summary(1, "race"), _summary(2, "uncategorized")]
+    stored: dict[int, str | None] = {3: None, 1: None, 2: None}
+    raw: list[dict] = [_summary(3, "race"), _summary(1, "race"), _summary(2, "uncategorized")]
     assert plan_event_type_updates(stored, raw) == [
         (1, "race"),
         (2, "uncategorized"),
