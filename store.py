@@ -108,8 +108,10 @@ class MetricStore:
             self.conn.execute("ALTER TABLE activities ADD COLUMN wx_desc TEXT")
         if "wx_unit" not in cols:
             self.conn.execute("ALTER TABLE activities ADD COLUMN wx_unit TEXT")
-        # Garmin event type (e.g. "race"): nullable, arrives NULL until the
-        # activity is next refreshed; absent data genuinely is absent.
+        # Garmin event type (e.g. "race"): nullable, captured only from the
+        # activity-list fetch at ingestion — a row that predates the column
+        # keeps NULL until backfill_event_types.py re-reads it from Garmin;
+        # absent data genuinely is absent.
         if "event_type" not in cols:
             self.conn.execute("ALTER TABLE activities ADD COLUMN event_type TEXT")
         # Best-effort LTHR anchors replaced the rolling-mean fallback: prune

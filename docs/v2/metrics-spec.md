@@ -102,6 +102,13 @@ picked up: neither refresh mode revisits stored activities (incremental starts a
 stored date). With no tagged race the corrector stays at 1.0 — a graceful dormant
 state, never a filler factor.
 
+A tag added after ingestion is repaired with the script, not a refresh: run
+`.venv/bin/python backfill_event_types.py` (dry run by default) to see which
+stored rows would change, then rerun with `--apply` to write. It re-reads the
+**live** activity-list payload for the store's date range — never the cached
+`activity_summary_{id}.json` files, which predate the tagging — and narrow-
+UPDATEs only the `event_type` column, so backfilled RPE/Feel/weather survive.
+
 Null behavior (never a filler value): the `vdot.shape` series function emits `0.0`
 for a day whose 30-day window is empty, but the **pipeline** drops those days from
 the stored rows, so a day whose window holds no qualifying activity stores no row
