@@ -24,7 +24,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from gateway import GarminGateway
-from metrics import volume
+from metrics import daniels_gilbert, marathon_shape, volume
 from metrics.gap import K as GAP_K
 from metrics.threshold import parse_details_series
 from normalize import from_summary, parse_rpe_feel, parse_weather
@@ -655,6 +655,85 @@ def _fmt_pace_min(v: float, units: str) -> str:
     return f"{m}:{s:02d} {unit}"
 
 
+# Runalyze's prognosis panel distance ladder [km]. Metric keys render with the
+# same `:g` spelling the pipeline uses (`prognosis.1`, `prognosis.21.1`): the
+# inner dot is part of the key, so keys are never split on ".".
+PROGNOSIS_DISTANCES_KM = (1.0, 3.0, 5.0, 10.0, 21.1, 42.2, 50.0)
+
+# Percentage ladder of Runalyze's tools page (`tableVo2maxPace`).
+PACE_PERCENTAGES = tuple(range(65, 111, 5))
+
+
+def _fmt_race_time(seconds: float | None) -> str:
+    """Race time as M:SS (H:MM:SS from an hour up), '—' when absent.
+
+    Same rendering as Runalyze's `duration` filter and as the seconds labels
+    the Garmin race-prediction chart above the prognosis table uses
+    (`session._fmt` with unit "s").
+    """
+    if seconds is None:
+        return "—"
+    return _fmt(seconds, {"unit": "s"}, "km")
+
+
+def prognosis_rows(windowed) -> list[dict]:
+    """`Distance | Raw | Damped` rows from the latest `prognosis.*` rows.
+
+    Empty when the 5 km prognosis is absent: a date-keyed Runalyze key emits no
+    row on days whose trailing window holds no qualifying run, so absence is
+    normal and the block's ruled hide condition. Raw is always a column once
+    rows exist; Damped is added only where damped rows exist, and a distance
+    without one shows '—' rather than a filler time.
+    """
+    five_km = windowed.get("prognosis.5")
+    if five_km is None or five_km.empty:
+        return []
+    show_damped = any(
+        (s := windowed.get(f"prognosis.{km:g}_damped")) is not None and not s.empty
+        for km in PROGNOSIS_DISTANCES_KM
+    )
+    rows = []
+    for km in PROGNOSIS_DISTANCES_KM:
+        raw = windowed.get(f"prognosis.{km:g}")
+        row = {
+            "Distance": f"{km:g} km",
+            "Raw": _fmt_race_time(last_value(raw) if raw is not None else None),
+        }
+        if show_damped:
+            damped = windowed.get(f"prognosis.{km:g}_damped")
+            row["Damped"] = _fmt_race_time(last_value(damped) if damped is not None else None)
+        rows.append(row)
+    return rows
+
+
+def pace_table_rows(shape: float | None, units: str = "km") -> list[dict]:
+    """Training-pace rows at 65..110 % of vVO2max, derived in-session.
+
+    `shape` is the current effective VO2max (the latest `vdot.shape` value),
+    rounded first exactly as Runalyze's tools page rounds the current shape
+    before the pace lookup. Empty when there is no shape, so the caller renders
+    nothing.
+    """
+    if shape is None:
+        return []
+    rounded = daniels_gilbert.round_half_up(shape)
+    m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
+    rows = []
+    for pct in PACE_PERCENTAGES:
+        seconds_per_km = daniels_gilbert.pace_s_per_km(rounded, pct / 100.0)
+        rows.append(
+            {
+                "% vVO2max": f"{pct}%",
+                "Pace": (
+                    _fmt_pace_min(seconds_per_km * m_per_unit / 1000.0 / 60.0, units)
+                    if seconds_per_km
+                    else "—"
+                ),
+            }
+        )
+    return rows
+
+
 def _fmt_rpe(rpe_10) -> str:
     """RPE on the 0–10 display scale: 6.0 → '6/10', 7.5 → '7.5/10'."""
     if rpe_10 is None:
@@ -1061,6 +1140,15 @@ def render_load_tab(view, windowed, units) -> None:
         )
 
 
+# The only prompt telling the user that Garmin VO2max is unsynced. Shown when the
+# Garmin series is absent — including when `vdot.shape` alone exists, so the
+# Runalyze overlay never silently hides it.
+GARMIN_VO2MAX_HINT = (
+    "No VO2max trend data. Use **Refresh from Garmin** to pull the "
+    "daily trend from `/maxmet/daily` (Garmin running VO2max)."
+)
+
+
 def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None:
     st.markdown(
         """
@@ -1122,21 +1210,52 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             )
 
     vo2 = windowed.get("fitness.vo2max")
-    if vo2 is None or vo2.empty:
-        st.write(
-            "No VO2max trend data. Use **Refresh from Garmin** to pull the "
-            "daily trend from `/maxmet/daily` (Garmin running VO2max)."
-        )
+    shape = windowed.get("vdot.shape")
+    has_vo2 = vo2 is not None and not vo2.empty
+    has_shape = shape is not None and not shape.empty
+    if not has_vo2 and not has_shape:
+        st.write(GARMIN_VO2MAX_HINT)
     else:
-        fig = go.Figure(go.Scatter(x=vo2.index, y=vo2.values, mode="lines+markers", name="VO2max"))
-        fig.update_layout(title="VO2max (Firstbeat estimate, daily trend)", hovermode="x unified")
-        st.plotly_chart(fig, width='stretch')
-        st.caption(
-            "📊 **How to read:** Daily Garmin Firstbeat VO2max estimate (mL/kg/min). "
-            "**~5% error; underestimates ≥60 mL/kg/min.** Never recomputed here — taken directly from Garmin. "
-            "Trend direction matters more than absolute value. "
-            + context_line(view, "fitness.vo2max")
+        fig = go.Figure()
+        if has_vo2:
+            fig.add_trace(
+                go.Scatter(x=vo2.index, y=vo2.values, mode="lines+markers", name="VO2max")
+            )
+        if has_shape:
+            # Runalyze shape rides the Garmin trend it compares against.
+            fig.add_trace(
+                go.Scatter(
+                    x=shape.index,
+                    y=shape.values,
+                    mode="lines+markers",
+                    name="Runalyze shape",
+                    line={"color": "#F18F01"},
+                )
+            )
+        title = (
+            "VO2max (Firstbeat estimate, daily trend)"
+            if has_vo2
+            else "Runalyze shape (no Garmin VO2max trend)"
         )
+        fig.update_layout(title=title, hovermode="x unified")
+        st.plotly_chart(fig, width='stretch')
+        if has_shape:
+            st.caption(
+                "Runalyze-style shape: 30-day duration-weighted mean of per-run pace+HR VO2max, "
+                "× race corrector (best-3). Independent of Garmin Firstbeat. "
+                + context_line(view, "vdot.shape")
+            )
+        if has_vo2:
+            st.caption(
+                "📊 **How to read:** Daily Garmin Firstbeat VO2max estimate (mL/kg/min). "
+                "**~5% error; underestimates ≥60 mL/kg/min.** Never recomputed here — taken directly from Garmin. "
+                "Trend direction matters more than absolute value. "
+                + context_line(view, "fitness.vo2max")
+            )
+        if not has_vo2:
+            # Shape-only fallback: the Runalyze overlay is not a substitute for
+            # the Garmin trend, so the refresh prompt still has to be visible.
+            st.write(GARMIN_VO2MAX_HINT)
 
     ag = windowed.get("age_graded.pct")
     if ag is not None and len(ag):
@@ -1270,6 +1389,53 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             "Race predictions appear after a Refresh (requires new Garmin "
             "predictions in the payload)."
         )
+
+    # Runalyze prognosis + marathon-shape detail (spec layout "B"): directly
+    # under the Garmin race-predictions block above, and independent of it —
+    # the prognosis table's own hide rule is the absent 5 km row.
+    render_prognosis_block(windowed, view, units)
+
+
+def render_prognosis_block(windowed, view, units) -> None:
+    """Runalyze race prognosis table + marathon-shape detail.
+
+    Columns are Distance | Raw | Damped (current-day values from the latest
+    `prognosis.*` rows). Hidden entirely when the 5 km prognosis is absent, and
+    the Damped column only appears where damped rows exist (see
+    :func:`prognosis_rows`) — never a filler time.
+    """
+    rows = prognosis_rows(windowed)
+    if not rows:
+        return
+    st.subheader("Runalyze race prognosis")
+    st.dataframe(rows, width='stretch', hide_index=True)
+    st.caption(
+        "Runalyze-style prognosis ( Daniels-Gilbert, bisection-inverted; damped = marathon-shape-normalized)."
+    )
+    st.caption(
+        "Races you tag in Garmin Connect (event type `Race`) anchor these once picked up in a "
+        "historical fetch — incremental refresh won't revisit old activities."
+    )
+
+    pct_series = windowed.get("marathon.shape_pct")
+    pct = last_value(pct_series) if pct_series is not None else None
+    run_shape = windowed.get("vdot.shape")
+    shape = last_value(run_shape) if run_shape is not None else None
+    if pct is None or shape is None:
+        return
+    cols = st.columns(3)
+    cols[0].metric("Marathon shape", f"{pct:.0f}%")
+    cols[1].metric(
+        "Target weekly volume", _fmt(marathon_shape.target_week_km(shape), {"unit": "km"}, units)
+    )
+    cols[2].metric(
+        "Target long jog", _fmt(marathon_shape.target_lj_km_week_real(shape), {"unit": "km"}, units)
+    )
+    st.caption(
+        "📊 **How to read:** Marathon shape = weekly mileage (67%) + long-jog quality (33%) "
+        "against the targets for your current shape; 100% = marathon-ready. "
+        + context_line(view, "marathon.shape_pct")
+    )
 
 
 def render_volume_tab(activities, view, windowed, units, selected_volume_agg="weekly") -> None:
@@ -1698,6 +1864,26 @@ def render_activities(activities, since, until, units, profile) -> None:
         render_repetitions(activities, selected_id, units)
 
 
+def render_paces_table(windowed, units) -> None:
+    """Runalyze training paces from the current shape — Overview's last block.
+
+    Derived in-session, never stored (spec layout "B"). Hidden when the window
+    has no `vdot.shape` rows: there is no current shape to read paces from.
+    """
+    run_shape = windowed.get("vdot.shape")
+    shape = last_value(run_shape) if run_shape is not None else None
+    rows = pace_table_rows(shape, units)
+    if not rows:
+        return
+    st.subheader("Training paces (Runalyze vVO2max)")
+    st.dataframe(rows, width='stretch', hide_index=True)
+    st.caption(
+        "📊 **How to read:** Pace at 65–110% of vVO2max (100% ≈ the maximal pace for ~11 min) "
+        f"from your current shape, rounded to {daniels_gilbert.round_half_up(shape)}. "
+        "Display-only — never stored."
+    )
+
+
 def main() -> None:
     st.title("Training Tracker")
     store = get_store()
@@ -1924,6 +2110,9 @@ def main() -> None:
         """)
         for line in GLOSSARY:
             st.markdown(f"- {line}")
+
+    # Bottom of Overview (spec layout "B"): Runalyze training paces.
+    render_paces_table(windowed, units)
 
 
 if __name__ == "__main__":
