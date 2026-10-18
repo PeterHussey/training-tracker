@@ -68,7 +68,7 @@ exact_value = corrector.factor() * value
 
 ### 4. Corrector (`Calculation/JD/LegacyEffectiveVO2maxCorrector.php`)
 
-`factor() = max(1, race_vdot_by_time / race_training_vdot)` over the **best 3 races** (ordered by race VDOT desc), default **1.0** when no races. In this port, non-circular restatement (marked my call): for each event-type-tagged race activity with distance/time, `race_vdot = daniels_gilbert(dist, time)`, `training_vdot = LegacyEffectiveVO2max.fromPaceAndHR(...)` without corrector; factor = max of the three ratios, with the documented default 1.0 when no races exist (Runalyze keeps the raw max as-is).
+`factor() = max(race_vdot_by_time / race_training_vdot)` over the **best 3 races** (ordered by race VDOT desc), default **1.0** when no race yields a positive ratio (the empty-set fallback only — the factor is never floored at 1.0). In this port, non-circular restatement (marked my call): for each event-type-tagged race activity with distance/time, `race_vdot = daniels_gilbert(dist, time)`, `training_vdot = LegacyEffectiveVO2max.fromPaceAndHR(...)` without corrector; factor = max of the three ratios, with the documented default 1.0 when no races exist (Runalyze keeps the raw max as-is).
 
 Optional manual corrector (Runalyze: numeric 0.5–2.0) is ported as an optional parameter, **no UI**.
 
