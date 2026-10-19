@@ -407,8 +407,14 @@ def compute_metric_rows(
     # ratio (never floored at 1.0 -- a sub-1 factor is legitimate).
     corrector = effective_vo2max.corrector_factor(race_ratios, race_vdots=race_vdots)
 
+    # Mirrors the Runalyze account's "Adapt for elevation" setting; the descent
+    # falls back to the ascent (`ele_loss_m` is not stored).
     shape = vdot_shape.shape_series(
-        activities, hrmax, window_days=VDOT_SHAPE_WINDOW_DAYS, corrector=corrector
+        activities,
+        hrmax,
+        window_days=VDOT_SHAPE_WINDOW_DAYS,
+        corrector=corrector,
+        use_elevation=True,
     )
     if not shape.empty:
         # Drop empty-window days: a >30-day gap is a gap, never a zero row.

@@ -55,9 +55,18 @@ def _velocity_m_per_min(a: Activity) -> float:
 
 
 def _additional_distance_km(ele_gain_m: float | None, ele_loss_m: float | None) -> float:
-    """Distance added by the elevation correction [km] (PHP ``additionalDistance``)."""
+    """Distance added by the elevation correction [km] (PHP ``additionalDistance``).
+
+    Without route up/down data Runalyze's elevation estimate passes the
+    activity's single elevation value for BOTH up and down, so a missing
+    descent falls back to the ascent rather than 0 (a 0 descent would add
+    +2 m of distance per metre climbed with no offset and overshoot).
+    """
     up = 0.0 if ele_gain_m is None else ele_gain_m
-    down = 0.0 if ele_loss_m is None else ele_loss_m
+    down = up if ele_loss_m is None else ele_loss_m
+    # A pathological gain of 0/None with a large loss can shrink the corrected
+    # distance; Runalyze's arithmetic does the same, and a non-positive
+    # distance simply contributes no value.
     return (POSITIVE_ELEVATION_CORRECTION * up + NEGATIVE_ELEVATION_CORRECTION * down) / 1000.0
 
 
@@ -134,6 +143,7 @@ def shape_at(
     hrmax: float | None,
     window_days: int = 30,
     corrector: float = 1.0,
+    use_elevation: bool = False,
 ) -> float:
     """Duration-weighted shape over the window ending at ``as_of``'s day end.
 
@@ -154,7 +164,7 @@ def shape_at(
         ts = _activity_ts(a)
         if ts > day_end or ts < window_start:
             continue
-        value = activity_vo2max(a, hrmax, corrector)
+        value = activity_vo2max(a, hrmax, corrector, use_elevation=use_elevation)
         if value <= 0.0:
             continue
         value_sum += value * a.duration_s
@@ -171,6 +181,7 @@ def shape_series(
     hrmax: float | None,
     window_days: int = 30,
     corrector: float = 1.0,
+    use_elevation: bool = False,
 ) -> pd.Series:
     """Daily shape from the first qualifying run through the last activity date.
 
@@ -188,6 +199,9 @@ def shape_series(
     start = min(a.date for a in runs)
     end = max(a.date for a in activities)
     index = pd.date_range(start, end, freq="D")
-    values = [shape_at(activities, day, hrmax, window_days, corrector) for day in index]
+    values = [
+        shape_at(activities, day, hrmax, window_days, corrector, use_elevation=use_elevation)
+        for day in index
+    ]
 
     return pd.Series(values, index=index, name="vdot_shape")

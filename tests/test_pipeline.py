@@ -595,7 +595,7 @@ def test_pipeline_emits_vdot_shape_with_qualifying_runs():
     assert [r["date"] for r in shape] == [f"2026-01-{d:02d}" for d in range(10, 17)]
     assert all(r["source"] == "computed" for r in shape)
 
-    expected = vdot_shape.shape_series(acts, 180.0)
+    expected = vdot_shape.shape_series(acts, 180.0, use_elevation=True)
     for r in shape:
         assert r["value"] == pytest.approx(expected[pd.Timestamp(r["date"])])
 
@@ -732,7 +732,7 @@ def test_corrector_factor_comes_from_race_tagged_activities():
 
     rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
     got = {r["date"]: r["value"] for r in rows if r["metric"] == "vdot.shape"}
-    raw = vdot_shape.shape_series(acts, 180.0)
+    raw = vdot_shape.shape_series(acts, 180.0, use_elevation=True)
     assert len(got) == len(raw)
     for day in raw.index:
         assert got[day.strftime("%Y-%m-%d")] == pytest.approx(raw[day] * factor, rel=1e-4)
@@ -754,7 +754,7 @@ def test_corrector_factor_comes_from_race_tagged_activities():
         for r in compute_metric_rows(untagged, PROFILE_40M_VDOT)
         if r["metric"] == "vdot.shape"
     }
-    raw_plain = vdot_shape.shape_series(untagged, 180.0)
+    raw_plain = vdot_shape.shape_series(untagged, 180.0, use_elevation=True)
     for day in raw_plain.index:
         assert plain[day.strftime("%Y-%m-%d")] == pytest.approx(raw_plain[day])
 
@@ -773,7 +773,7 @@ def test_pipeline_corrector_is_not_floored_at_one():
 
     rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
     got = {r["date"]: r["value"] for r in rows if r["metric"] == "vdot.shape"}
-    raw = vdot_shape.shape_series(acts, 180.0)
+    raw = vdot_shape.shape_series(acts, 180.0, use_elevation=True)
     for day in raw.index:
         assert got[day.strftime("%Y-%m-%d")] == pytest.approx(raw[day] * factor, rel=1e-4)
 

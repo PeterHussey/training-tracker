@@ -60,6 +60,14 @@ and per-module attribution live in
 Formulas (bullet summary; the design spec carries the pseudocode verbatim):
 - Effective VO2max (pace + HR): `DG.estimate(v / exp((hr_pct - 1.00466) / 0.68725))`
   with `v = 60000 * km / s` [m/min] and `hr_pct = avgHR / HRmax`.
+  The pipeline passes `use_elevation=True` (mirroring the Runalyze account's
+  "Adapt for elevation" setting): the pace is computed from the
+  elevation-corrected distance, `+2 m` per metre climbed, `-1 m` per metre
+  descended (`DistanceModifier` defaults). When the store has no descent
+  (`ele_loss_m` is None), the ascent value stands in for both terms — Runalyze's
+  own no-route fallback, where a single elevation value feeds both up and down.
+  Hilly runs gain roughly 0.5–0.8% in value; flat runs (ascent ≈ descent) are
+  unchanged.
 - Daniels–Gilbert: `estimate(v) = max(0, -4.6 + 0.182253*v + 0.000104*v^2)`. The
   `v ∈ [50, 1000]` m/min guard is **not** in this function: it lives in
   `estimate_from_race_result` and in the qualifying filter below. A race estimate

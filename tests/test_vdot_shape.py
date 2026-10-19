@@ -233,6 +233,51 @@ def test_elevation_variant_goes_up_or_down():
     assert down == pytest.approx(_effective(9.9, 3000.0, 150.0))
 
 
+def test_missing_descent_falls_back_to_ascent():
+    """Runalyze's no-route fallback: a single elevation value serves both terms.
+
+    Without route data Runalyze passes the activity's elevation for BOTH up and
+    down, so ``ele_loss_m=None`` must equal an explicit same-valued descent --
+    with the old ``0.0`` fallback this overshoots (+2 m/m climbed, no offset).
+    """
+    gain_only = _activity(1, ele_gain_m=100.0, ele_loss_m=None)
+    gain_and_loss = _activity(2, ele_gain_m=100.0, ele_loss_m=100.0)
+    flat = _activity(3)
+
+    assert vdot_shape.activity_vo2max(gain_only, HRMAX, use_elevation=True) == pytest.approx(
+        vdot_shape.activity_vo2max(gain_and_loss, HRMAX, use_elevation=True)
+    )
+    # (2 * 100 + -1 * 100) / 1000 = 0.1 km of corrected distance, not 0.2.
+    v = vdot_shape.activity_vo2max(gain_only, HRMAX, use_elevation=True)
+    assert v > vdot_shape.activity_vo2max(flat, HRMAX)
+    assert v == pytest.approx(_effective(5000.0 / 1000.0 + 0.1, 1500.0, 150.0))
+
+
+def test_golden_elevation_corrected_run_2026_10_18():
+    """Owner's Runalyze shows 42.98 for the 2026-10-18 "Concord - ER9" run.
+
+    Our port with Garmin's own ascent/descent gives 42.973; the uncorrected
+    value (what we printed before the elevation correction) is ~42.64.
+    """
+    a = _activity(
+        1,
+        distance_m=14824.75,
+        duration_s=5403.0,
+        avg_hr=143.0,
+        ele_gain_m=93.26,
+        ele_loss_m=93.29,
+    )
+    corrected = vdot_shape.activity_vo2max(a, 184.0, use_elevation=True)
+    uncorrected = vdot_shape.activity_vo2max(a, 184.0, use_elevation=False)
+
+    assert corrected == pytest.approx(42.97, abs=0.02)
+    assert corrected != pytest.approx(uncorrected)
+
+    series_on = vdot_shape.shape_series([a], 184.0, use_elevation=True)
+    series_off = vdot_shape.shape_series([a], 184.0, use_elevation=False)
+    assert (series_on != series_off).any()
+
+
 # --- Series emission (Ruling 6) --------------------------------------------
 
 

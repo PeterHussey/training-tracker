@@ -78,7 +78,7 @@ Optional manual corrector (Runalyze: numeric 0.5–2.0) is ported as an optional
 shape_day(t) = Σ(vo2max_i × s_i × use_i) / Σ(s_i × use_i)   over [t - 30 days, t]  # VO2MAX_DAYS=30; window is `BETWEEN t-30d AND t` inclusive of day t
 corrected = corrector.factor() × shape_day
 ```
-Elevation-corrected variant exists upstream (additional **distance** of +2 m per metre climbed / −1 m per metre descended (+0.2 km per 100 m up, −0.1 km per 100 m down) added before the value is estimated, per `Calculation\Elevation\DistanceModifier`) — port the constants as an optional param, never default-on, no UI.
+Elevation-corrected variant exists upstream (additional **distance** of +2 m per metre climbed / −1 m per metre descended (+0.2 km per 100 m up, −0.1 km per 100 m down) added before the value is estimated, per `Calculation\Elevation\DistanceModifier`) — port the constants as an optional param, never default-on, no UI. This project's pipeline nonetheless enables it (`use_elevation=True` at the `shape_series` call site) to match the owner's Runalyze account, whose "Adapt for elevation" setting is on; the optional param's neutral default stays `False`.
 
 ### 6. Marathon shape (`Calculation/BasicEndurance.php`, thin wrapper `Sports/Running/MarathonShape.php`)
 
