@@ -66,8 +66,10 @@ Formulas (bullet summary; the design spec carries the pseudocode verbatim):
   descended (`DistanceModifier` defaults). When the store has no descent
   (`ele_loss_m` is None), the ascent value stands in for both terms — Runalyze's
   own no-route fallback, where a single elevation value feeds both up and down.
-  Hilly runs gain roughly 0.5–0.8% in value; flat runs (ascent ≈ descent) are
-  unchanged.
+  Runs on rolling terrain gain roughly 0.5–0.8% in value, including runs that
+  net out: ascent ≈ descent still leaves `+1 m` per metre, since the descent
+  term only cancels half the ascent term. Only activities with no elevation
+  data at all are unchanged.
 - Daniels–Gilbert: `estimate(v) = max(0, -4.6 + 0.182253*v + 0.000104*v^2)`. The
   `v ∈ [50, 1000]` m/min guard is **not** in this function: it lives in
   `estimate_from_race_result` and in the qualifying filter below. A race estimate
