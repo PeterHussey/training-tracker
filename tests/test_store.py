@@ -266,6 +266,32 @@ def test_store_is_usable_from_another_thread(tmp_path):
     assert not failures, f"cross-thread use failed: {failures}"
 
 
+def test_store_uses_wal_and_busy_timeout(tmp_path):
+    # Criterion 12: the scheduled refresh writes while the dashboard reads.
+    # WAL lets the reader proceed during a write; busy_timeout makes a blocked
+    # writer wait instead of raising "database is locked" straight away.
+    store = MetricStore(str(tmp_path / "t.db"))
+    mode = store.conn.execute("PRAGMA journal_mode").fetchone()[0]
+    assert mode.lower() == "wal"
+    assert store.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+
+
+def test_reader_is_not_blocked_by_an_open_writer(tmp_path):
+    # A writer holding a transaction open must not lock out a reader.
+    db = tmp_path / "t.db"
+    writer = MetricStore(str(db))
+    writer.conn.execute("BEGIN IMMEDIATE")
+    writer.conn.execute(
+        "INSERT INTO metric_series (metric, date, value, source) "
+        "VALUES ('load.banister', '2026-08-20', 42.0, 'test')"
+    )
+    reader = MetricStore(str(db))
+    # WAL: the reader sees the committed state, without blocking on the writer.
+    assert reader.conn.execute("SELECT COUNT(*) FROM metric_series").fetchone()[0] == 0
+    writer.conn.commit()
+    assert reader.conn.execute("SELECT COUNT(*) FROM metric_series").fetchone()[0] == 1
+
+
 def test_latest_activity_date_returns_newest(tmp_path):
     store = MetricStore(str(tmp_path / "t.db"))
     store.save_activities([ACT, SECOND_ACT])  # dates 2026-04-01 and 2026-04-02

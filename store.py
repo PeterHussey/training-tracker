@@ -62,6 +62,10 @@ class MetricStore:
         # connection across script reruns, each on a different thread — so the
         # connection must not be implicitly bound to a single thread.
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
+        # WAL lets the dashboard read while the scheduled refresh writes, and
+        # busy_timeout makes the loser wait instead of raising "database is locked".
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(SCHEMA)
         self._migrate()
 
@@ -409,6 +413,13 @@ class MetricStore:
         if not keys:
             return 0
         placeholders = ",".join("?" for _ in keys)
+        # Skip the DELETE when nothing matches: a DELETE opens a write
+        # transaction, which would contend with a concurrent writer (criterion 12).
+        found = self.conn.execute(
+            f"SELECT 1 FROM metric_series WHERE metric IN ({placeholders}) LIMIT 1", keys
+        ).fetchone()
+        if not found:
+            return 0
         cur = self.conn.execute(f"DELETE FROM metric_series WHERE metric IN ({placeholders})", keys)
         self.conn.commit()
         return cur.rowcount
