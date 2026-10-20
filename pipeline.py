@@ -419,6 +419,11 @@ def compute_metric_rows(
     if not shape.empty:
         # Drop empty-window days: a >30-day gap is a gap, never a zero row.
         shape = shape[_qualifying_window_days(activities, hrmax, shape.index)]
+        if shape.empty:
+            # No day survived the window filter: there is nothing to shape or
+            # prognose from (e.g. an activity whose start timestamp falls
+            # outside the calendar day its payload reports).
+            return rows
         rows += rows_from_series(
             "vdot.shape",
             shape,

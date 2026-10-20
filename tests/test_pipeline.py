@@ -1,6 +1,7 @@
 # tests/test_pipeline.py
 import json
-from datetime import date, timedelta
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from profile import RunnerProfile, default_profile
 
@@ -682,6 +683,29 @@ def test_pipeline_vdot_shape_skips_empty_window_days():
     assert all(r["value"] > 0 for r in rows if r["metric"] == "vdot.shape")
     assert [r["date"] for r in rows if r["metric"] == "marathon.shape_pct"] == shape_dates
     assert [r["date"] for r in rows if r["metric"] == "prognosis.5"] == shape_dates
+
+
+def test_pipeline_survives_activity_whose_timestamp_leaves_its_calendar_day():
+    """Regression: the shape window filter can empty the series.
+
+    Garmin reports the athlete's local time, so an activity's start timestamp
+    can land on a different calendar day than the payload's date (timezone
+    change, travel). The 30-day window filter then drops that day, and the
+    prognosis block used to index the emptied series — a whole-dashboard
+    IndexError.
+    """
+    stamp = int(datetime(2026, 8, 6, 12, tzinfo=UTC).timestamp() * 1000)
+    acts = [
+        replace(_vdot_run(1, date(2026, 8, 4)), ts_ms=stamp),
+        replace(_vdot_run(2, date(2026, 8, 4)), ts_ms=stamp),
+    ]
+    rows = compute_metric_rows(acts, PROFILE_40M_VDOT)
+
+    assert rows  # the other metric families still land
+    # No day survived the window filter, so there is nothing to shape or prognose.
+    assert [r for r in rows if r["metric"] == "vdot.shape"] == []
+    assert [r for r in rows if r["metric"] == "marathon.shape_pct"] == []
+    assert [r for r in rows if r["metric"].startswith("prognosis.")] == []
 
 
 def test_pipeline_marathon_targets_resolve_from_latest_shape():

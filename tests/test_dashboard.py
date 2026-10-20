@@ -8,6 +8,7 @@ while the first refresh (empty store) keeps the full window.
 """
 
 import json
+import math
 import time
 from contextlib import nullcontext
 from datetime import date, timedelta
@@ -1907,3 +1908,200 @@ def test_render_activities_rows_include_cadence_column(monkeypatch):
     _df, rows = _render_activities_rows(monkeypatch, [act, nulled], "km")
     assert rows["2026-01-15"]["cadence"] == "182"
     assert rows["2026-01-20"]["cadence"] == "—"
+
+
+# --- degenerate chart attack -------------------------------------------------
+# The chart renderers used to be only ever watched to succeed. These tests
+# drive every charted tab with degenerate activity sets and a unit switch, and
+# assert that nothing raises, that every chart still carries the shared
+# template, and that no chart carries a non-finite value — with one known
+# exception: the first bucket of the week-over-week charts has no predecessor,
+# so its percentage change is NaN (true of normal data too).
+
+
+_DEGENERATE_MODES = ["normal", "zero", "single", "outlier", "identical", "no_hr", "same_date"]
+
+# The first week-over-week bucket has no previous week to compare against.
+_ALLOWED_NAN_TITLES = ("Week-over-week distance change", "Week-over-week duration change")
+
+
+def _degenerate_acts(mode):
+    """Fixture activities rewritten into a degenerate shape."""
+    import json as _json
+    from pathlib import Path
+
+    from normalize import from_summary
+
+    raw = _json.loads((Path(__file__).parent / "fixtures" / "activities_sample.json").read_text())
+    if mode == "single":
+        raw = raw[:1]
+    out = []
+    for payload in raw:
+        p = dict(payload)
+        if mode == "zero":
+            for key in (
+                "distance",
+                "duration",
+                "elapsedDuration",
+                "movingDuration",
+                "averageSpeed",
+                "maxSpeed",
+                "elevationGain",
+                "elevationLoss",
+                "averageHR",
+                "maxHR",
+                "vO2MaxValue",
+                "aerobicTrainingEffect",
+                "anaerobicTrainingEffect",
+                "averageRunningCadenceInStepsPerMinute",
+                "steps",
+                "calories",
+            ):
+                p[key] = 0
+            p.pop("splitSummaries", None)
+            p["lapCount"] = 0
+        elif mode == "outlier":
+            for key in (
+                "distance",
+                "duration",
+                "elapsedDuration",
+                "movingDuration",
+                "elevationGain",
+                "elevationLoss",
+            ):
+                p[key] = 1e9
+            p["averageSpeed"] = 1e6
+            p["maxSpeed"] = 1e6
+            p["averageHR"] = 1000.0
+            p["maxHR"] = 2000.0
+            p["vO2MaxValue"] = 900.0
+        elif mode == "identical":
+            p.update(
+                distance=5000.0,
+                duration=1800.0,
+                elapsedDuration=1800.0,
+                movingDuration=1800.0,
+                averageSpeed=2.78,
+                maxSpeed=3.0,
+                elevationGain=10.0,
+                elevationLoss=10.0,
+                averageHR=150.0,
+                maxHR=160.0,
+                vO2MaxValue=50.0,
+                averageRunningCadenceInStepsPerMinute=180.0,
+            )
+        elif mode == "no_hr":
+            for key in (
+                "averageHR",
+                "maxHR",
+                "hrTimeInZone_1",
+                "hrTimeInZone_2",
+                "hrTimeInZone_3",
+                "hrTimeInZone_4",
+                "hrTimeInZone_5",
+                "aerobicTrainingEffect",
+                "anaerobicTrainingEffect",
+                "vO2MaxValue",
+            ):
+                p.pop(key, None)
+        elif mode == "same_date":
+            # Every activity on one calendar day, with a start timestamp that
+            # falls on another day (Garmin reports the athlete's local time).
+            p["startTimeLocal"] = "2026-08-04 07:00:00"
+            p["beginTimestamp"] = 1786000000000
+        out.append(from_summary(p))
+    return out
+
+
+def _render_tabs(monkeypatch, acts, units):
+    """Render every charted tab against a fake st; return the captured figures."""
+    from profile import default_profile
+
+    from session import build_session_view
+
+    fake = _FakeSt()
+    _patch_st(monkeypatch, fake)
+    view = build_session_view(acts, default_profile(age=40, hrrest=60, sex="M"), None, None, None)
+    since, until = date(2026, 6, 1), date(2026, 8, 31)
+    windowed = view.windowed(since, until)
+    d.render_kpis(windowed, view, units)
+    d.render_load_tab(view, windowed, units)
+    d.render_fitness_tab(view, windowed, units)
+    d.render_prognosis_block(windowed, view, units)
+    d.render_volume_tab(acts, view, windowed, units, since=since, until=until)
+    d.render_paces_table(windowed, units)
+    return [a[0] for name, a in fake.calls if name == "plotly_chart"]
+
+
+def _assert_shared_layout(fig):
+    """Every chart must be drawn through the shared template."""
+    lay = fig.layout
+    assert lay.template.layout.plot_bgcolor == "white", "chart is not on the shared template"
+    assert lay.hovermode == "x unified"
+    assert lay.legend.orientation == "h"
+    assert (lay.margin.l, lay.margin.r, lay.margin.t, lay.margin.b) == (40, 20, 40, 40)
+
+
+def _non_finite(fig):
+    """Non-finite x/y values carried by a figure's traces."""
+    bad = []
+    for trace in fig.data:
+        for axis in ("x", "y"):
+            values = getattr(trace, axis, None)
+            if values is None:
+                continue
+            for v in values:
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue  # dates / categoricals are not numbers
+                if not math.isfinite(fv):
+                    bad.append((axis, v))
+    return bad
+
+
+@pytest.mark.parametrize("mode", _DEGENERATE_MODES)
+@pytest.mark.parametrize("units", ["km", "miles"])
+def test_charts_survive_degenerate_activities(monkeypatch, mode, units):
+    acts = _degenerate_acts(mode)
+    figs = _render_tabs(monkeypatch, acts, units)
+    for fig in figs:
+        _assert_shared_layout(fig)
+        title = str(getattr(fig.layout.title, "text", "") or "")
+        bad = _non_finite(fig)
+        if bad and not any(t in title for t in _ALLOWED_NAN_TITLES):
+            raise AssertionError(f"{title!r} carries non-finite values: {bad}")
+
+
+def test_unit_switch_changes_the_labels_but_not_the_chart_set(monkeypatch):
+    """A metric↔miles switch re-labels the charts without changing which
+    data (and therefore how many charts) exist."""
+    acts = _degenerate_acts("normal")
+    km_figs = _render_tabs(monkeypatch, acts, "km")
+    mi_figs = _render_tabs(monkeypatch, acts, "miles")
+    assert len(km_figs) == len(mi_figs)
+
+    def titled(figs):
+        return {str(getattr(f.layout.title, "text", "") or ""): f for f in figs}
+
+    km = titled(km_figs)
+    mi = titled(mi_figs)
+    assert "Weekly distance" in km and "Weekly distance" in mi
+    assert km["Weekly distance"].layout.yaxis2.title.text == "rolling km"
+    assert mi["Weekly distance"].layout.yaxis2.title.text == "rolling mi"
+
+
+def test_charts_keep_their_per_chart_overrides(monkeypatch):
+    """The shared template must not swallow a chart's own layout."""
+    figs = _render_tabs(monkeypatch, _degenerate_acts("normal"), "km")
+    by_title = {str(getattr(f.layout.title, "text", "") or ""): f for f in figs}
+
+    dist = by_title["Weekly distance"]
+    assert dist.layout.barmode == "stack"
+    assert dist.layout.hovermode == "x unified"
+
+    hours = by_title["Weekly duration (hours)"]
+    assert hours.layout.yaxis.title.text == "hours"
+
+    wow = by_title["Week-over-week distance change"]
+    assert wow.layout.yaxis.title.text == "%"
