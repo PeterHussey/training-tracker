@@ -2039,7 +2039,12 @@ def _assert_shared_layout(fig):
     assert lay.template.layout.plot_bgcolor == "white", "chart is not on the shared template"
     assert lay.hovermode == "x unified"
     assert lay.legend.orientation == "h"
-    assert (lay.margin.l, lay.margin.r, lay.margin.t, lay.margin.b) == (40, 20, 40, 40)
+    assert lay.legend.y == 1.0
+    assert (lay.margin.l, lay.margin.r, lay.margin.t, lay.margin.b) == (40, 20, 70, 40)
+    # The title is pinned to the top of the figure so it cannot overlap the
+    # legend, which the shared template puts in the top margin.
+    assert lay.title.yref == "container"
+    assert lay.title.yanchor == "top"
 
 
 def _non_finite(fig):

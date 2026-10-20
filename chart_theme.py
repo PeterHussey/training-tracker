@@ -15,15 +15,24 @@ PLOTLY_CONFIG = {"displayModeBar": False}
 
 LAYOUT = {
     "template": "plotly_white",
-    "margin": {"l": 40, "r": 20, "t": 40, "b": 40},
+    # t=70 reserves room for the title AND the legend, which sit above the
+    # plot area; t=40 put them on top of each other.
+    "margin": {"l": 40, "r": 20, "t": 70, "b": 40},
     "hovermode": "x unified",
-    "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+    # y=1.0 with yanchor="bottom" puts the legend's bottom edge exactly on the
+    # plot area's top edge, so the legend always sits in the top margin —
+    # a paper-coordinate offset above 1.0 scales with the plot height and
+    # eventually climbs into the title.
+    "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.0, "xanchor": "left", "x": 0},
 }
 
 
 def style(fig: go.Figure, **overrides) -> go.Figure:
     """Apply the shared layout. Caller overrides win over the shared values."""
     fig.update_layout(**{**LAYOUT, **overrides})
+    # Title placement is applied after the merge, so a per-chart title text
+    # cannot drop it and let the title drift into the legend.
+    fig.update_layout(title={"yanchor": "top", "y": 0.98, "yref": "container"})
     return fig
 
 

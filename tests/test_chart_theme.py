@@ -23,10 +23,23 @@ def test_style_applies_shared_layout():
     assert fig.layout.template == pio.templates["plotly_white"]
     assert fig.layout.margin.l == 40
     assert fig.layout.margin.r == 20
-    assert fig.layout.margin.t == 40
+    assert fig.layout.margin.t == 70
     assert fig.layout.margin.b == 40
     assert fig.layout.hovermode == "x unified"
     assert fig.layout.legend.orientation == "h"
+    assert fig.layout.legend.y == 1.0
+    assert fig.layout.legend.yanchor == "bottom"
+
+
+def test_title_never_collides_with_the_legend():
+    """The title is pinned to the top of the figure, and a per-chart title
+    text cannot drop that placement (the legend sits in the top margin)."""
+    fig = go.Figure()
+    style(fig, title="Weekly distance")
+    assert fig.layout.title.text == "Weekly distance"
+    assert fig.layout.title.yref == "container"
+    assert fig.layout.title.yanchor == "top"
+    assert fig.layout.title.y == 0.98
 
 
 def test_style_caller_override_wins():

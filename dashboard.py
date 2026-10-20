@@ -1025,7 +1025,6 @@ def render_load_tab(view, windowed, units) -> None:
             title="Daily Banister TRIMP (stacked by sport)",
             hovermode="x unified",
             yaxis_title="Banister TRIMP",
-            legend={"orientation": "h", "y": 1.12},
         )
         render(fig, width='stretch')
         st.caption(
@@ -1069,7 +1068,6 @@ def render_load_tab(view, windowed, units) -> None:
             hovermode="x unified",
             yaxis_title="Combined TRIMP / day",
             yaxis2={"overlaying": "y", "side": "right", "title": "TSB"},
-            legend={"orientation": "h", "y": 1.12},
         )
         render(fig, width='stretch')
         st.caption(
@@ -1095,7 +1093,6 @@ def render_load_tab(view, windowed, units) -> None:
             title="Acute:Chronic Workload Ratio (coupled 7/28)",
             hovermode="x unified",
             yaxis={"range": [0, max(2.0, float(acwr.max()))]},
-            legend={"orientation": "h", "y": 1.12},
         )
         render(fig, width='stretch')
         st.caption(
@@ -1900,7 +1897,6 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
         hovermode="x unified",
         yaxis_title=f"min / {'mi' if units not in ('km', 'metric') else 'km'}",
         yaxis2={"overlaying": "y", "side": "right", "title": "bpm"},
-        legend={"orientation": "h", "y": 1.12},
     )
     render(fig, width='stretch')
     st.caption(
