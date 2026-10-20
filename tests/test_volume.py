@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from metrics.volume import (
+    bucket_span,
     daily_distance,
     daily_duration_hours,
     groups,
@@ -99,19 +100,31 @@ def test_resample_weekly_matches_iso_total():
 
 
 def test_resample_monthly():
-    """resample_agg with 'ME' sums to month-end buckets."""
+    """resample_agg with 'MS' sums to month-start-labelled buckets."""
     acts = [
         _act(date(2026, 4, 6), "running", 10_000.0),
         _act(date(2026, 4, 20), "running", 5_000.0),
         _act(date(2026, 5, 3), "running", 8_000.0),
     ]
     daily = daily_distance(acts, "total")
-    monthly = resample_agg(daily, "ME")
+    monthly = resample_agg(daily, "MS")
     assert len(monthly) == 2
-    apr30 = pd.Timestamp("2026-04-30")
-    may31 = pd.Timestamp("2026-05-31")
-    assert monthly.loc[apr30] == pytest.approx(15.0)
-    assert monthly.loc[may31] == pytest.approx(8.0)
+    apr1 = pd.Timestamp("2026-04-01")
+    may1 = pd.Timestamp("2026-05-01")
+    assert monthly.loc[apr1] == pytest.approx(15.0)
+    assert monthly.loc[may1] == pytest.approx(8.0)
+
+
+def test_bucket_span_covers_whole_bucket():
+    """bucket_span gives the days each label covers: Mon–Sun for W-SUN,
+    1st–last for MS."""
+    idx = pd.DatetimeIndex([pd.Timestamp("2026-08-17"), pd.Timestamp("2026-08-01")])
+    starts, ends = bucket_span(idx, "W-SUN")
+    assert starts.iloc[0] == pd.Timestamp("2026-08-17")
+    assert ends.iloc[0] == pd.Timestamp("2026-08-23")
+    starts, ends = bucket_span(idx, "MS")
+    assert starts.iloc[1] == pd.Timestamp("2026-08-01")
+    assert ends.iloc[1] == pd.Timestamp("2026-08-31")
 
 
 def test_empty_series():

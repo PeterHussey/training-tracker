@@ -203,7 +203,7 @@ class SessionView:
 
         For volume._daily metrics, the series is first resampled to the grain
         (`volume_agg`, defaulting to `profile.selected_volume_agg`; "weekly" →
-        W-SUN, "monthly" → ME), then filtered by the window.
+        W-SUN, "monthly" → MS), then filtered by the window.
         """
         agg = volume_agg or self.profile.selected_volume_agg
         out = {}
@@ -211,27 +211,51 @@ class SessionView:
             if metric.startswith("volume.") and metric.endswith("_daily"):
                 freq = {
                     "weekly": "W-SUN",
-                    "monthly": "ME",
+                    "monthly": "MS",
                 }.get(agg, "W-SUN")
-                is_weekly = freq == "W-SUN"
-                out[metric] = window_series(
-                    volume.resample_agg(s, freq), since, until, weekly=is_weekly
-                )
+                out[metric] = window_series(volume.resample_agg(s, freq), since, until, freq=freq)
             else:
                 weekly = self.context[metric]["params"].get("agg") == "iso_week"
-                out[metric] = window_series(s, since, until, weekly=weekly)
+                out[metric] = window_series(s, since, until, freq="W-SUN" if weekly else None)
         return out
 
 
-def window_series(s: pd.Series, since: date, until: date, weekly: bool = False) -> pd.Series:
-    if weekly:
-        starts = pd.to_datetime(s.index)
-        ends = starts + pd.Timedelta(days=6)
-        mask = (starts <= pd.Timestamp(until)) & (ends >= pd.Timestamp(since))
-        return s[mask]
+def window_series(s: pd.Series, since: date, until: date, freq: str | None = None) -> pd.Series:
+    """Filter a series to the window.
+
+    With `freq` the series is bucketed: a bucket is kept when it OVERLAPS
+    [since, until] (bucket start <= until AND bucket end >= since), so a
+    window ending mid-month still shows that month. Without `freq` rows are
+    matched by their own date.
+    """
+    if s.empty:
+        return s
     idx = pd.to_datetime(s.index)
-    mask = (idx >= pd.Timestamp(since)) & (idx <= pd.Timestamp(until))
+    if freq:
+        starts, ends = volume.bucket_span(idx, freq)
+        mask = (starts <= pd.Timestamp(until)) & (ends >= pd.Timestamp(since))
+    else:
+        mask = (idx >= pd.Timestamp(since)) & (idx <= pd.Timestamp(until))
     return s[mask]
+
+
+def partial_bucket_labels(s: pd.Series, since: date, until: date, freq: str) -> list[str]:
+    """Describe the window-edge buckets that spill past the window.
+
+    A bucket that starts before `since` or ends after `until` still counts
+    its whole total, so the user is told which buckets are partial.
+    """
+    kept = window_series(s, since, until, freq=freq)
+    if kept.empty:
+        return []
+    starts, ends = volume.bucket_span(pd.to_datetime(kept.index), freq)
+    labels = []
+    for start, end in zip(starts, ends):
+        if start < pd.Timestamp(since):
+            labels.append(f"{start.date()}–{end.date()} (starts before {since})")
+        elif end > pd.Timestamp(until):
+            labels.append(f"{start.date()}–{end.date()} (ends after {until})")
+    return labels
 
 
 def best_mile(activities, since: date | None = None) -> dict | None:

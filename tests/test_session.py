@@ -17,6 +17,7 @@ from session import (
     build_session_view,
     fastest_30s_pace,
     in_period,
+    partial_bucket_labels,
     repetition_rows,
     resolve_activities,
     run_with_timeout,
@@ -128,6 +129,17 @@ def test_windowed_includes_week_overlapping_since():
     assert pd.Timestamp(week_start("2026-W33")) not in s.index  # 2026-08-10
 
 
+def test_partial_bucket_labels_flag_spill():
+    """A bucket that starts before the window (or ends after it) is reported
+    as partial — its total still counts, so the user must be told."""
+    view = _view()
+    since, until = date(2026, 8, 14), date(2026, 8, 27)
+    weekly = volume.resample_agg(view.series["volume.distance_total_daily"], "W-SUN")
+    labels = partial_bucket_labels(weekly, since, until, "W-SUN")
+    assert any("2026-08-10" in x for x in labels)
+    assert any("2026-08-24" in x for x in labels)
+
+
 def test_higher_hrmax_lowers_banister_trimp():
     view_low = _view(profile=default_profile(age=40, hrrest=60, sex="M"))  # hrmax 180
     view_high = _view(profile=default_profile(age=25, hrrest=60, sex="M"))  # hrmax 195
@@ -157,10 +169,10 @@ def test_in_period_shared_semantics():
     assert not in_period("2026-W25", since)
 
 
-def test_window_series_weekly_flag():
+def test_window_series_weekly_freq():
     idx = pd.DatetimeIndex([pd.Timestamp("2026-08-10"), pd.Timestamp("2026-08-17")])
     s = pd.Series([1.0, 2.0], index=idx)
-    out = window_series(s, date(2026, 8, 20), date(2026, 8, 30), weekly=True)
+    out = window_series(s, date(2026, 8, 20), date(2026, 8, 30), freq="W-SUN")
     assert list(out.index) == [pd.Timestamp("2026-08-17")]
     assert list(out.values) == [2.0]
 
@@ -397,7 +409,7 @@ def test_volume_daily_resampled_to_weekly_monday():
 
 def test_volume_daily_resampled_to_monthly():
     """selected_volume_agg='monthly' buckets volume.distance_total_daily
-    by calendar month (month-end index), preserving sums."""
+    by calendar month (month-start index), preserving sums."""
     profile = RunnerProfile(
         hrmax=180,
         hrrest=60,
@@ -410,12 +422,12 @@ def test_volume_daily_resampled_to_monthly():
     since, until = date(2026, 8, 1), date(2026, 8, 31)
     w = view.windowed(since, until)
     daily = w["volume.distance_total_daily"]
-    # Index should be month-end dates
-    assert daily.index[-1] == pd.Timestamp("2026-08-31")
+    # Index should be month-start dates
+    assert daily.index[-1] == pd.Timestamp("2026-08-01")
 
 
-def test_volume_monthly_index_is_month_end():
-    """monthly index = month-end dates (e.g. 2026-01-31) for the fixture's months."""
+def test_volume_monthly_index_is_month_start():
+    """monthly index = month-start dates (e.g. 2026-08-01) for the fixture's months."""
     profile = RunnerProfile(
         hrmax=180,
         hrrest=60,
@@ -426,9 +438,31 @@ def test_volume_monthly_index_is_month_end():
     acts = _acts()
     view = build_session_view(acts, profile, _lt(), _race(), _vo2())
     s = view.series["volume.distance_total_daily"]
-    # Resample to monthly and check index is month-end
-    resampled = volume.resample_agg(s, "ME")
-    assert resampled.index[-1] == pd.Timestamp("2026-08-31")
+    # Resample to monthly and check index is month-start
+    resampled = volume.resample_agg(s, "MS")
+    assert resampled.index[-1] == pd.Timestamp("2026-08-01")
+
+
+def test_windowed_monthly_keeps_month_when_window_ends_mid_month():
+    """Regression: a window ending mid-month must still show that month.
+
+    Monthly buckets used to be labelled at month end and filtered by
+    `label <= until`, which dropped the in-progress month entirely.
+    """
+    profile = RunnerProfile(
+        hrmax=180,
+        hrrest=60,
+        sex="M",
+        birth_year=1986,
+        selected_volume_agg="monthly",
+    )
+    acts = _acts()
+    view = build_session_view(acts, profile, _lt(), _race(), _vo2())
+    since, until = date(2026, 8, 1), date(2026, 8, 27)
+    w = view.windowed(since, until)
+    monthly = w["volume.distance_total_daily"]
+    assert list(monthly.index) == [pd.Timestamp("2026-08-01")]
+    assert monthly.iloc[0] > 0
 
 
 def test_windowed_explicit_volume_agg_overrides_profile():
@@ -447,8 +481,8 @@ def test_windowed_explicit_volume_agg_overrides_profile():
     since, until = date(2026, 8, 1), date(2026, 8, 31)
     w = view.windowed(since, until, volume_agg="monthly")
     daily = w["volume.distance_total_daily"]
-    # month-end index (calendar months) even though profile says weekly
-    assert daily.index[-1] == pd.Timestamp("2026-08-31")
+    # month-start index (calendar months) even though profile says weekly
+    assert daily.index[-1] == pd.Timestamp("2026-08-01")
     assert (daily.index.dayofweek != 0).all() or len(daily) == 1
 
 

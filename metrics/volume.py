@@ -53,7 +53,8 @@ def daily_duration_hours(activities: list[Activity], group: str) -> pd.Series:
 
 def resample_agg(s: pd.Series, freq: str) -> pd.Series:
     """Generic resampler. 'W-SUN' → Mon–Sun ISO-week buckets, index shifted
-    to Monday. 'ME' → month-end-aligned. Returns summed, sorted-index series.
+    to Monday. 'MS' → month-start-aligned (label = 1st of the month).
+    Returns summed, sorted-index series.
     Empty buckets (no source data) are dropped."""
     if s.empty:
         return pd.Series([], dtype=float)
@@ -66,6 +67,22 @@ def resample_agg(s: pd.Series, freq: str) -> pd.Series:
         # Shift Sunday labels back to Monday (ISO-week convention).
         resampled.index = resampled.index - pd.Timedelta(days=6)
     return resampled.sort_index()
+
+
+def bucket_span(index: pd.DatetimeIndex, freq: str) -> tuple[pd.Series, pd.Series]:
+    """First and last day covered by each bucket label.
+
+    'W-SUN' labels are Mondays (Mon–Sun week). 'MS' labels are month starts
+    (1st–last day of the month). Any other freq → the label is its own span.
+    """
+    starts = pd.Series(pd.to_datetime(index), index=pd.to_datetime(index))
+    if freq == "W-SUN":
+        ends = starts + pd.Timedelta(days=6)
+    elif freq == "MS":
+        ends = starts + pd.offsets.MonthEnd(0)
+    else:
+        ends = starts
+    return starts, ends
 
 
 def rolling_4wk(weekly: pd.Series) -> pd.Series:
