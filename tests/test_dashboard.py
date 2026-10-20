@@ -1685,6 +1685,29 @@ class _MainSt:
         return _rec
 
 
+def test_poll_store_changes_reruns_only_when_the_store_changed(monkeypatch):
+    """Criterion 11: an open dashboard must reflect a scheduled refresh with no
+    user action — the poll reruns the app when the store fingerprint moves."""
+    state = {"_activities_fingerprint": "old"}
+    fake = _MainSt(state)
+    _patch_st(monkeypatch, fake)
+
+    store = mock.Mock()
+    store.activities_fingerprint.return_value = "old"
+    monkeypatch.setattr(d, "get_store", lambda: store)
+
+    assert d._store_changed(store, state) is False
+    # The decorated fragment only runs inside a Streamlit session, so the
+    # unwrapped body is what a test can drive.
+    d.poll_store_changes.__wrapped__()
+    assert not [c for c in fake.calls if c[0] == "rerun"]
+
+    store.activities_fingerprint.return_value = "new"
+    assert d._store_changed(store, state) is True
+    d.poll_store_changes.__wrapped__()
+    assert [c for c in fake.calls if c[0] == "rerun"]
+
+
 def test_main_calls_paces_table_at_page_bottom(monkeypatch):
     """Surface 4 placement: `main()` must reach `render_paces_table` (bottom of
     Overview) last — dropping the call fails this test."""

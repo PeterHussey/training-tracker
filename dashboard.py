@@ -161,6 +161,24 @@ def get_store() -> MetricStore:
     return MetricStore(DB_PATH)
 
 
+def _store_changed(store, session_state) -> bool:
+    """True when the store has moved on from what this session loaded."""
+    return store.activities_fingerprint() != session_state.get("_activities_fingerprint")
+
+
+@st.fragment(run_every="30s")
+def poll_store_changes() -> None:
+    """Rerun the app when the scheduled refresh has written to the store.
+
+    Streamlit only reruns on user interaction, so an open dashboard would keep
+    showing the pre-refresh activity count until someone clicked something.
+    Polling the store fingerprint (columns + row count + elapsed total) is the
+    cheapest signal that the refresh job changed the data.
+    """
+    if _store_changed(get_store(), st.session_state):
+        st.rerun(scope="app")
+
+
 def _load_json_file(path: Path):
     try:
         return json.loads(path.read_text())
@@ -2021,6 +2039,9 @@ def main() -> None:
     # file-change auto-reruns after a migration), so a plain once-only load
     # would feed stale Activity objects to the pipeline indefinitely.
     resolve_activities(store, st.session_state)
+    # After resolve_activities, so the fingerprint it just stored is the one
+    # the poll compares against (no spurious rerun on the first tick).
+    poll_store_changes()
 
     st.sidebar.header("Data")
     fetch_mode = st.sidebar.radio(

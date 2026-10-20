@@ -19,6 +19,9 @@ __pycache__/
 data/
 cache/
 
+# launchd job logs
+logs/
+
 # Visual-companion/session scratch
 .superpowers/
 
