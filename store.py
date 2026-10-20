@@ -1,8 +1,10 @@
 """SQLite persistence for the measurement layer."""
 
 import json
+import os
 import sqlite3
 from datetime import date
+from pathlib import Path
 from profile import RunnerProfile
 
 from normalize import Activity
@@ -54,6 +56,14 @@ CREATE TABLE IF NOT EXISTS metric_series (
 );
 CREATE INDEX IF NOT EXISTS idx_metric ON metric_series (metric, date);
 """
+
+
+def default_db_path() -> Path:
+    """DB location: $TRAINING_DB, else data/training.sqlite beside the repo."""
+    return Path(
+        os.environ.get("TRAINING_DB")
+        or Path(__file__).resolve().parent / "data" / "training.sqlite"
+    )
 
 
 class MetricStore:

@@ -16,7 +16,7 @@ import base64
 import json
 import os
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from garmin_http import GarminHttp, GarminTokenStore
@@ -25,6 +25,23 @@ ACTIVITIES_PATH = "/activitylist-service/activities/search/activities"
 DETAILS_PATH = "/activity-service/activity/{activity_id}/details"
 TOKENSTORE = Path.home() / ".garmin-mcp" / "oauth2_token.json"
 TOKENSTORE_V2 = Path.home() / ".garmin-mcp" / "v2_tokenstore.json"
+FETCH_DAYS = 365
+
+
+def compute_fetch_start(
+    end: date, latest_activity_date: date | None, fetch_days: int = FETCH_DAYS
+) -> date:
+    """Start date for an incremental Garmin refresh.
+
+    Subsequent refreshes fetch only activities newer than the latest date already
+    in the local store (bounded to the last `fetch_days` window for safety): the
+    first run, when the store is empty (`latest_activity_date is None`), fetches
+    the full `fetch_days` window to populate history. This bounds the page count
+    of 100-row paginations so a large history no longer blows the 90s guard.
+    """
+    if latest_activity_date is None:
+        return end - timedelta(days=fetch_days)
+    return max(end - timedelta(days=fetch_days), latest_activity_date + timedelta(days=1))
 
 
 def load_op_creds(item: str = "Garmin") -> tuple[str | None, str | None]:

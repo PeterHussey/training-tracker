@@ -250,7 +250,7 @@ def partial_bucket_labels(s: pd.Series, since: date, until: date, freq: str) -> 
         return []
     starts, ends = volume.bucket_span(pd.to_datetime(kept.index), freq)
     labels = []
-    for start, end in zip(starts, ends):
+    for start, end in zip(starts, ends, strict=True):
         if start < pd.Timestamp(since):
             labels.append(f"{start.date()}–{end.date()} (starts before {since})")
         elif end > pd.Timestamp(until):

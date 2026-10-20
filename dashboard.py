@@ -11,7 +11,6 @@ this module is a thin view.
 """
 
 import json
-import os
 import sys
 import time
 from dataclasses import replace
@@ -23,7 +22,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from gateway import GarminGateway
+from gateway import GarminGateway, compute_fetch_start
 from metrics import daniels_gilbert, marathon_shape, volume
 from metrics.gap import K as GAP_K
 from metrics.threshold import parse_details_series
@@ -38,11 +37,11 @@ from session import (
     resolve_activities,
     run_with_timeout,
 )
-from store import MetricStore
+from store import MetricStore, default_db_path
 
 st.set_page_config(page_title="Training Tracker", layout="wide")
 
-DB_PATH = os.environ.get("TRAINING_DB", str(Path(__file__).parent / "data" / "training.sqlite"))
+DB_PATH = str(default_db_path())
 FETCH_DAYS = 365
 FETCH_TIMEOUT = 90  # hard cap on the whole Garmin refresh (auth + fetches)
 BACKFILL_CALL_TIMEOUT_S = 8  # per summary/weather fetch during RPE/weather backfill
@@ -63,7 +62,7 @@ _RPE_WX_FIELDS = (
 DEFAULT_WINDOW_DAYS = 180
 PERIOD_KEY = "period"
 CACHE_DIR_NAME = "app_cache"
-APP_CACHE_DIR = Path("cache") / CACHE_DIR_NAME
+APP_CACHE_DIR = Path(__file__).resolve().parent / "cache" / CACHE_DIR_NAME
 
 KPI_KEYS = [
     ("load.acwr", "ACWR"),
@@ -119,22 +118,6 @@ GLOSSARY = [
     "Aerobic decoupling needs >=6 route-matched flat sessions; single-run values are "
     "noise and are not shown here.",
 ]
-
-
-def compute_fetch_start(
-    end: date, latest_activity_date: date | None, fetch_days: int = FETCH_DAYS
-) -> date:
-    """Start date for an incremental Garmin refresh.
-
-    Subsequent refreshes fetch only activities newer than the latest date already
-    in the local store (bounded to the last `fetch_days` window for safety): the
-    first run, when the store is empty (`latest_activity_date is None`), fetches
-    the full `fetch_days` window to populate history. This bounds the page count
-    of 100-row paginations so a large history no longer blows the 90s guard.
-    """
-    if latest_activity_date is None:
-        return end - timedelta(days=fetch_days)
-    return max(end - timedelta(days=fetch_days), latest_activity_date + timedelta(days=1))
 
 
 def period_bounds(
