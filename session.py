@@ -263,8 +263,9 @@ def build_repetitions(activities) -> dict[str, list]:
     """Group activities by their 80/20 plan workout code, keyed oldest-first.
 
     Only activities with a recognizable code (e.g. 'RF24' in
-    'Winnetka - RF24 (Foundation Run)') are included; unlabeled activities
-    (treadmill, strength, indoor cycling) are omitted.
+    'Winnetka - RF24 (Foundation Run)', or 'RF26' in the location-less
+    'RF26 (Foundation Run)') are included; activities whose name carries no
+    plan code (plain strength, indoor cycling, treadmill) are omitted.
     """
     groups: dict[str, list] = {}
     for a in activities:

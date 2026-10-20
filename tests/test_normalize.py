@@ -32,6 +32,26 @@ def test_workout_code_extracts_plan_code():
     assert workout_code("Lincoln - RFR4 (Fartlek Run)") == "RFR4"
 
 
+def test_workout_code_extracts_distance_interval_codes():
+    """Pace-interval codes carry a K distance token: R10K3, R5K1, R5K2."""
+    assert workout_code("Sudbury - R10K3 (10K Pace Intervals)") == "R10K3"
+    assert workout_code("Sudbury - R5K1 (5K Pace Intervals)") == "R5K1"
+    assert workout_code("Concord - R10K1 (10K Pace Intervals)") == "R10K1"
+    assert workout_code("Bedford - R5K2 (5K Pace Intervals)") == "R5K2"
+
+
+def test_workout_code_extracts_code_without_location_prefix():
+    """Indoor workouts are named just '<code> (<plan name>)' — no location."""
+    assert workout_code("RF26 (Foundation Run)") == "RF26"
+    assert workout_code("R5K1 (5K Pace Intervals)") == "R5K1"
+    assert workout_code("RVI1 (Variable-Intensity Interva") == "RVI1"
+
+
+def test_workout_code_ignores_code_that_is_neither_name_nor_after_separator():
+    """A code mid-name is not the plan code of that activity."""
+    assert workout_code("Bike Crosstrain RF27 (Foundation") is None
+
+
 def test_workout_code_none_for_unlabeled_activities():
     assert workout_code("Treadmill Running") is None
     assert workout_code("Indoor Cycling") is None

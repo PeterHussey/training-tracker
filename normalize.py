@@ -10,7 +10,13 @@ TREADMILL_KEYS = {"treadmill_running"}
 STRENGTH_KEYS = {"strength_training"}
 
 
-WORKOUT_CODE_RE = re.compile(r"-\s*([A-Z]+\d{1,2})\s*\(")
+# The plan code is the token immediately before the '(' of the workout name:
+#   'Winnetka - RF24 (Foundation Run)'      -> RF24   (location-prefixed)
+#   'RF26 (Foundation Run)'                 -> RF26   (no location prefix)
+#   'Sudbury - R10K3 (10K Pace Intervals)'  -> R10K3  (K = distance token)
+# The code must be the whole name or follow a ' - ' separator, so a code buried
+# mid-name ('Bike Crosstrain RF27 (Foundation') is not read as a plan code.
+WORKOUT_CODE_RE = re.compile(r"(?:^|-\s*)([A-Z][A-Z0-9]*\d)\s*\(")
 
 # Watch-side feel enum: raw value -> label. Unknown values render as
 # f"{raw}?" downstream instead of raising (see parse_rpe_feel).
@@ -26,9 +32,9 @@ FEEL_LABELS = {
 def workout_code(name: str | None) -> str | None:
     """Extract the 80/20 plan workout code (e.g. 'RF24') from an activity name.
 
-    Matches the code between '<location> - ' and ' (' in Garmin workout names
-    like 'Winnetka - RF24 (Foundation Run)'. Returns None for unlabeled
-    activities (e.g. 'Treadmill Running').
+    Matches the code that precedes the '(' in Garmin workout names like
+    'Winnetka - RF24 (Foundation Run)' or 'RF26 (Foundation Run)'. Returns None
+    for unlabeled activities (e.g. 'Treadmill Running').
     """
     if not name:
         return None
