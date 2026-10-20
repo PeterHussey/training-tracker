@@ -2165,25 +2165,31 @@ def main() -> None:
         or st.session_state.get("_details_period_key") != _period_key
     )
     if _need_details and activities:
-        gw = GarminGateway(cache_dir=APP_CACHE_DIR)
-        lthr_series = run_with_timeout(
-            fetch_details_for_lthr,
-            timeout=DETAILS_TOTAL_TIMEOUT_S,
-            gw=gw,
-            activities=activities,
-            since=since,
-            until=until,
-        )
-        dec_series = run_with_timeout(
-            fetch_details_for_decoupling,
-            timeout=DECOUPLING_TOTAL_TIMEOUT_S,
-            gw=gw,
-            activities=activities,
-            since=since,
-            until=until,
-        )
-        st.session_state["series_by_id"] = {**lthr_series, **dec_series}
-        st.session_state["_details_period_key"] = _period_key
+        try:
+            gw = GarminGateway(cache_dir=APP_CACHE_DIR)
+            lthr_series = run_with_timeout(
+                fetch_details_for_lthr,
+                timeout=DETAILS_TOTAL_TIMEOUT_S,
+                gw=gw,
+                activities=activities,
+                since=since,
+                until=until,
+            )
+            dec_series = run_with_timeout(
+                fetch_details_for_decoupling,
+                timeout=DECOUPLING_TOTAL_TIMEOUT_S,
+                gw=gw,
+                activities=activities,
+                since=since,
+                until=until,
+            )
+        except Exception as exc:
+            # No Garmin auth (or a failed detail fetch) must not take the app
+            # down — the stored data still renders without the detail series.
+            st.sidebar.warning(f"Garmin detail fetch failed: {exc.__class__.__name__}: {exc}")
+        else:
+            st.session_state["series_by_id"] = {**lthr_series, **dec_series}
+            st.session_state["_details_period_key"] = _period_key
 
     compute_sig = (
         activities_sig(activities),

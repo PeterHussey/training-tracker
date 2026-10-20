@@ -26,6 +26,18 @@ def main() -> int:
     path = default_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     store = MetricStore(path)
+    try:
+        return _refresh(store)
+    except Exception as exc:
+        # The launchd job reads this line in logs/refresh.err.log — a stack
+        # trace there buries the cause and reads like a crash.
+        print(f"[refresh] Garmin fetch failed ({exc.__class__.__name__}: {exc})", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+
+
+def _refresh(store: MetricStore) -> int:
     end = date.today()
     start = compute_fetch_start(end, store.latest_activity_date(), FETCH_DAYS)
     gw = GarminGateway(cache_dir=CACHE_DIR)
@@ -42,7 +54,6 @@ def main() -> int:
     race = gw.fetch_race_predictions_trend(trend_start.isoformat(), end.isoformat()) or []
     vo2 = gw.fetch_vo2max_trend(trend_start.isoformat(), end.isoformat()) or []
     rows = persist_session_metrics(store, store.load_activities(), profile, lt, race, vo2)
-    store.close()
     print(f"refresh: {len(acts)} new activities, {rows} metric rows written")
     return 0
 
