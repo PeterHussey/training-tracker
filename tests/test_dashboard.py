@@ -928,6 +928,22 @@ def test_volume_tab_sidebar_agg_toggle_monthly(monkeypatch):
     assert figs and "Monthly" in str(figs[0].layout.title.text)
 
 
+def test_volume_tab_captions_partial_buckets(monkeypatch):
+    """The volume tab must name the buckets that spill past the window."""
+    view = _graded_view()
+    acts = [
+        Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
+    ]
+    fake = _FakeSt()
+    _patch_st(monkeypatch, fake)
+    since, until = date(2026, 1, 1), date(2026, 1, 7)
+    windowed = view.windowed(since, until)
+    d.render_volume_tab(acts, view, windowed, "km", "weekly", since=since, until=until)
+    caps = " ".join(str(a[0]) for name, a in fake.calls if name == "caption")
+    assert "Partial buckets" in caps
+    assert "2026-01-05" in caps  # the Mon–Sun week that runs past 2026-01-07
+
+
 def test_volume_tab_no_rollup_pane(monkeypatch):
     view = _graded_view()
     windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
