@@ -42,7 +42,7 @@ Five input classes the spec implies that no existing test exercises:
 **Interfaces:**
 - Produces: `volume.bucket_span(index: pd.DatetimeIndex, freq: str) -> tuple[pd.DatetimeIndex, pd.DatetimeIndex]` — `(first_day, last_day)` of each bucket; `session.window_series(s, since, until, freq: str | None = None) -> pd.Series`; `session.partial_bucket_labels(s, since, until, freq) -> list[str]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/test_session.py`:
 
@@ -65,12 +65,12 @@ def test_monthly_bucket_keeps_in_progress_month():
 
 plus: a window fully inside one month yields exactly one bucket; a month with no activity yields none; `partial_bucket_labels` returns the edge buckets only.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_session.py -k monthly -q`
 Expected: FAIL — the August bucket is dropped when the window ends mid-month.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `metrics/volume.py`:
 
@@ -90,23 +90,23 @@ end >= since); otherwise keep rows whose own date is inside the window.
 `SessionView.windowed` maps `"weekly" -> "W-SUN"`, `"monthly" -> "MS"` and
 passes `freq` through; ISO-week metric rows pass `freq="W-SUN"`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `.venv/bin/python -m pytest tests/test_session.py tests/test_volume.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Update the tests that pinned month-end labels**
+- [x] **Step 5: Update the tests that pinned month-end labels**
 
 `tests/test_volume.py::test_resample_monthly`, `tests/test_session.py::test_volume_daily_resampled_to_monthly`,
 `::test_volume_monthly_index_is_month_end`, `::test_windowed_explicit_volume_agg_overrides_profile`
 assert month-end index labels; they now assert month-start labels.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `.venv/bin/python -m pytest -p no:cacheprovider -q`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add metrics/volume.py session.py tests/test_session.py tests/test_volume.py
@@ -124,7 +124,7 @@ git commit -m "fix: label monthly volume buckets at month start and keep overlap
 **Interfaces:**
 - Produces: every `MetricStore` connection opens with `journal_mode=WAL` and a non-zero `busy_timeout`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_store_uses_wal_and_busy_timeout(tmp_path):
@@ -136,9 +136,9 @@ def test_store_uses_wal_and_busy_timeout(tmp_path):
         store.close()
 ```
 
-- [ ] **Step 2: Run it to verify it fails** — Expected: FAIL (`journal_mode` is `delete`).
+- [x] **Step 2: Run it to verify it fails** — Expected: FAIL (`journal_mode` is `delete`).
 
-- [ ] **Step 3: Implement** — in `MetricStore.__init__`, after `sqlite3.connect(...)`:
+- [x] **Step 3: Implement** — in `MetricStore.__init__`, after `sqlite3.connect(...)`:
 
 ```python
 self.conn.execute("PRAGMA journal_mode=WAL")
@@ -148,11 +148,11 @@ self.conn.execute("PRAGMA busy_timeout=5000")
 WAL lets the dashboard read while the scheduled refresh writes; the busy timeout
 turns a lock collision into a short wait instead of an immediate "database is locked".
 
-- [ ] **Step 4: Run it to verify it passes** — Expected: PASS.
+- [x] **Step 4: Run it to verify it passes** — Expected: PASS.
 
-- [ ] **Step 5: Run the full suite** — Expected: PASS.
+- [x] **Step 5: Run the full suite** — Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add store.py tests/test_store.py
@@ -166,7 +166,7 @@ git commit -m "feat: open SQLite in WAL mode with a busy timeout"
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Rewrite the Quickstart** so step 1 is the install step and the
+- [x] **Step 1: Rewrite the Quickstart** so step 1 is the install step and the
   rest of the steps work verbatim on a clean clone:
 
 ```markdown
@@ -179,14 +179,14 @@ git commit -m "feat: open SQLite in WAL mode with a busy timeout"
 4. DB location: `data/training.sqlite` (gitignored; override with `TRAINING_DB` env var). Garmin auth uses `~/.garmin-mcp/v2_tokenstore.json` with 1Password/env fallback (`GARMIN_EMAIL`/`GARMIN_PASSWORD`).
 ```
 
-- [ ] **Step 2: Verify on a clean clone**
+- [x] **Step 2: Verify on a clean clone**
 
 ```bash
 git clone <repo> /tmp/tt_clone && cd /tmp/tt_clone && uv sync --all-extras && .venv/bin/python -m pytest -p no:cacheprovider -q
 ```
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add README.md
@@ -209,15 +209,15 @@ git commit -m "docs: add the missing install step to the README quickstart"
 - Consumes: `session.partial_bucket_labels` (Task 1).
 - Produces: `chart_theme.PALETTE` (named colours), `chart_theme.style(fig, **overrides) -> go.Figure`, `chart_theme.render(fig, **kwargs) -> None` (calls `st.plotly_chart` with the shared config).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_chart_theme.py`: `style()` sets the shared template/margins/hovermode and leaves caller overrides intact; `PALETTE` has no duplicates; the three legacy hexes appear only in `chart_theme.py`.
 
 `tests/test_service_config.py`: `.streamlit/config.toml` parses and pins `server.address = "127.0.0.1"`; both plists exist, carry `Label`, `ProgramArguments`, `RunAtLoad`, `StandardOutPath`, `StandardErrorPath`, and the refresh plist has a `StartCalendarInterval`.
 
-- [ ] **Step 2: Run them to verify they fail** — Expected: FAIL (no files yet).
+- [x] **Step 2: Run them to verify they fail** — Expected: FAIL (no files yet).
 
-- [ ] **Step 3: Create `chart_theme.py`** — the single owner of colour and layout:
+- [x] **Step 3: Create `chart_theme.py`** — the single owner of colour and layout:
 
 ```python
 """Shared visual template for every dashboard chart.
@@ -236,23 +236,23 @@ PLOTLY_CONFIG = {"displayModeBar": False}
 `style(fig, **overrides)` applies the shared layout and merges caller overrides;
 `render(fig, **kwargs)` calls `st.plotly_chart(fig, config=PLOTLY_CONFIG, **kwargs)`.
 
-- [ ] **Step 4: Create `.streamlit/config.toml`** — `[server] address = "127.0.0.1"`,
+- [x] **Step 4: Create `.streamlit/config.toml`** — `[server] address = "127.0.0.1"`,
   `[browser] gatherUsageStats = false`, and a `[theme]` block whose primary colour
   is the palette orange.
 
-- [ ] **Step 5: Create the two launchd plists** under `deploy/launchd/`:
+- [x] **Step 5: Create the two launchd plists** under `deploy/launchd/`:
   - `com.trainingtracker.dashboard` — runs `streamlit run dashboard.py`, `server.address=127.0.0.1`, `RunAtLoad`.
   - `com.trainingtracker.refresh` — runs a refresh entry point on a daily calendar interval, `RunAtLoad` off.
   Both write logs to `logs/` and reference the repo path via an absolute path
   placeholder that the install step rewrites.
 
-- [ ] **Step 6: Refactor `dashboard.py`** — replace all 12 inline hex literals
+- [x] **Step 6: Refactor `dashboard.py`** — replace all 12 inline hex literals
   with `chart_theme.PALETTE[...]`, route every `fig.update_layout(...)` through
   `chart_theme.style(...)`, and every `st.plotly_chart(...)` through
   `chart_theme.render(...)`. Add the volume-tab caption that names the bucket
   convention and the partial buckets (from `session.partial_bucket_labels`).
 
-- [ ] **Step 7: Verify**
+- [x] **Step 7: Verify**
 
 ```bash
 grep -n "#[0-9A-Fa-f]\{6\}" dashboard.py    # must print nothing
@@ -260,7 +260,7 @@ grep -n "#[0-9A-Fa-f]\{6\}" dashboard.py    # must print nothing
 .venv/bin/python -m ruff check .
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add .streamlit/config.toml chart_theme.py deploy/launchd dashboard.py tests/test_chart_theme.py tests/test_service_config.py
@@ -285,28 +285,28 @@ git commit -m "feat: shared chart template, Streamlit config and launchd jobs"
   `GarminGateway.fetch_activity_splits(activity_id)` with the same disk-cache
   discipline as `fetch_activity_details`.
 
-- [ ] **Step 1: Write the failing tests** — laps parsing (a lap maps to
+- [x] **Step 1: Write the failing tests** — laps parsing (a lap maps to
   distance/duration/HR/cadence/GCT/stride/vertical oscillation, missing fields
   become `None`), the store round-trips `avg_cadence`, the dashboard renders a
   laps table for a selected activity.
 
-- [ ] **Step 2: Run them to verify they fail** — Expected: FAIL.
+- [x] **Step 2: Run them to verify they fail** — Expected: FAIL.
 
-- [ ] **Step 3: Implement the fetch** — `GET /activity-service/activity/{id}/splits`
+- [x] **Step 3: Implement the fetch** — `GET /activity-service/activity/{id}/splits`
   (verified live: returns `lapDTOs` with `distance`, `duration`, `movingDuration`,
   `elapsedDuration`, `averageHR`, `maxHR`, `averageRunCadence`, `maxRunCadence`,
   `averageSpeed`, `elevationGain`, `strideLength`, `groundContactTime`,
   `groundContactBalanceLeft`, `verticalOscillation`, `verticalRatio`,
   `intensityType`, `lapIndex`, `startTimeGMT`).
 
-- [ ] **Step 4: Store `avg_cadence`** — add the column, an idempotent `ALTER TABLE`
+- [x] **Step 4: Store `avg_cadence`** — add the column, an idempotent `ALTER TABLE`
   migration, and save/load plumbing.
 
-- [ ] **Step 5: Display** — a laps table (lap #, distance, time, pace, HR,
+- [x] **Step 5: Display** — a laps table (lap #, distance, time, pace, HR,
   cadence, elevation) plus a running-dynamics summary for the selected activity;
   add a cadence column to the activity list.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 ```bash
 .venv/bin/python -m pytest -p no:cacheprovider -q
@@ -314,7 +314,7 @@ git commit -m "feat: shared chart template, Streamlit config and launchd jobs"
 .venv/bin/python -m ruff format --check .
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add garmin_http.py gateway.py normalize.py store.py dashboard.py tests/
