@@ -10,6 +10,7 @@ import requests
 from garmin_http import (
     ACTIVITIES_PATH,
     CONNECTAPI_BASE,
+    SPLITS_PATH,
     GarminAuthError,
     GarminHttp,
     GarminHttpError,
@@ -306,6 +307,53 @@ def test_fetch_vo2max_trend_hits_daily_endpoint(tokenstore, monkeypatch):
     assert "maxmet/daily/2026-08-01/2026-08-27" in calls["url"]
     assert "maxmet/latest" not in calls["url"]
     assert out[0]["generic"]["vo2MaxPreciseValue"] == 46.5
+
+
+SPLITS_PAYLOAD = {"activityId": 77, "lapDTOs": [{"lapIndex": 1, "distance": 1000.0}]}
+
+
+def test_fetch_activity_splits_hits_splits_path(tokenstore, monkeypatch):
+    calls = {}
+
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        calls["url"] = url
+        r = mock.Mock(status_code=200)
+        r.json.return_value = SPLITS_PAYLOAD
+        return r
+
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    out = GarminHttp(tokenstore).fetch_activity_splits(77)
+    assert calls["url"] == CONNECTAPI_BASE + SPLITS_PATH.format(activity_id=77)
+    assert out == SPLITS_PAYLOAD
+
+
+def test_fetch_activity_splits_404_returns_empty_other_errors_raise(tokenstore, monkeypatch):
+    def _respond(status):
+        def fake_get(url, headers=None, params=None, timeout=5.0):
+            r = mock.Mock(status_code=status)
+            r.text = "not found" if status == 404 else "boom"
+            return r
+
+        return fake_get
+
+    gh = GarminHttp(tokenstore, max_retries=0)
+    monkeypatch.setattr("garmin_http.requests.get", _respond(404))
+    assert gh.fetch_activity_splits(1) == {}
+
+    monkeypatch.setattr("garmin_http.requests.get", _respond(500))
+    with pytest.raises(GarminHttpError) as exc:
+        gh.fetch_activity_splits(1)
+    assert exc.value.status_code == 500
+
+
+def test_fetch_activity_splits_non_dict_payload_returns_empty(tokenstore, monkeypatch):
+    def fake_get(url, headers=None, params=None, timeout=5.0):
+        r = mock.Mock(status_code=200)
+        r.json.return_value = ["not", "a", "dict"]
+        return r
+
+    monkeypatch.setattr("garmin_http.requests.get", fake_get)
+    assert GarminHttp(tokenstore).fetch_activity_splits(1) == {}
 
 
 def test_fetch_race_predictions_trend_hits_daily_endpoint(tokenstore, monkeypatch):

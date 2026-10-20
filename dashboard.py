@@ -27,7 +27,7 @@ from gateway import GarminGateway, compute_fetch_start
 from metrics import daniels_gilbert, marathon_shape, volume
 from metrics.gap import K as GAP_K
 from metrics.threshold import parse_details_series
-from normalize import from_summary, parse_rpe_feel, parse_weather
+from normalize import from_summary, parse_laps, parse_rpe_feel, parse_weather
 from pipeline import persist_session_metrics
 from session import (
     _fmt,
@@ -1680,6 +1680,90 @@ def _fetch_details_for_reps(reps: list, cache_dir: Path) -> dict[int, tuple]:
     return out
 
 
+def render_activity_laps(activities, activity_id: int, units: str) -> None:
+    """Garmin laps/splits + running dynamics for the selected activity.
+
+    Splits are fetched on demand for this one activity only, cache-first
+    (``activity_splits_{id}.json`` on disk beats the network — same rule as
+    the repetition-comparison details). Everything degrades: no auth, 404,
+    timeout or a malformed payload becomes a caption — one dead fetch never
+    breaks the dashboard.
+    """
+    if next((a for a in activities if a.activity_id == activity_id), None) is None:
+        return
+    payload = None
+    cache_path = APP_CACHE_DIR / f"activity_splits_{activity_id}.json"
+    if cache_path.exists():
+        payload = _load_json_file(cache_path)  # unreadable cache → refetch
+    if payload is None:
+        try:
+            gw = GarminGateway(cache_dir=APP_CACHE_DIR)
+            payload = run_with_timeout(
+                gw.fetch_activity_splits, timeout=DETAILS_TIMEOUT_S, activity_id=activity_id
+            )
+        except Exception:  # noqa: BLE001 - laps are a bonus panel, never fatal
+            st.caption("No lap data available for this activity (Garmin fetch failed).")
+            return
+    laps = parse_laps(payload if isinstance(payload, dict) else {})
+    if not laps:
+        st.caption("No laps/splits recorded for this activity.")
+        return
+    m_per_unit = 1000.0 if units in ("km", "metric") else 1609.344
+    rows = []
+    for lap in laps:
+        pace = (
+            m_per_unit * lap.duration_s / lap.distance_m
+            if lap.distance_m and lap.duration_s
+            else None
+        )
+        rows.append(
+            {
+                "lap": lap.index,
+                "distance": _fmt(lap.distance_m / 1000.0, {"unit": "km"}, units)
+                if lap.distance_m is not None
+                else "—",
+                "time": _fmt(lap.duration_s, {"unit": "s"}, units)
+                if lap.duration_s is not None
+                else "—",
+                "pace": _fmt(pace, {"unit": "s"}, units) if pace else "—",
+                "avg HR": f"{lap.avg_hr:.0f}" if lap.avg_hr is not None else "—",
+                "cadence": f"{lap.avg_cadence:.0f}" if lap.avg_cadence is not None else "—",
+                "elev gain": _fmt(lap.elevation_gain_m, {"unit": "m"}, units)
+                if lap.elevation_gain_m is not None
+                else "—",
+            }
+        )
+    st.subheader("Garmin laps / splits")
+    st.dataframe(rows, width='stretch', hide_index=True)
+
+    def _lap_mean(values) -> float | None:
+        present = [v for v in values if v is not None]
+        return sum(present) / len(present) if present else None
+
+    dynamics = {
+        "avg cadence": _lap_mean(lap.avg_cadence for lap in laps),
+        "stride length": _lap_mean(lap.stride_length_m for lap in laps),
+        "ground contact": _lap_mean(lap.ground_contact_time for lap in laps),
+        "vertical oscillation": _lap_mean(lap.vertical_oscillation_cm for lap in laps),
+    }
+    parts = []
+    cadence = dynamics["avg cadence"]
+    if cadence is not None:
+        parts.append(f"avg cadence {cadence:.0f} spm")
+    stride = dynamics["stride length"]
+    if stride is not None:
+        parts.append(f"stride {stride:.2f} m")
+    gct = dynamics["ground contact"]
+    if gct is not None:
+        parts.append(f"GCT {gct:.0f} ms")
+    vo = dynamics["vertical oscillation"]
+    if vo is not None:
+        parts.append(f"vert osc {vo:.1f} cm")
+    st.caption(
+        "Running dynamics: " + (" · ".join(parts) if parts else "— not recorded on these laps")
+    )
+
+
 def render_repetitions(activities, activity_id: int, units: str) -> None:
     """Comparison table + chart for every repetition of the selected workout.
 
@@ -1857,6 +1941,7 @@ def render_activities(activities, since, until, units, profile) -> None:
                 "graded": f"{graded * 100:.1f}%" if graded is not None else "—",
                 "avg HR": f"{a.avg_hr:.0f}" if a.avg_hr is not None else "—",
                 "max HR": f"{a.max_hr:.0f}" if a.max_hr is not None else "—",
+                "cadence": f"{a.avg_cadence:.0f}" if a.avg_cadence is not None else "—",
                 "VO2max": f"{a.vo2max:.1f}" if a.vo2max is not None else "—",
                 "elev gain": _fmt(a.ele_gain_m, {"unit": "m"}, units)
                 if a.ele_gain_m is not None
@@ -1887,6 +1972,7 @@ def render_activities(activities, since, until, units, profile) -> None:
     )
     if sel.selection.rows:
         selected_id = int(df.iloc[sel.selection.rows[0]]["activity_id"])
+        render_activity_laps(activities, selected_id, units)
         render_repetitions(activities, selected_id, units)
 
 

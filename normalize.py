@@ -185,6 +185,92 @@ class Activity:
         return workout_code(self.name)
 
 
+# Garmin lap/splits payload fields — every one is optional in practice; a lap
+# can omit any of them (missing → None downstream, never a raise).
+LAP_NUMERIC_FIELDS = (
+    "distance",
+    "duration",
+    "averageHR",
+    "maxHR",
+    "averageRunCadence",
+    "maxRunCadence",
+    "elevationGain",
+    "averageSpeed",
+    "groundContactTime",
+    "strideLength",
+    "verticalOscillation",
+    "verticalRatio",
+)
+
+
+@dataclass
+class Lap:
+    """One lap from the /activity-service/activity/{id}/splits payload.
+
+    Distances are metres, durations seconds, cadence steps/min, ground
+    contact time milliseconds, vertical oscillation centimetres, vertical
+    ratio percent — the raw Garmin units, converted nowhere.
+    """
+
+    index: int
+    distance_m: float | None
+    duration_s: float | None
+    avg_hr: float | None
+    max_hr: float | None
+    avg_cadence: float | None
+    max_cadence: float | None
+    elevation_gain_m: float | None
+    avg_speed: float | None
+    ground_contact_time: float | None
+    stride_length_m: float | None
+    vertical_oscillation_cm: float | None
+    vertical_ratio_pct: float | None
+    intensity: str | None
+
+
+def _lap_field(lap: dict, key: str) -> float | None:
+    """Numeric lap field, tolerating missing/None/non-numeric (→ None)."""
+    v = lap.get(key)
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v)
+    return None
+
+
+def parse_laps(payload: dict) -> list[Lap]:
+    """lapDTOs → Lap list. Missing fields become None. Never raises.
+
+    `{}` or a payload without `lapDTOs` (or with a non-list one) yields `[]`.
+    """
+    raw_laps = payload.get("lapDTOs") if isinstance(payload, dict) else None
+    if not isinstance(raw_laps, list):
+        return []
+    laps: list[Lap] = []
+    for i, raw in enumerate(raw_laps):
+        if not isinstance(raw, dict):
+            continue
+        index = _lap_field(raw, "lapIndex")
+        intensity = raw.get("intensityType")
+        laps.append(
+            Lap(
+                index=int(index) if index is not None else i,
+                distance_m=_lap_field(raw, "distance"),
+                duration_s=_lap_field(raw, "duration"),
+                avg_hr=_lap_field(raw, "averageHR"),
+                max_hr=_lap_field(raw, "maxHR"),
+                avg_cadence=_lap_field(raw, "averageRunCadence"),
+                max_cadence=_lap_field(raw, "maxRunCadence"),
+                elevation_gain_m=_lap_field(raw, "elevationGain"),
+                avg_speed=_lap_field(raw, "averageSpeed"),
+                ground_contact_time=_lap_field(raw, "groundContactTime"),
+                stride_length_m=_lap_field(raw, "strideLength"),
+                vertical_oscillation_cm=_lap_field(raw, "verticalOscillation"),
+                vertical_ratio_pct=_lap_field(raw, "verticalRatio"),
+                intensity=intensity if isinstance(intensity, str) and intensity else None,
+            )
+        )
+    return laps
+
+
 def from_summary(summary: dict) -> Activity:
     ts_local = str(_f(summary, "startTimeLocal") or "")[:19]
     if ts_local:

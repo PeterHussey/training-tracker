@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS activities (
   anaerobic_te       REAL,
   avg_speed          REAL,
   fastest_split_1609 REAL,
+  avg_cadence        REAL,
    zone_s             TEXT NOT NULL DEFAULT '{}',
    route              TEXT NOT NULL DEFAULT '{}',
    name               TEXT,
@@ -128,6 +129,11 @@ class MetricStore:
         # absent data genuinely is absent.
         if "event_type" not in cols:
             self.conn.execute("ALTER TABLE activities ADD COLUMN event_type TEXT")
+        # Garmin average cadence (steps/min): nullable, captured only for rows
+        # loaded through from_summary since this column existed; a row that
+        # predates the column keeps NULL (absent data genuinely is absent).
+        if "avg_cadence" not in cols:
+            self.conn.execute("ALTER TABLE activities ADD COLUMN avg_cadence REAL")
         # Best-effort LTHR anchors replaced the rolling-mean fallback: prune
         # the dead keys so stale rows don't linger in old databases. These
         # keys are never written again, so unconditional pruning is safe.
@@ -202,6 +208,7 @@ class MetricStore:
                 a.anaerobic_te,
                 a.avg_speed,
                 a.fastest_split_1609,
+                a.avg_cadence,
                 json.dumps(a.zone_s, sort_keys=True),
                 json.dumps(
                     {"lat": a.lat, "lon": a.lon, "location": a.location, "device_id": a.device_id},
@@ -225,10 +232,11 @@ class MetricStore:
         self.conn.executemany(
             "INSERT OR REPLACE INTO activities (activity_id, activity_date, sport, "
             "distance_m, duration_s, elapsed_s, ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, "
-            "anaerobic_te, avg_speed, fastest_split_1609, zone_s, route, name, has_intervals, "
+            "anaerobic_te, avg_speed, fastest_split_1609, avg_cadence, zone_s, route, name, "
+            "has_intervals, "
             "rpe_10, feel, wx_temp, wx_feels, wx_humidity, wx_wind, wx_wind_dir, wx_desc, "
             "wx_unit, event_type) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         self.conn.commit()
@@ -295,7 +303,7 @@ class MetricStore:
         rows = self.conn.execute(
             "SELECT activity_id, activity_date, sport, distance_m, duration_s, elapsed_s, "
             "ele_gain_m, vo2max, avg_hr, max_hr, aerobic_te, anaerobic_te, "
-            "avg_speed, fastest_split_1609, zone_s, route, name, has_intervals, "
+            "avg_speed, fastest_split_1609, avg_cadence, zone_s, route, name, has_intervals, "
             "rpe_10, feel, wx_temp, wx_feels, wx_humidity, wx_wind, wx_wind_dir, wx_desc, "
             "wx_unit, event_type FROM activities "
             "ORDER BY activity_date, activity_id"
@@ -319,6 +327,7 @@ class MetricStore:
             anaerobic_te,
             avg_speed,
             fastest_split_1609,
+            avg_cadence,
             zone_s,
             route_s,
             name,
@@ -367,6 +376,7 @@ class MetricStore:
             anaerobic_te=anaerobic_te,
             avg_speed=avg_speed,
             fastest_split_1609=fastest_split_1609,
+            avg_cadence=avg_cadence,
             name=name,
             has_intervals=bool(has_intervals),
             event_type=event_type,

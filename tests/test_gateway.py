@@ -439,6 +439,27 @@ def test_gateway_fetch_wrappers_default_none_to_empty(monkeypatch, tmp_path):
     assert json.loads((tmp_path / "cache" / "activity_weather_3.json").read_text()) == {}
 
 
+def test_gateway_fetch_activity_splits_caches_payload(monkeypatch, tmp_path):
+    fh = mock.Mock(spec=GarminHttp)
+    payload = {"activityId": 12, "lapDTOs": [{"lapIndex": 1, "distance": 1000.0}]}
+    fh.fetch_activity_splits.return_value = payload
+    gw = _gateway_with_http(monkeypatch, tmp_path, fh)
+    out = gw.fetch_activity_splits(12)
+    assert out == payload
+    fh.fetch_activity_splits.assert_called_once_with(12)
+    cached = json.loads((tmp_path / "cache" / "activity_splits_12.json").read_text())
+    assert cached == payload
+
+
+def test_gateway_fetch_splits_none_payload_cached_as_empty_dict(monkeypatch, tmp_path):
+    """A None/empty http result must still be cached as {} (no refetch loop)."""
+    fh = mock.Mock(spec=GarminHttp)
+    fh.fetch_activity_splits.return_value = None
+    gw = _gateway_with_http(monkeypatch, tmp_path, fh)
+    assert gw.fetch_activity_splits(3) == {}
+    assert json.loads((tmp_path / "cache" / "activity_splits_3.json").read_text()) == {}
+
+
 def test_garmin_http_summary_and_weather_use_activity_service_paths():
     http = GarminHttp(mock.Mock())
     http.get_json = mock.Mock(return_value={"ok": True})

@@ -656,3 +656,84 @@ def test_migrate_rpe_weather_idempotent_on_reopen(tmp_path):
     assert loaded[0].rpe_10 == 6.5
     assert loaded[0].feel == "Weak"
     assert loaded[0].wx_temp == 50.0
+
+
+# --- Task 5: avg_cadence column (stored, migrated, NULL for old rows) ---
+
+
+def test_avg_cadence_roundtrip(tmp_path):
+    """avg_cadence survives the store; missing values stay None."""
+    from dataclasses import replace
+
+    db = tmp_path / "t.db"
+    store = MetricStore(str(db))
+    store.save_activities([replace(ACT, avg_cadence=178.5), SECOND_ACT])
+    loaded = {a.activity_id: a for a in store.load_activities()}
+    store.close()
+    assert loaded[1].avg_cadence == 178.5
+    assert loaded[2].avg_cadence is None
+
+
+def test_migrate_adds_avg_cadence_to_old_database(tmp_path):
+    """A pre-Task-5 database (current schema minus avg_cadence) gains the
+    nullable column on open; existing rows keep NULL and old values survive."""
+    db = str(tmp_path / "t.db")
+    conn = __import__("sqlite3").connect(db)
+    conn.execute(
+        "CREATE TABLE activities ("
+        "  activity_id        INTEGER PRIMARY KEY,"
+        "  activity_date      TEXT NOT NULL,"
+        "  sport              TEXT NOT NULL,"
+        "  distance_m         REAL NOT NULL DEFAULT 0,"
+        "  duration_s         REAL NOT NULL DEFAULT 0,"
+        "  elapsed_s          REAL NOT NULL DEFAULT 0,"
+        "  ele_gain_m         REAL,"
+        "  vo2max             REAL,"
+        "  avg_hr             REAL,"
+        "  max_hr             REAL,"
+        "  aerobic_te         REAL,"
+        "  anaerobic_te       REAL,"
+        "  avg_speed          REAL,"
+        "  fastest_split_1609 REAL,"
+        "  zone_s             TEXT NOT NULL DEFAULT '{}',"
+        "  route              TEXT NOT NULL DEFAULT '{}',"
+        "  name               TEXT,"
+        "  has_intervals      INTEGER NOT NULL DEFAULT 0,"
+        "  rpe_10             REAL,"
+        "  feel               TEXT,"
+        "  wx_temp            REAL,"
+        "  wx_feels           REAL,"
+        "  wx_humidity        REAL,"
+        "  wx_wind            REAL,"
+        "  wx_wind_dir        TEXT,"
+        "  wx_desc            TEXT,"
+        "  wx_unit            TEXT,"
+        "  event_type         TEXT"
+        ")"
+    )
+    conn.execute(
+        "INSERT INTO activities (activity_id, activity_date, sport, distance_m, "
+        "duration_s, elapsed_s, name) VALUES (9, '2026-03-01', 'running', 18000.0, "
+        "6300.0, 6400.0, 'Old Row')"
+    )
+    conn.commit()
+    conn.close()
+    store = MetricStore(db)
+    cols = {r[1] for r in store.conn.execute("PRAGMA table_info(activities)").fetchall()}
+    assert "avg_cadence" in cols
+    loaded = store.load_activities()
+    store.close()
+    assert len(loaded) == 1
+    assert loaded[0].name == "Old Row"
+    assert loaded[0].avg_cadence is None
+
+
+def test_migrate_avg_cadence_idempotent_on_reopen(tmp_path):
+    """Reopening an already-migrated DB does not duplicate the column."""
+    db = str(tmp_path / "t.db")
+    store = MetricStore(db)
+    store.close()
+    reopened = MetricStore(db)
+    names = [r[1] for r in reopened.conn.execute("PRAGMA table_info(activities)").fetchall()]
+    reopened.close()
+    assert names.count("avg_cadence") == 1

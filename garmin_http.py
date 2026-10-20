@@ -18,6 +18,7 @@ import requests
 
 DI_TOKEN_URL = "https://diauth.garmin.com/di-oauth2-service/oauth/token"
 CONNECTAPI_BASE = "https://connectapi.garmin.com"
+SPLITS_PATH = "/activity-service/activity/{activity_id}/splits"
 _NATIVE_UA = "GCM-Android-5.23"
 _X_GARMIN_UA = "Android-FIT/5.23.0.0"
 
@@ -284,6 +285,18 @@ class GarminHttp:
             payload = self.get_json(f"/activity-service/activity/{activity_id}/weather")
         except GarminHttpError as e:
             # Indoor/no-station activities 404; treated as "no weather" so the
+            # gateway can cache the empty payload instead of failing forever.
+            if e.status_code == 404:
+                return {}
+            raise
+        return payload if isinstance(payload, dict) else {}
+
+    def fetch_activity_splits(self, activity_id: int) -> dict:
+        """Laps/splits for an activity; 404 (no laps) → {}."""
+        try:
+            payload = self.get_json(SPLITS_PATH.format(activity_id=activity_id))
+        except GarminHttpError as e:
+            # Activities without recorded laps 404; treated as "no laps" so the
             # gateway can cache the empty payload instead of failing forever.
             if e.status_code == 404:
                 return {}

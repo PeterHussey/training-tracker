@@ -1726,3 +1726,145 @@ def test_main_calls_paces_table_at_page_bottom(monkeypatch):
     names = [c[0] for c in fake.calls]
     assert "expander" in names
     assert names.index("expander") < names.index("markdown", names.index("expander"))
+
+
+# --- Garmin laps / splits panel (Task 5, criterion 7) ---
+
+
+def _splits_fixture() -> dict:
+    from pathlib import Path
+
+    return json.loads((Path(__file__).parent / "fixtures" / "activity_splits.json").read_text())
+
+
+def test_render_activity_laps_renders_table_from_cached_splits(monkeypatch, tmp_path):
+    """A cached splits payload renders the laps table without touching the
+    network; missing lap fields degrade to '—' and dynamics are averaged."""
+    aid = 77
+    (tmp_path / f"activity_splits_{aid}.json").write_text(json.dumps(_splits_fixture()))
+    act = _coded_act(aid, "Interval Run", 10)
+    monkeypatch.setattr(d, "APP_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(
+        d, "GarminGateway", mock.Mock(side_effect=AssertionError("cache hit must not fetch"))
+    )
+    fake = _FakeSt()
+    _patch_st(monkeypatch, fake)
+
+    d.render_activity_laps([act], aid, "km")
+
+    dataframes = [a for name, a in fake.calls if name == "dataframe"]
+    assert dataframes, "laps table not rendered"
+    rows = dataframes[0][0]
+    assert [r["lap"] for r in rows] == [1, 2, 3]
+    lap1 = rows[0]
+    assert lap1["distance"] == "1.00 km"
+    assert lap1["time"] == "6:09"  # 368.653 s lap
+    assert lap1["pace"] == "6:09"  # 1000 m in 368.653 s → 368.65 s/km
+    assert lap1["avg HR"] == "124"
+    missing = rows[1]
+    assert missing["avg HR"] == "—" and missing["cadence"] == "—"
+    dynamics = [a[0] for name, a in fake.calls if name == "caption" and "Running dynamics" in a[0]]
+    assert dynamics and "avg cadence" in dynamics[0] and "stride" in dynamics[0]
+
+
+def test_render_activity_laps_failed_fetch_degrades_to_caption(monkeypatch, tmp_path):
+    """One dead splits fetch (auth failure, timeout, 404 without cache) shows a
+    caption — never raises, never renders a half table."""
+    aid = 88
+    act = _coded_act(aid, "Tempo Run", 11)
+
+    class _DeadGw:
+        def __init__(self, cache_dir=None):
+            self.cache_dir = cache_dir
+
+        def fetch_activity_splits(self, activity_id):
+            raise RuntimeError("dead splits endpoint")
+
+    monkeypatch.setattr(d, "APP_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(d, "GarminGateway", _DeadGw)
+    fake = _FakeSt()
+    _patch_st(monkeypatch, fake)
+
+    d.render_activity_laps([act], aid, "km")  # must not raise
+
+    assert not any(name == "subheader" for name, _a in fake.calls)
+    captions = [a[0] for name, a in fake.calls if name == "caption"]
+    assert captions and "No lap data" in captions[0]
+
+
+def test_render_activity_laps_empty_laps_renders_caption(monkeypatch, tmp_path):
+    """A cached-but-lapless payload (e.g. a 404 cached as {}) shows the
+    'no laps recorded' caption."""
+    (tmp_path / "activity_splits_5.json").write_text("{}")
+    act = _coded_act(5, "Easy Run", 12)
+    monkeypatch.setattr(d, "APP_CACHE_DIR", tmp_path)
+    fake = _FakeSt()
+    _patch_st(monkeypatch, fake)
+
+    d.render_activity_laps([act], 5, "km")
+
+    captions = [a[0] for name, a in fake.calls if name == "caption"]
+    assert captions == ["No laps/splits recorded for this activity."]
+
+
+def test_render_activity_laps_unknown_activity_silent(monkeypatch, tmp_path):
+    """An id outside the visible list renders nothing and fetches nothing."""
+    monkeypatch.setattr(d, "APP_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(d, "GarminGateway", mock.Mock(side_effect=AssertionError("no fetch ever")))
+    fake = _FakeSt()
+    _patch_st(monkeypatch, fake)
+
+    d.render_activity_laps([_coded_act(6, "Easy Run", 13)], 999, "km")
+
+    assert fake.calls == []
+
+
+def test_render_activities_selected_row_calls_laps_panel(monkeypatch):
+    """Selecting a row shows the activity's Garmin detail (laps panel), in
+    addition to the repetition comparison."""
+    acts = [_coded_act(91, "Winnetka - RF24 (Foundation Run)", 10)]
+    calls = {}
+    monkeypatch.setattr(
+        d,
+        "render_activity_laps",
+        lambda activities, activity_id, units: calls.update(id=activity_id),
+    )
+    monkeypatch.setattr(d, "render_repetitions", mock.Mock())
+    fake = _FakeSt()
+    fake.dataframe = lambda *a, **k: mock.Mock(selection=mock.Mock(rows=[0]))
+    _patch_st(monkeypatch, fake)
+
+    d.render_activities(acts, date(2026, 8, 1), date(2026, 8, 31), "km", PROFILE_40M)
+
+    assert calls["id"] == 91
+
+
+def test_render_activities_rows_include_cadence_column(monkeypatch):
+    """The flat activity log gains a cadence column (steps/min, '—' when old
+    rows have no stored value)."""
+    act = Activity(
+        102,
+        "running",
+        date(2026, 1, 15),
+        0,
+        5000.0,
+        1000.0,
+        1000.0,
+        150.0,
+        170.0,
+        avg_cadence=182.4,
+    )
+    nulled = Activity(
+        103,
+        "running",
+        date(2026, 1, 20),
+        0,
+        5000.0,
+        1000.0,
+        1000.0,
+        150.0,
+        170.0,
+    )
+    _df, rows = _render_activities_rows(monkeypatch, [act, nulled], "km")
+    assert rows["2026-01-15"]["cadence"] == "182"
+    assert rows["2026-01-20"]["cadence"] == "—"

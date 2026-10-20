@@ -249,6 +249,11 @@ class GarminGateway:
         self._cache(f"activity_weather_{activity_id}.json", payload)
         return payload
 
+    def fetch_activity_splits(self, activity_id: int) -> dict:
+        payload = self._require_http().fetch_activity_splits(activity_id) or {}
+        self._cache(f"activity_splits_{activity_id}.json", payload)
+        return payload
+
     def fetch_lactate_threshold(self) -> dict:
         payload = self._require_http().fetch_lactate_threshold()
         self._cache("lactate_threshold.json", payload)
