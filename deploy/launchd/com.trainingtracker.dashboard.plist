@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trainingtracker.dashboard</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO__/.venv/bin/streamlit</string>
+        <string>run</string>
+        <string>__REPO__/dashboard.py</string>
+        <string>--server.address=127.0.0.1</string>
+        <string>--server.port=8501</string>
+        <string>--server.headless=true</string>
+        <string>--browser.gatherUsageStats=false</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__REPO__/logs/dashboard.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO__/logs/dashboard.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

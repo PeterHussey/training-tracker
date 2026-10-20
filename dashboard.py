@@ -22,6 +22,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from chart_theme import PALETTE, render, style
 from gateway import GarminGateway, compute_fetch_start
 from metrics import daniels_gilbert, marathon_shape, volume
 from metrics.gap import K as GAP_K
@@ -34,6 +35,7 @@ from session import (
     best_mile,
     build_session_view,
     fastest_30s_pace,
+    partial_bucket_labels,
     resolve_activities,
     run_with_timeout,
 )
@@ -887,7 +889,8 @@ def _anchor_cards(windowed, view, units) -> None:
                     yaxis="y2",
                 )
             )
-            fig.update_layout(
+            style(
+                fig,
                 title=f"Qualifier dots — {label} window (all qualifying efforts)",
                 yaxis_title="bpm",
                 yaxis2={
@@ -898,7 +901,7 @@ def _anchor_cards(windowed, view, units) -> None:
                 hovermode="x unified",
                 showlegend=False,
             )
-            st.plotly_chart(fig, width='stretch')
+            render(fig, width='stretch')
             st.caption(
                 f"📊 **How to read:** Faint dots = all {label} qualifying efforts in the current window. "
                 f"Left axis (blue) = HR. Right axis (orange) = pace. "
@@ -997,17 +1000,16 @@ def render_load_tab(view, windowed, units) -> None:
             e = windowed.get("load.edwards")
             if e is not None and len(e):
                 fig.add_trace(go.Scatter(x=e.index, y=e.values, name="Edwards (total)", yaxis="y2"))
-                fig.update_layout(
-                    yaxis2={"overlaying": "y", "side": "right", "title": "Edwards TRIMP"}
-                )
-        fig.update_layout(
+                style(fig, yaxis2={"overlaying": "y", "side": "right", "title": "Edwards TRIMP"})
+        style(
+            fig,
             barmode="stack",
             title="Daily Banister TRIMP (stacked by sport)",
             hovermode="x unified",
             yaxis_title="Banister TRIMP",
             legend={"orientation": "h", "y": 1.12},
         )
-        st.plotly_chart(fig, width='stretch')
+        render(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Each bar = one day's HR-based training load. Stacked = outdoor running (blue) + "
             "treadmill (orange) + cross-training (green). The sum feeds the PMC/ACWR charts below. "
@@ -1027,26 +1029,31 @@ def render_load_tab(view, windowed, units) -> None:
     else:
         fig = go.Figure()
         for key, name, color in (
-            ("pmc.ctl", "CTL (fitness)", "#2E86AB"),
-            ("pmc.atl", "ATL (fatigue)", "#A23B72"),
+            ("pmc.ctl", "CTL (fitness)", PALETTE["blue"]),
+            ("pmc.atl", "ATL (fatigue)", PALETTE["magenta"]),
         ):
             t = windowed.get(key)
             if t is not None and len(t):
                 fig.add_trace(go.Scatter(x=t.index, y=t.values, name=name, line={"color": color}))
         fig.add_trace(
             go.Scatter(
-                x=tsb.index, y=tsb.values, name="TSB (form)", yaxis="y2", line={"color": "#F18F01"}
+                x=tsb.index,
+                y=tsb.values,
+                name="TSB (form)",
+                yaxis="y2",
+                line={"color": PALETTE["orange"]},
             )
         )
         fig.add_hline(y=0, line_dash="dot", line_color="gray")
-        fig.update_layout(
+        style(
+            fig,
             title="Fitness (CTL) / Fatigue (ATL) / Form (TSB)",
             hovermode="x unified",
             yaxis_title="Combined TRIMP / day",
             yaxis2={"overlaying": "y", "side": "right", "title": "TSB"},
             legend={"orientation": "h", "y": 1.12},
         )
-        st.plotly_chart(fig, width='stretch')
+        render(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Blue = CTL (42-day rolling fitness). Purple = ATL (7-day rolling fatigue). "
             "Orange = TSB = CTL − ATL. **Above zero = fresh/form (good for racing). Below zero = tired.** "
@@ -1061,17 +1068,18 @@ def render_load_tab(view, windowed, units) -> None:
         fig = go.Figure()
         fig.add_hrect(y0=0.8, y1=1.3, fillcolor="lightgreen", opacity=0.2, line_width=0)
         fig.add_trace(
-            go.Scatter(x=acwr.index, y=acwr.values, name="ACWR", line={"color": "#2E86AB"})
+            go.Scatter(x=acwr.index, y=acwr.values, name="ACWR", line={"color": PALETTE["blue"]})
         )
         fig.add_hline(y=0.5, line_dash="dot", line_color="red")
         fig.add_hline(y=1.5, line_dash="dot", line_color="red")
-        fig.update_layout(
+        style(
+            fig,
             title="Acute:Chronic Workload Ratio (coupled 7/28)",
             hovermode="x unified",
             yaxis={"range": [0, max(2.0, float(acwr.max()))]},
             legend={"orientation": "h", "y": 1.12},
         )
-        st.plotly_chart(fig, width='stretch')
+        render(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Blue line = ACWR (7-day avg load ÷ 28-day avg load). **1.0 = steady load.** "
             "Green band 0.8–1.3 = typical 'sweet spot'. **ACWR measures load swing, not injury prediction.** "
@@ -1090,18 +1098,19 @@ def render_load_tab(view, windowed, units) -> None:
                 y=max_ratio.values,
                 name="Max run ratio",
                 mode="lines+markers",
-                line={"color": "#2E86AB"},
+                line={"color": PALETTE["blue"]},
             )
         )
         fig.add_hline(y=1.1, line_dash="dash", line_color="orange", annotation_text="110%")
         fig.add_hline(y=1.3, line_dash="dash", line_color="red", annotation_text="130%")
-        fig.update_layout(
+        style(
+            fig,
             title="Longest Safe Run — single run vs rolling 30-day max",
             hovermode="x unified",
             yaxis={"title": "Ratio", "range": [0, max(2.0, float(max_ratio.max()) * 1.1)]},
             xaxis_title="Date",
         )
-        st.plotly_chart(fig, width='stretch')
+        render(fig, width='stretch')
         latest = max_ratio.iloc[-1]
         if latest > 1.3:
             st.error(
@@ -1170,13 +1179,14 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
                     name="Route-cluster mean",
                 )
             )
-        fig.update_layout(
+        style(
+            fig,
             title="Aerobic decoupling (HR vs pace drift)",
             hovermode="x unified",
             yaxis_title="%",
             xaxis_title="Date",
         )
-        st.plotly_chart(fig, width='stretch')
+        render(fig, width='stretch')
         if dec_mean is None or dec_mean.empty:
             n = len(dec) if dec is not None else 0
             st.caption(
@@ -1212,7 +1222,7 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
                     y=shape.values,
                     mode="lines+markers",
                     name="Runalyze shape",
-                    line={"color": "#F18F01"},
+                    line={"color": PALETTE["orange"]},
                 )
             )
         title = (
@@ -1220,8 +1230,8 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             if has_vo2
             else "Runalyze shape (no Garmin VO2max trend)"
         )
-        fig.update_layout(title=title, hovermode="x unified")
-        st.plotly_chart(fig, width='stretch')
+        style(fig, title=title, hovermode="x unified")
+        render(fig, width='stretch')
         if has_shape:
             st.caption(
                 "Runalyze-style shape: 30-day duration-weighted mean of per-run pace+HR VO2max, "
@@ -1245,13 +1255,14 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
         fig = go.Figure(
             go.Scatter(x=ag.index, y=ag.values * 100, mode="lines+markers", name="Age-graded %")
         )
-        fig.update_layout(
+        style(
+            fig,
             title="Age-graded performance (WMA 2023)",
             hovermode="x unified",
             yaxis_title="% of open WR",
             xaxis_title="Date",
         )
-        st.plotly_chart(fig, width='stretch')
+        render(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Daily best WMA age-graded percentage over outdoor runs ≥3 km. "
             "100% = open-class world-record pace; ~80% ≈ national class, ~70% ≈ regional. "
@@ -1284,12 +1295,13 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
                 hovertemplate="%{x}<br>%{text}",
             )
         )
-        fig.update_layout(
+        style(
+            fig,
             title=name,
             yaxis_title=("bpm" if params and params.get("unit") != "m/s" else f"min per {units}"),
             hovermode="x unified",
         )
-        st.plotly_chart(fig, width='stretch')
+        render(fig, width='stretch')
         # Add interpretation for each threshold chart
         if key == "load.lt_hr":
             st.caption(
@@ -1353,13 +1365,14 @@ def render_fitness_tab(view, windowed, units, selected_race: str = "5k") -> None
             )
         )
         tickvals, ticktext = race_time_ticks([float(v) for v in s.values])
-        fig.update_layout(
+        style(
+            fig,
             title=f"Garmin race predictions — {focus}",
             hovermode="x unified",
             yaxis_title="predicted time",
             yaxis={"tickvals": tickvals, "ticktext": ticktext},
         )
-        st.plotly_chart(fig, width='stretch')
+        render(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Daily Garmin race prediction trend from `/racepredictions/daily` "
             "(full ~365-day history, not just today's snapshot). "
@@ -1421,9 +1434,30 @@ def render_prognosis_block(windowed, view, units) -> None:
     )
 
 
-def render_volume_tab(activities, view, windowed, units, selected_volume_agg="weekly") -> None:
+def render_volume_tab(
+    activities, view, windowed, units, selected_volume_agg="weekly", since=None, until=None
+) -> None:
     is_monthly = selected_volume_agg == "monthly"
     grain = "Monthly" if is_monthly else "Weekly"
+
+    # The buckets share one geometry, so one series identifies the partial ones.
+    if since is not None and until is not None:
+        freq = "MS" if is_monthly else "W-SUN"
+        s = windowed.get("volume.distance_total_daily")
+        partials = (
+            partial_bucket_labels(s, since, until, freq) if s is not None and not s.empty else []
+        )
+        convention = (
+            "Monthly buckets are calendar months, labelled by the 1st"
+            if is_monthly
+            else "Weekly buckets are Mon–Sun, labelled by their Monday"
+        )
+        st.caption(
+            f"{convention}. A bucket that overlaps the selected window is shown in full, so the "
+            "first and/or last bucket may include days outside the window. Partial buckets: "
+            + ("; ".join(partials) if partials else "none")
+            + "."
+        )
 
     st.markdown(
         """
@@ -1459,18 +1493,19 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
                     y=roll.values,
                     name="rolling 4wk",
                     yaxis="y2",
-                    line={"color": "#F18F01"},
+                    line={"color": PALETTE["orange"]},
                 )
             )
-            fig.update_layout(
+            style(
+                fig,
                 yaxis2={
                     "overlaying": "y",
                     "side": "right",
                     "title": f"rolling {'mi' if units in ('miles', 'imperial') else 'km'}",
-                }
+                },
             )
-        fig.update_layout(title=f"{grain} distance", barmode="stack", hovermode="x unified")
-        st.plotly_chart(fig, width='stretch')
+        style(fig, title=f"{grain} distance", barmode="stack", hovermode="x unified")
+        render(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Stacked bars = weekly distance by sport. Blue = outdoor running, "
             "orange = treadmill, green = cross-training (no distance, stacks at 0). "
@@ -1500,17 +1535,18 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
                     y=roll.values,
                     name="rolling 4wk",
                     yaxis="y2",
-                    line={"color": "#F18F01"},
+                    line={"color": PALETTE["orange"]},
                 )
             )
-        fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "title": "rolling hours"})
-        fig.update_layout(
+        style(fig, yaxis2={"overlaying": "y", "side": "right", "title": "rolling hours"})
+        style(
+            fig,
             title=f"{grain} duration (hours)",
             barmode="stack",
             hovermode="x unified",
             yaxis_title="hours",
         )
-        st.plotly_chart(fig, width='stretch')
+        render(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Stacked bars = weekly training TIME (hours) by sport. "
             "Includes cross-training and strength (which have no distance but consume energy). "
@@ -1523,12 +1559,13 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
         if wow is not None and len(wow):
             fig = go.Figure(go.Bar(x=wow.index, y=wow.values * 100, name="week-over-week %"))
             fig.add_hline(y=0, line_dash="dot", line_color="gray")
-            fig.update_layout(
+            style(
+                fig,
                 title=f"{'Month-over-month' if is_monthly else 'Week-over-week'} duration change",
                 hovermode="x unified",
                 yaxis_title="%",
             )
-            st.plotly_chart(fig, width='stretch')
+            render(fig, width='stretch')
             st.caption(
                 "📊 **How to read:** % change in total weekly training hours vs previous week. "
                 "Positive = more time training; negative = less. Large spikes (>30%) warrant attention."
@@ -1538,12 +1575,13 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
     if wow is not None and len(wow):
         fig = go.Figure(go.Bar(x=wow.index, y=wow.values * 100, name="week-over-week %"))
         fig.add_hline(y=0, line_dash="dot", line_color="gray")
-        fig.update_layout(
+        style(
+            fig,
             title=f"{'Month-over-month' if is_monthly else 'Week-over-week'} distance change",
             hovermode="x unified",
             yaxis_title="%",
         )
-        st.plotly_chart(fig, width='stretch')
+        render(fig, width='stretch')
         st.caption(
             "📊 **How to read:** % change in weekly running+treadmill distance vs previous week. "
             "Positive = more distance; negative = less. The '10% rule' is a rough guideline, not a law."
@@ -1562,7 +1600,10 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
         if roll28 is not None and len(roll28):
             fig.add_trace(
                 go.Scatter(
-                    x=roll28.index, y=roll28.values, name="rolling 28d", line={"color": "#F18F01"}
+                    x=roll28.index,
+                    y=roll28.values,
+                    name="rolling 28d",
+                    line={"color": PALETTE["orange"]},
                 )
             )
         per_km = windowed.get("elevation.gain_per_km_running")
@@ -1573,18 +1614,19 @@ def render_volume_tab(activities, view, windowed, units, selected_volume_agg="we
                     y=per_km.values,
                     name=f"{'ft' if units in ('miles', 'imperial') else 'm'} / {'mi' if units in ('miles', 'imperial') else 'km'}",
                     yaxis="y2",
-                    line={"color": "#2E86AB", "dash": "dash"},
+                    line={"color": PALETTE["blue"], "dash": "dash"},
                 )
             )
-            fig.update_layout(
+            style(
+                fig,
                 yaxis2={
                     "overlaying": "y",
                     "side": "right",
                     "title": f"{'ft' if units in ('miles', 'imperial') else 'm'} / {'mi' if units in ('miles', 'imperial') else 'km'}",
-                }
+                },
             )
-        fig.update_layout(title="Elevation gain (running)", hovermode="x unified")
-        st.plotly_chart(fig, width='stretch')
+        style(fig, title="Elevation gain (running)", hovermode="x unified")
+        render(fig, width='stretch')
         st.caption(
             "📊 **How to read:** Blue bars = daily elevation gain (route profile). "
             "Orange line = 28-day rolling average (climbing trend). "
@@ -1735,7 +1777,7 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
             y=gap_paces,
             mode="lines+markers",
             name="GAP (min/unit)",
-            line={"color": "#A23B72", "dash": "dot"},
+            line={"color": PALETTE["magenta"], "dash": "dot"},
         ),
     )
     fig.add_trace(
@@ -1744,20 +1786,21 @@ def render_repetitions(activities, activity_id: int, units: str) -> None:
             y=fast30_paces,
             mode="lines+markers",
             name="Fast30s (min/unit)",
-            line={"color": "#2E86AB", "dash": "dash"},
+            line={"color": PALETTE["blue"], "dash": "dash"},
         ),
     )
     fig.add_trace(
         go.Scatter(x=xs, y=hrs, mode="lines+markers", name="avg HR (bpm)", yaxis="y2"),
     )
-    fig.update_layout(
+    style(
+        fig,
         title=f"Performance over repetitions — {code}",
         hovermode="x unified",
         yaxis_title=f"min / {'mi' if units not in ('km', 'metric') else 'km'}",
         yaxis2={"overlaying": "y", "side": "right", "title": "bpm"},
         legend={"orientation": "h", "y": 1.12},
     )
-    st.plotly_chart(fig, width='stretch')
+    render(fig, width='stretch')
     st.caption(
         "📊 **How to read:** Blue = average pace. Purple dotted = GAP (pace adjusted for hills — "
         "compares effort across hilly/flat routes). Teal dashed = Fast30s (fastest 30 s pace of "
@@ -2085,7 +2128,7 @@ def main() -> None:
         # Runalyze training paces close the Fitness tab (spec layout "B").
         render_paces_table(windowed, units)
     with tab_volume:
-        render_volume_tab(activities, view, windowed, units, volume_agg)
+        render_volume_tab(activities, view, windowed, units, volume_agg, since=since, until=until)
     with tab_acts:
         render_activities(activities, since, until, units, profile)
 

@@ -16,6 +16,7 @@ from unittest import mock
 
 import pytest
 
+import chart_theme
 import dashboard as d
 from dashboard import (
     DEFAULT_WINDOW_DAYS,
@@ -780,6 +781,12 @@ class _FakeSt:
         return _rec
 
 
+def _patch_st(monkeypatch, fake):
+    """Route both the dashboard module and the shared chart theme to one fake."""
+    for module in (d, chart_theme):
+        monkeypatch.setattr(module, "st", fake)
+
+
 def _decoupling_view():
     from profile import default_profile
 
@@ -804,7 +811,7 @@ def test_render_kpis_shows_decoupling_mean(monkeypatch):
     view = _decoupling_view()
     windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_kpis(windowed, view, "km", ["Aerobic decoupling"])
     metrics = [a for name, a in fake.calls if name == "metric"]
     assert metrics and metrics[0][1] == "6.9%"
@@ -815,7 +822,7 @@ def test_render_load_tab_decoupling_chart(monkeypatch):
     view = _decoupling_view()
     windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_load_tab(view, windowed, "km")
     figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
     assert not any("decoupling" in str(getattr(f.layout.title, "text", "")) for f in figs)
@@ -827,7 +834,7 @@ def test_render_fitness_tab_decoupling_chart(monkeypatch):
     view = _decoupling_view()
     windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_fitness_tab(view, windowed, "km")
     figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
     assert any("decoupling" in str(getattr(f.layout.title, "text", "")) for f in figs)
@@ -842,7 +849,7 @@ def test_render_kpis_lt_hr_falls_back_to_best20(monkeypatch):
     assert "load.lt_hr" not in view.series
     windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_kpis(windowed, view, "km", ["LT HR"])
     metrics = [a for name, a in fake.calls if name == "metric"]
     assert metrics and metrics[0][0] == "LT HR (best-effort)" and metrics[0][1] == "138 bpm"
@@ -862,7 +869,7 @@ def test_render_kpis_lt_hr_prefers_garmin(monkeypatch):
     assert "load.lt_hr" in view.series
     windowed = view.windowed(date(2026, 7, 1), date(2026, 7, 31))
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_kpis(windowed, view, "km", ["LT HR"])
     metrics = [a for name, a in fake.calls if name == "metric"]
     assert metrics and metrics[0][0] == "LT HR" and metrics[0][1] == "158 bpm"
@@ -888,7 +895,7 @@ def test_render_fitness_tab_age_graded_chart(monkeypatch):
     assert "age_graded.pct" in view.series
     windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_fitness_tab(view, windowed, "km")
     figs = [a[0] for name, a in fake.calls if name == "plotly_chart"]
     assert any("Age-graded" in str(getattr(f.layout.title, "text", "")) for f in figs)
@@ -898,7 +905,7 @@ def test_volume_tab_sidebar_agg_toggle_weekly_default(monkeypatch):
     view = _graded_view()
     windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     acts = [
         Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
     ]
@@ -912,7 +919,7 @@ def test_volume_tab_sidebar_agg_toggle_monthly(monkeypatch):
     windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
     fake = _FakeSt()
     fake.radio = lambda *a, **k: "Monthly"
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     acts = [
         Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
     ]
@@ -927,7 +934,7 @@ def test_volume_tab_no_rollup_pane(monkeypatch):
     fake = _FakeSt()
     # Ensure radio is not called at all
     fake.radio = lambda *a, **k: None  # return falsy so widget value is ignored
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     acts = [
         Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
     ]
@@ -944,7 +951,7 @@ def test_volume_tab_duration_rolling_trace_is_smoothed(monkeypatch):
     view = _graded_view()
     windowed = view.windowed(date(2026, 1, 1), date(2026, 1, 31))
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     acts = [
         Activity(1, "running", date(2026, 1, 10), 0, 5000.0, 1000.0, 1000.0, 150.0, 170.0),
         Activity(2, "running", date(2026, 1, 17), 0, 10000.0, 2000.0, 2000.0, 150.0, 170.0),
@@ -985,7 +992,7 @@ def test_render_activities_best_mile_and_graded(monkeypatch):
         return mock.Mock(selection=mock.Mock(rows=[]))
 
     fake.dataframe = _df
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_activities(acts, date(2026, 1, 1), date(2026, 1, 31), "km", PROFILE_40M)
     metrics = [a for name, a in fake.calls if name == "metric"]
     assert any("Best mile" in str(m[0]) for m in metrics)
@@ -1064,7 +1071,7 @@ def test_render_repetitions_fetches_missing_group_details(monkeypatch, tmp_path)
     monkeypatch.setattr(d, "GarminGateway", _rep_gateway(fetched))
     pace_calls = _record_pace(monkeypatch)
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
 
     d.render_repetitions(acts, 2, "km")
 
@@ -1096,7 +1103,7 @@ def test_render_repetitions_failed_fetch_does_not_break_group(monkeypatch, tmp_p
     monkeypatch.setattr(d, "GarminGateway", _rep_gateway(fetched, fail_ids={11}))
     pace_calls = _record_pace(monkeypatch)
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
 
     d.render_repetitions(acts, 12, "km")  # must not raise
 
@@ -1122,7 +1129,7 @@ def test_render_repetitions_gate_includes_treadmill_excludes_strength(monkeypatc
     monkeypatch.setattr(d, "GarminGateway", _rep_gateway(fetched))
     pace_calls = _record_pace(monkeypatch)
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
 
     d.render_repetitions(acts, 21, "km")
 
@@ -1143,7 +1150,7 @@ def test_render_activities_no_selection_never_fetches_details(monkeypatch):
     monkeypatch.setattr(d, "GarminGateway", gw_factory)
     fake = _FakeSt()
     fake.dataframe = lambda *a, **k: mock.Mock(selection=mock.Mock(rows=[]))
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
 
     d.render_activities(acts, date(2026, 8, 1), date(2026, 8, 31), "km", PROFILE_40M)
 
@@ -1191,7 +1198,7 @@ def _render_activities_rows(monkeypatch, acts, units):
         return mock.Mock(selection=mock.Mock(rows=[]))
 
     fake.dataframe = _df
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_activities(acts, date(2026, 1, 1), date(2026, 1, 31), units, PROFILE_40M)
     df = recorded[0][0]
     return df, {row["date"]: row for row in df.to_dict("records")}
@@ -1284,7 +1291,7 @@ def test_render_repetitions_chart_adds_dashed_fast30s_trace(monkeypatch, tmp_pat
     monkeypatch.setattr(d, "APP_CACHE_DIR", tmp_path)
     monkeypatch.setattr(d, "GarminGateway", _rep_gateway(fetched))  # payload: 4.0 m/s
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
 
     d.render_repetitions(acts, 41, "km")
 
@@ -1462,7 +1469,7 @@ def test_render_fitness_tab_shape_overlay(monkeypatch):
     assert view.context["vdot.shape"]["flags"]["corrector"] != pytest.approx(1.0)
 
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_fitness_tab(view, windowed, "km")
 
     figs = _captured(fake, "plotly_chart")
@@ -1486,7 +1493,7 @@ def test_render_fitness_tab_prognosis_table_and_marathon_detail(monkeypatch):
     view = _runalyze_view()
     windowed = _runalyze_windowed(view)
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_fitness_tab(view, windowed, "km")
 
     frames = [f for f in _captured(fake, "dataframe") if f and "Distance" in f[0]]
@@ -1524,7 +1531,7 @@ def test_render_prognosis_block_hidden_without_5k(monkeypatch):
     whole block vanishes, marathon detail included."""
     view = _runalyze_view()
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_prognosis_block({}, view, "km")
     assert not [c for c in fake.calls if c[0] in ("dataframe", "subheader", "caption", "columns")]
 
@@ -1535,7 +1542,7 @@ def test_render_paces_table_from_current_shape(monkeypatch):
     view = _runalyze_view()
     windowed = _runalyze_windowed(view)
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_paces_table(windowed, "km")
 
     frames = _captured(fake, "dataframe")
@@ -1547,7 +1554,7 @@ def test_render_paces_table_from_current_shape(monkeypatch):
 
 def test_render_paces_table_hidden_without_shape(monkeypatch):
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_paces_table({}, "km")
     assert not [c for c in fake.calls if c[0] in ("dataframe", "subheader", "caption")]
 
@@ -1569,7 +1576,7 @@ def test_render_fitness_tab_shape_only_keeps_garmin_hint(monkeypatch):
     assert not windowed["vdot.shape"].empty
 
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_fitness_tab(view, windowed, "km")
 
     figs = _captured(fake, "plotly_chart")
@@ -1588,7 +1595,7 @@ def test_render_fitness_tab_shape_only_keeps_garmin_hint(monkeypatch):
 def test_render_fitness_tab_hint_when_neither_series_exists(monkeypatch):
     """Neither series → the hint alone, no empty chart."""
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_fitness_tab(_runalyze_view(), {}, "km")
 
     writes = _captured(fake, "write")
@@ -1604,13 +1611,13 @@ def test_render_prognosis_block_without_marathon_shape_does_not_crash(monkeypatc
     assert "marathon.shape_pct" not in windowed
 
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     d.render_prognosis_block(windowed, view, "km")
     assert len(_captured(fake, "dataframe")) == 1
     assert not [a for n, a in fake.calls if n == "metric"]
 
     fake2 = _FakeSt()
-    monkeypatch.setattr(d, "st", fake2)
+    _patch_st(monkeypatch, fake2)
     d.render_prognosis_block({**windowed, "marathon.shape_pct": None}, view, "km")
     assert len(_captured(fake2, "dataframe")) == 1
     assert not [a for n, a in fake2.calls if n == "metric"]
@@ -1622,7 +1629,7 @@ def test_render_fitness_tab_calls_prognosis_block(monkeypatch):
     view = _runalyze_view()
     windowed = _runalyze_windowed(view)
     fake = _FakeSt()
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
     block = mock.Mock()
     monkeypatch.setattr(d, "render_prognosis_block", block)
 
@@ -1687,7 +1694,7 @@ def test_main_calls_paces_table_at_page_bottom(monkeypatch):
 
     state = {"activities": acts, "_details_period_key": (default_since, max_d)}
     fake = _MainSt(state)
-    monkeypatch.setattr(d, "st", fake)
+    _patch_st(monkeypatch, fake)
 
     store = mock.Mock()
     store.load_runner_profile.return_value = RUNALYZE_PROFILE
