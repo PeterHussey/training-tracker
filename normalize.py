@@ -76,6 +76,16 @@ def _num(value: Any) -> float | None:
     return value if isinstance(value, (int, float)) else None
 
 
+def cadence_of(summary: dict) -> float | None:
+    """Average running cadence (steps/min) from an activity-list payload, or
+    None when absent.
+
+    Only the activity-list payload carries it — the per-activity summaryDTO has
+    no cadence field — so this is the single source for stored `avg_cadence`.
+    """
+    return _num(_f(summary, "averageRunningCadenceInStepsPerMinute"))
+
+
 def parse_rpe_feel(summary: dict | None) -> dict:
     """Watch-side RPE/Feel from a full activity payload (summaryDTO).
 
