@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Health check — the probes a status review would otherwise re-run by hand.
+
+Run: `.venv/bin/python health_check.py [--db PATH] [--only NAME] [--skip NAME]`
+
+Prints one PASS/FAIL line per check and exits 1 if any check fails, so it can
+be run from launchd and read in a log. Every check is non-destructive: the
+ones that write do so against a COPY of the store, taken with sqlite3's
+backup API (the live DB is in WAL mode, so a plain file copy is not a
+consistent snapshot).
+
+The checks are the ones the 2026-10-20 status review had to write as
+throwaway probe scripts; they are here so the next review starts from a known
+baseline instead of rediscovering it.
+"""
+
+import argparse
+import sqlite3
+import sys
+import tempfile
+import threading
+from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+from profile import default_profile
+
+import pandas as pd
+
+import refresh
+from gateway import GarminGateway
+from metrics import volume
+from store import MetricStore, default_db_path
+
+REPO = Path(__file__).resolve().parent
+SPEC_PATH = REPO / "docs" / "v2" / "metrics-spec.md"
+CACHE_DIR = REPO / "cache" / "app_cache"
+VOLUME_DAILY = "volume.distance_total_daily"
+
+
+@dataclass
+class Context:
+    db_path: Path
+    spec_path: Path
+
+
+def _copy_db(src_path: Path) -> Path:
+    """A consistent copy of the store in a temp dir (backup API, not a file copy)."""
+    tmp = Path(tempfile.mkdtemp(prefix="tt-health-"))
+    dst_path = tmp / "copy.sqlite"
+    src = sqlite3.connect(f"file:{src_path}?mode=ro", uri=True)
+    dst = sqlite3.connect(dst_path)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    return dst_path
+
+
+def _gateway() -> GarminGateway:
+    return GarminGateway(cache_dir=CACHE_DIR)
+
+
+# --- the checks -----------------------------------------------------------
+
+
+def check_store_mode(ctx: Context) -> str:
+    """The live store must be in WAL with a busy timeout (criterion 12)."""
+    store = MetricStore(ctx.db_path)
+    try:
+        mode = store.conn.execute("PRAGMA journal_mode").fetchone()[0]
+        timeout = store.conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    finally:
+        store.close()
+    if str(mode).lower() != "wal":
+        raise AssertionError(f"journal_mode is {mode!r}, expected 'wal'")
+    if timeout <= 0:
+        raise AssertionError(f"busy_timeout is {timeout}, expected > 0")
+    return f"journal_mode={mode} busy_timeout={timeout}"
+
+
+def check_monthly_rollup(ctx: Context) -> str:
+    """The current month must have a monthly volume bucket (2026-10-20 review)."""
+    store = MetricStore(ctx.db_path)
+    try:
+        rows = store.conn.execute(
+            "SELECT date, value FROM metric_series WHERE metric = ? ORDER BY date",
+            (VOLUME_DAILY,),
+        ).fetchall()
+    finally:
+        store.close()
+    if not rows:
+        raise AssertionError(f"no {VOLUME_DAILY} rows in the store")
+    series = pd.Series(
+        [v for _, v in rows], index=pd.to_datetime([d for d, _ in rows]), dtype=float
+    )
+    month = date.today().replace(day=1)
+    days = [v for d, v in rows if d.startswith(month.isoformat()[:7])]
+    if not days:
+        return f"no activity yet in {month:%Y-%m} — no bucket expected"
+    monthly = volume.resample_agg(series, "MS")
+    label = pd.Timestamp(month)
+    if label not in monthly.index:
+        raise AssertionError(f"no monthly bucket for {month:%Y-%m} (the dropped-month regression)")
+    expected = sum(days)
+    if abs(monthly.loc[label] - expected) > 1e-6:
+        raise AssertionError(f"{month:%Y-%m} bucket is {monthly.loc[label]}, expected {expected}")
+    return f"{month:%Y-%m} bucket {monthly.loc[label]:.3f} over {len(days)} day(s)"
+
+
+def check_spec_covers_families(ctx: Context) -> str:
+    """Every stored metric family must be documented in the metric spec."""
+    store = MetricStore(ctx.db_path)
+    try:
+        families = {
+            m.split(".")[0]
+            for (m,) in store.conn.execute("SELECT DISTINCT metric FROM metric_series")
+        }
+    finally:
+        store.close()
+    spec = ctx.spec_path.read_text()
+    missing = sorted(f for f in families if f not in spec)
+    if missing:
+        raise AssertionError(f"undocumented in {ctx.spec_path.name}: {', '.join(missing)}")
+    return f"{len(families)} families documented"
+
+
+def check_concurrency(ctx: Context) -> str:
+    """A reader must not be locked out by a writer (criterion 12), and
+    concurrent readers on one store must each get a complete result set."""
+    copy_path = _copy_db(ctx.db_path)
+    writer = MetricStore(copy_path)
+    try:
+        writer.conn.execute("BEGIN IMMEDIATE")
+        writer.conn.execute(
+            "INSERT INTO metric_series (metric, date, value, source) "
+            "VALUES ('health.check', '2020-01-01', 0, 'health')"
+        )
+        reader = MetricStore(copy_path)
+        try:
+            reader.load_activities()
+        finally:
+            reader.close()
+    finally:
+        writer.conn.rollback()
+        writer.close()
+    _check_concurrent_readers(copy_path)
+    return "reader proceeded during a write; 4 concurrent readers saw complete rows"
+
+
+def _check_concurrent_readers(path: Path) -> None:
+    """Concurrent readers on one store must not corrupt each other's rows.
+
+    One sqlite3.Connection shared across threads interleaves its
+    execute()/fetchall() and returns duplicated or None rows — the bug that
+    made load_runner_profile raise KeyError under Streamlit's threaded reruns.
+    """
+    store = MetricStore(path)
+    store.save_runner_profile(default_profile(age=40, hrrest=60, sex="M"))
+    failures: list[str] = []
+
+    def reader(tag: str) -> None:
+        for _ in range(20):
+            try:
+                p = store.load_runner_profile()
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"{tag}: {type(exc).__name__}: {exc}")
+                return
+            if p is None or p.hrmax != 180 or p.hrrest != 60 or p.units != "metric":
+                failures.append(f"{tag}: incomplete profile {p}")
+                return
+
+    try:
+        threads = [threading.Thread(target=reader, args=(f"r{i}",)) for i in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        store.close()
+    if failures:
+        raise AssertionError(f"concurrent readers corrupted the result set: {failures[:3]}")
+
+
+def check_refresh(ctx: Context) -> str:
+    """The refresh path must complete against a copy of the store."""
+    copy_path = _copy_db(ctx.db_path)
+    store = MetricStore(copy_path)
+    try:
+        rc = refresh._refresh(store)
+        rows = store.conn.execute("SELECT COUNT(*) FROM metric_series").fetchone()[0]
+    finally:
+        store.close()
+    if rc != 0:
+        raise AssertionError(f"refresh returned {rc}")
+    return f"refresh wrote {rows} metric rows"
+
+
+def check_stored_vs_garmin(ctx: Context) -> str:
+    """A few stored activities must still match what Garmin reports."""
+    store = MetricStore(ctx.db_path)
+    try:
+        acts = [
+            a
+            for a in store.load_activities()
+            if a.sport == "running" and a.avg_hr is not None and a.distance_m > 0
+        ][-3:]
+    finally:
+        store.close()
+    if not acts:
+        raise AssertionError("no running activities with HR data to compare")
+    gw = _gateway()
+    compared = 0
+    for a in acts:
+        dto = gw.fetch_activity_summary(a.activity_id).get("summaryDTO") or {}
+        if not dto:
+            continue
+        compared += 1
+        if abs(float(dto.get("distance") or 0.0) - a.distance_m) > 1.0:
+            raise AssertionError(
+                f"{a.activity_id}: distance {dto.get('distance')} vs {a.distance_m}"
+            )
+        if abs(float(dto.get("duration") or 0.0) - a.duration_s) > 1.0:
+            raise AssertionError(
+                f"{a.activity_id}: duration {dto.get('duration')} vs {a.duration_s}"
+            )
+        hr = dto.get("averageHR")
+        if hr is not None and abs(float(hr) - float(a.avg_hr)) > 1.0:
+            raise AssertionError(f"{a.activity_id}: avg HR {hr} vs {a.avg_hr}")
+    if not compared:
+        raise AssertionError("could not fetch any Garmin summary to compare against")
+    return f"{compared} activity(s) match Garmin"
+
+
+CHECKS = [
+    ("store-mode", check_store_mode),
+    ("monthly-rollup", check_monthly_rollup),
+    ("spec-covers-families", check_spec_covers_families),
+    ("concurrency", check_concurrency),
+    ("refresh", check_refresh),
+    ("stored-vs-garmin", check_stored_vs_garmin),
+]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Health check for the training-tracker store")
+    parser.add_argument("--db", default=str(default_db_path()))
+    parser.add_argument("--only", action="append", default=[], help="run only these checks")
+    parser.add_argument("--skip", action="append", default=[], help="skip these checks")
+    args = parser.parse_args(argv)
+
+    ctx = Context(db_path=Path(args.db), spec_path=SPEC_PATH)
+    failures = 0
+    for name, fn in CHECKS:
+        if args.only and name not in args.only:
+            continue
+        if name in args.skip:
+            continue
+        try:
+            detail = fn(ctx)
+        except Exception as exc:
+            failures += 1
+            print(f"FAIL {name}: {exc.__class__.__name__}: {exc}")
+        else:
+            print(f"PASS {name}: {detail}")
+    if failures:
+        print(f"{failures} check(s) failed", file=sys.stderr)
+        return 1
+    print("all checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

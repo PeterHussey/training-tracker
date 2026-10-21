@@ -465,6 +465,36 @@ def test_windowed_monthly_keeps_month_when_window_ends_mid_month():
     assert monthly.iloc[0] > 0
 
 
+def test_windowed_monthly_window_inside_one_month_yields_one_bucket():
+    """A window entirely inside one month yields exactly one bucket, not zero."""
+    profile = RunnerProfile(
+        hrmax=180,
+        hrrest=60,
+        sex="M",
+        birth_year=1986,
+        selected_volume_agg="monthly",
+    )
+    view = build_session_view(_acts(), profile, _lt(), _race(), _vo2())
+    w = view.windowed(date(2026, 8, 14), date(2026, 8, 16))
+    monthly = w["volume.distance_total_daily"]
+    assert list(monthly.index) == [pd.Timestamp("2026-08-01")]
+
+
+def test_windowed_monthly_month_without_activity_is_empty_not_zero():
+    """A month with no activity yields no bucket — never a zero-filled one."""
+    profile = RunnerProfile(
+        hrmax=180,
+        hrrest=60,
+        sex="M",
+        birth_year=1986,
+        selected_volume_agg="monthly",
+    )
+    view = build_session_view(_acts(), profile, _lt(), _race(), _vo2())
+    w = view.windowed(date(2026, 9, 1), date(2026, 9, 30))
+    monthly = w["volume.distance_total_daily"]
+    assert len(monthly) == 0
+
+
 def test_windowed_explicit_volume_agg_overrides_profile():
     """An explicit volume_agg argument to windowed() wins over the profile field
     (the dashboard passes the live sidebar radio value; the cached view's

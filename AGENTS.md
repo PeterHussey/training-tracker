@@ -21,6 +21,9 @@
 # Run one test
 .venv/bin/python -m pytest tests/test_trimp.py::test_name
 
+# Health check (the probes a status review would re-run; non-destructive)
+.venv/bin/python health_check.py
+
 # Lint
 .venv/bin/python -m ruff check .
 
