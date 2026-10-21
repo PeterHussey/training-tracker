@@ -117,8 +117,16 @@ def main(argv: list[str] | None = None) -> int:
     start = date.fromisoformat(args.start) if args.start else date.fromisoformat(min(dates))
     end = date.fromisoformat(args.end) if args.end else date.fromisoformat(max(dates))
 
-    gw = GarminGateway(cache_dir=Path("cache") / "app_cache")
-    raw = fetch_range(gw, start, end)
+    try:
+        gw = GarminGateway(cache_dir=Path("cache") / "app_cache")
+        raw = fetch_range(gw, start, end)
+    except Exception as exc:
+        print(
+            f"[backfill] Garmin fetch failed ({exc.__class__.__name__}: {exc})",
+            file=sys.stderr,
+        )
+        store.close()
+        return 1
     print(f"[backfill] fetched {len(raw)} activities (auth: {gw.auth_path})", file=sys.stderr)
 
     seen_ids = {int(a["activityId"]) for a in raw if a.get("activityId") is not None}
