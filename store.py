@@ -1,8 +1,10 @@
 """SQLite persistence for the measurement layer."""
 
+import contextlib
 import json
 import os
 import sqlite3
+import threading
 from datetime import date
 from pathlib import Path
 from profile import RunnerProfile
@@ -69,16 +71,33 @@ def default_db_path() -> Path:
 
 class MetricStore:
     def __init__(self, path):
-        # Streamlit caches the store via st.cache_resource and reuses the same
-        # connection across script reruns, each on a different thread — so the
-        # connection must not be implicitly bound to a single thread.
-        self.conn = sqlite3.connect(str(path), check_same_thread=False)
-        # WAL lets the dashboard read while the scheduled refresh writes, and
-        # busy_timeout makes the loser wait instead of raising "database is locked".
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA busy_timeout=5000")
+        self._path = str(path)
+        self._local = threading.local()
+        self._connections: list[sqlite3.Connection] = []
+        self._connections_lock = threading.Lock()
         self.conn.executescript(SCHEMA)
         self._migrate()
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """This thread's connection to the database.
+
+        One connection shared across threads corrupts result sets: concurrent
+        execute()/fetchall() on the same sqlite3.Connection interleaves and
+        returns duplicated or None rows (a KeyError in load_runner_profile).
+        Each thread gets its own connection to the same file instead — SQLite
+        handles the concurrency (WAL lets readers run during a write,
+        busy_timeout makes a blocked writer wait instead of failing).
+        """
+        c = getattr(self._local, "conn", None)
+        if c is None:
+            c = sqlite3.connect(self._path, check_same_thread=False)
+            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("PRAGMA busy_timeout=5000")
+            self._local.conn = c
+            with self._connections_lock:
+                self._connections.append(c)
+        return c
 
     def _migrate(self) -> None:
         """In-place migrations for stores created before a schema change.
@@ -445,4 +464,9 @@ class MetricStore:
         return cur.rowcount
 
     def close(self) -> None:
-        self.conn.close()
+        with self._connections_lock:
+            conns, self._connections = self._connections, []
+        for c in conns:
+            with contextlib.suppress(sqlite3.Error):
+                c.close()
+        self._local = threading.local()

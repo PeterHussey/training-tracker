@@ -266,6 +266,60 @@ def test_store_is_usable_from_another_thread(tmp_path):
     assert not failures, f"cross-thread use failed: {failures}"
 
 
+def test_each_thread_gets_its_own_connection(tmp_path):
+    # Sharing one sqlite3.Connection across threads corrupts result sets:
+    # concurrent execute()/fetchall() interleaves and returns duplicated or
+    # None rows, which surfaced as a KeyError in load_runner_profile and
+    # crashed the dashboard. Each thread must get its own connection.
+    store = MetricStore(str(tmp_path / "t.db"))
+    conns = []
+    lock = threading.Lock()
+
+    def grab():
+        c = store.conn
+        with lock:
+            conns.append(c)
+
+    threads = [threading.Thread(target=grab) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(conns) == 4
+    assert len({id(c) for c in conns}) == 4
+    # The creating thread keeps its own connection, and reuses it.
+    main_conn = store.conn
+    assert main_conn is store.conn
+    assert id(main_conn) not in {id(c) for c in conns}
+
+
+def test_concurrent_readers_get_a_complete_profile(tmp_path):
+    # The symptom of the shared connection: a reader saw a truncated result
+    # set (missing 'hrmax') and raised KeyError. Every reader must get the
+    # whole profile.
+    store = MetricStore(str(tmp_path / "t.db"))
+    store.save_runner_profile(default_profile(age=40, hrrest=60, sex="M"))
+    failures = []
+
+    def read(tag):
+        try:
+            for _ in range(20):
+                p = store.load_runner_profile()
+                assert p is not None, "no profile"
+                assert p.hrmax == 180
+                assert p.hrrest == 60
+                assert p.units == "metric"
+        except Exception as e:  # noqa: BLE001
+            failures.append(f"{tag}:{type(e).__name__}:{e}")
+
+    threads = [threading.Thread(target=read, args=(f"r{i}",)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not failures, f"concurrent read failed: {failures}"
+
+
 def test_store_uses_wal_and_busy_timeout(tmp_path):
     # Criterion 12: the scheduled refresh writes while the dashboard reads.
     # WAL lets the reader proceed during a write; busy_timeout makes a blocked
