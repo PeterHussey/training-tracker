@@ -29,6 +29,10 @@
 - lt_hr / lt_pace: ingested, HR anchored, pace flagged. cs_approx: fastest-mile.
   (Stored under load.lt_hr / load.lt_pace / load.cs_approx.)
 - race_5k / race_10k / race_half / race_full: ingested, marathon flagged.
+- age_graded.pct: daily best age-graded performance (WMA 2023) — the day's best
+  eligible outdoor run as a fraction of the open-class world record for that age
+  and distance (1.0 = the open-class record). Outdoor running only, runs of
+  3 km–marathon. Stored under `age_graded.pct`.
 ### 2.2 Context-only
 - elevation.daily/rolling28d/gain_per_km (running) — route context, not a risk metric.
 - gap.running: grade-adjusted pace (m/s), outdoor running only. Compensates
@@ -57,7 +61,12 @@ and per-module attribution live in
   Daniels–Gilbert race estimate against the day's shape; the damped twin
   multiplies the shape by the marathon-shape factor before the inversion.
 
-Formulas (bullet summary; the design spec carries the pseudocode verbatim):
+Formulas (bullet summary; the design spec carries the pseudocode verbatim).
+Estimator modules: `metrics/effective_vo2max.py` (the pace+HR effective-VO2max
+estimate and the race corrector) and `metrics/daniels_gilbert.py` (the
+Daniels–Gilbert estimate and its velocity inverse). They are the derivation path
+underneath every family in this section, not stored families of their own — they
+emit no series and store no rows on their own.
 - Effective VO2max (pace + HR): `DG.estimate(v / exp((hr_pct - 1.00466) / 0.68725))`
   with `v = 60000 * km / s` [m/min] and `hr_pct = avgHR / HRmax`.
   The pipeline passes `use_elevation=True` (mirroring the Runalyze account's
@@ -144,6 +153,13 @@ derived in-session (bottom of Overview) and is **never stored**.
 - Grade-Adjusted Pace (GAP) = actual speed × (1 + k × grade), where
   grade = ele_gain_m / distance_m, k = 0.7 (Minetti-inspired; literature range 0.6–1.0).
 - Decoupling = (HR/pace)_2ndHalf / (HR/pace)_1stHalf - 1.
+- Age grading (WMA 2023): `graded_time = time_s * F(age, event)` where `F` is the
+  WMA 2023 age factor for the age and event (table lookup, age clamped to 30–110);
+  `graded_pct = WR_open(event) / graded_time`, so 1.0 = the open-class world record
+  at that age. Both the open record and the age factor are interpolated log-log
+  between the bracketing event anchors (3k, 5k, 10k, half, marathon) when the
+  distance is not one of them. The daily series keeps the best (max) graded pct
+  of that day.
 
 ## 4. Parameters (config; defaults in RunnerProfile)
 - HRmax, HRrest, sex, birthYear, lthr_manual, hr_zones; Edwards weights {1..5};
@@ -182,6 +198,12 @@ derived in-session (bottom of Overview) and is **never stored**.
 10. Decoupling is only honest when aggregated over ≥6 sessions on similar flat routes; single-run values are noise (preprint: 57–83% session-residual variance).
 11. Banister exponent is population-generic, not individualized (iTRIMP needs lab lactate testing to personalize).
 12. Garmin TRIMP is a black box (proprietary beat-to-beat calculation) — we recompute our own TRIMP from the HR series for reproducible units.
+13. Age grading uses the WMA 2023 age-factor table and the ratified **open-class**
+    world records (as of 2026): it compares you to the open class, so 1.0 means
+    "world-record pace for your age", not a fitness score, and it is not a
+    prediction of future performance. A run outside 3 km–marathon stores no row
+    at all (no zero filler); an age outside 30–110 is clamped to the table's
+    edge rather than left ungraded. The age used is `activity year - birth year`.
 
 ## 8. Registry metric keys
 
@@ -192,6 +214,6 @@ race_5k, race_10k, race_half, race_full, load_reference,
 cross_training, vdot_shape, marathon_shape, prognosis
 ```
 
-Canonical metric keys (source of truth: `v2/garmin_fields.py` `METRICS`; do not
+Canonical metric keys (source of truth: `garmin_fields.py` `METRICS`; do not
 change here without changing the registry). Generated during Step 3 verification,
 kept verbatim so the appendix can be machine-checked.
