@@ -4,7 +4,10 @@
 Run: `.venv/bin/python health_check.py [--db PATH] [--only NAME] [--skip NAME]`
 
 Prints one PASS/FAIL line per check and exits 1 if any check fails, so it can
-be run from launchd and read in a log. Every check is non-destructive: the
+be run from launchd and read in a log. The last line is a timestamped summary
+("health check: 2026-10-21 06:30:05 PASS"), which the dashboard surfaces in
+its sidebar so a silent failure is visible without reading the log.
+Every check is non-destructive: the
 ones that write do so against a COPY of the store, taken with sqlite3's
 backup API (the live DB is in WAL mode, so a plain file copy is not a
 consistent snapshot).
@@ -20,7 +23,7 @@ import sys
 import tempfile
 import threading
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from profile import default_profile
 
@@ -263,10 +266,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL {name}: {exc.__class__.__name__}: {exc}")
         else:
             print(f"PASS {name}: {detail}")
+    status = "FAIL" if failures else "PASS"
+    print(f"health check: {datetime.now():%Y-%m-%d %H:%M:%S} {status}")
     if failures:
         print(f"{failures} check(s) failed", file=sys.stderr)
         return 1
-    print("all checks passed")
     return 0
 
 

@@ -178,3 +178,30 @@ def test_main_skips_checks_by_name(tmp_path, monkeypatch, capsys):
     assert rc == 0
     assert "PASS a" in out
     assert "PASS b" not in out
+
+
+def test_main_prints_a_timestamped_summary_line(tmp_path, monkeypatch, capsys):
+    """The summary line is what the dashboard reads out of logs/health.log."""
+    path = _seed(tmp_path)
+    monkeypatch.setattr(health_check, "CHECKS", [("ok", lambda ctx: "fine")])
+    rc = health_check.main(["--db", str(path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    line = out.strip().splitlines()[-1]
+    assert line.startswith("health check: ")
+    stamp, status = line[len("health check: ") :].rsplit(" ", 1)
+    assert status == "PASS"
+    assert len(stamp) == len("2026-10-21 06:30:05")
+
+
+def test_main_summary_line_says_fail_when_a_check_fails(tmp_path, monkeypatch, capsys):
+    path = _seed(tmp_path)
+    monkeypatch.setattr(
+        health_check,
+        "CHECKS",
+        [("boom", lambda ctx: (_ for _ in ()).throw(RuntimeError("kaboom")))],
+    )
+    rc = health_check.main(["--db", str(path)])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert out.strip().splitlines()[-1].endswith(" FAIL")

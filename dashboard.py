@@ -65,6 +65,8 @@ DEFAULT_WINDOW_DAYS = 180
 PERIOD_KEY = "period"
 CACHE_DIR_NAME = "app_cache"
 APP_CACHE_DIR = Path(__file__).resolve().parent / "cache" / CACHE_DIR_NAME
+LOGS_DIR = Path(__file__).resolve().parent / "logs"
+HEALTH_LOG = LOGS_DIR / "health.log"
 
 KPI_KEYS = [
     ("load.acwr", "ACWR"),
@@ -177,6 +179,26 @@ def poll_store_changes() -> None:
     """
     if _store_changed(get_store(), st.session_state):
         st.rerun(scope="app")
+
+
+def health_status(log_path: Path | None = None) -> tuple[str, str] | None:
+    """The outcome and time of the last health check, or None if there is none.
+
+    The launchd health job writes its stdout to logs/health.log; the last
+    "health check:" line says whether the most recent run passed. Without this
+    a failing health check is invisible — nobody reads the log.
+    """
+    path = HEALTH_LOG if log_path is None else Path(log_path)
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        if line.startswith("health check: "):
+            parts = line[len("health check: ") :].split()
+            if len(parts) == 3:
+                return parts[2], f"{parts[0]} {parts[1]}"
+    return None
 
 
 def _load_json_file(path: Path):
@@ -2081,6 +2103,17 @@ def main() -> None:
             st.sidebar.success(msg)
         except Exception as exc:
             st.sidebar.warning(f"Garmin fetch failed: {exc.__class__.__name__}: {exc}")
+
+    # The scheduled health check writes to logs/health.log; nobody reads that
+    # log, so surface the last outcome here — a failed check means the nightly
+    # refresh may have died silently (expired Garmin token, locked store).
+    _health = health_status()
+    if _health is not None:
+        _status, _when = _health
+        if _status == "FAIL":
+            st.sidebar.warning(f"Health check FAILED ({_when})")
+        else:
+            st.sidebar.caption(f"Health check: {_status} ({_when})")
 
     activities = st.session_state["activities"]
     if not activities:

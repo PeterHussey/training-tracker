@@ -2110,3 +2110,67 @@ def test_charts_keep_their_per_chart_overrides(monkeypatch):
 
     wow = by_title["Week-over-week distance change"]
     assert wow.layout.yaxis.title.text == "%"
+
+
+# --- health check surfaced in the sidebar ---------------------------------
+
+
+def test_health_status_reads_the_last_summary_line(tmp_path):
+    log = tmp_path / "health.log"
+    log.write_text(
+        "PASS store-mode: journal_mode=wal\n"
+        "health check: 2026-10-20 06:30:00 PASS\n"
+        "FAIL refresh: RuntimeError: boom\n"
+        "health check: 2026-10-21 06:30:05 FAIL\n"
+    )
+    assert d.health_status(log) == ("FAIL", "2026-10-21 06:30:05")
+
+
+def test_health_status_is_none_without_a_log_or_a_summary(tmp_path):
+    assert d.health_status(tmp_path / "missing.log") is None
+    log = tmp_path / "health.log"
+    log.write_text("PASS store-mode: journal_mode=wal\n")
+    assert d.health_status(log) is None
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_call"),
+    [("PASS", "caption"), ("FAIL", "warning")],
+)
+def test_main_shows_the_last_health_check_in_the_sidebar(
+    monkeypatch, tmp_path, status, expected_call
+):
+    """A failed health check must be visible in the dashboard, not only in a log."""
+    acts = _runalyze_acts()
+    view = _runalyze_shape_only_view()
+    _min_d, default_since, max_d = d.period_bounds([a.date for a in acts])
+
+    state = {"activities": acts, "_details_period_key": (default_since, max_d)}
+    fake = _MainSt(state)
+    _patch_st(monkeypatch, fake)
+
+    store = mock.Mock()
+    store.load_runner_profile.return_value = RUNALYZE_PROFILE
+    monkeypatch.setattr(d, "get_store", lambda: store)
+    monkeypatch.setattr(d, "resolve_activities", lambda *a, **k: None)
+    monkeypatch.setattr(d, "profile_from_widgets", lambda acts_, persisted: RUNALYZE_PROFILE)
+    monkeypatch.setattr(d, "build_session_view", lambda *a, **k: view)
+    monkeypatch.setattr(d, "persist_session_metrics", lambda *a, **k: None)
+    for name in (
+        "render_kpis",
+        "render_load_tab",
+        "render_fitness_tab",
+        "render_volume_tab",
+        "render_activities",
+        "render_paces_table",
+    ):
+        monkeypatch.setattr(d, name, mock.Mock())
+
+    log = tmp_path / "health.log"
+    log.write_text(f"health check: 2026-10-21 06:30:05 {status}\n")
+    monkeypatch.setattr(d, "HEALTH_LOG", log)
+
+    d.main()
+
+    messages = [str(args) for name, args in fake.calls if name == expected_call]
+    assert any("Health check" in m and "2026-10-21 06:30:05" in m for m in messages)
