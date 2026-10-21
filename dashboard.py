@@ -168,16 +168,27 @@ def _store_changed(store, session_state) -> bool:
     return store.activities_fingerprint() != session_state.get("_activities_fingerprint")
 
 
+def _health_log_mtime() -> float:
+    """When the health check last wrote its verdict (0.0 if it never ran)."""
+    try:
+        return HEALTH_LOG.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 @st.fragment(run_every="30s")
 def poll_store_changes() -> None:
-    """Rerun the app when the scheduled refresh has written to the store.
+    """Rerun the app when the scheduled refresh has written to the store, or
+    when the health check has published a new verdict.
 
     Streamlit only reruns on user interaction, so an open dashboard would keep
     showing the pre-refresh activity count until someone clicked something.
     Polling the store fingerprint (columns + row count + elapsed total) is the
     cheapest signal that the refresh job changed the data.
     """
-    if _store_changed(get_store(), st.session_state):
+    if _store_changed(get_store(), st.session_state) or _health_log_mtime() != st.session_state.get(
+        "_health_mtime"
+    ):
         st.rerun(scope="app")
 
 
@@ -2057,6 +2068,9 @@ def main() -> None:
     # file-change auto-reruns after a migration), so a plain once-only load
     # would feed stale Activity objects to the pipeline indefinitely.
     resolve_activities(store, st.session_state)
+    # Remember the health log's timestamp before the poll runs, so the poll can
+    # tell a new verdict from the one this session already showed.
+    st.session_state["_health_mtime"] = _health_log_mtime()
     # After resolve_activities, so the fingerprint it just stored is the one
     # the poll compares against (no spurious rerun on the first tick).
     poll_store_changes()

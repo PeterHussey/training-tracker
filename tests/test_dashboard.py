@@ -1702,7 +1702,7 @@ class _MainSt:
         return _rec
 
 
-def test_poll_store_changes_reruns_only_when_the_store_changed(monkeypatch):
+def test_poll_store_changes_reruns_only_when_the_store_changed(monkeypatch, tmp_path):
     """Criterion 11: an open dashboard must reflect a scheduled refresh with no
     user action — the poll reruns the app when the store fingerprint moves."""
     state = {"_activities_fingerprint": "old"}
@@ -1712,6 +1712,13 @@ def test_poll_store_changes_reruns_only_when_the_store_changed(monkeypatch):
     store = mock.Mock()
     store.activities_fingerprint.return_value = "old"
     monkeypatch.setattr(d, "get_store", lambda: store)
+
+    # The poll also watches the health log; pin it so this test is about the
+    # store fingerprint alone.
+    log = tmp_path / "health.log"
+    log.write_text("health check: 2026-10-21 06:30:05 PASS\n")
+    monkeypatch.setattr(d, "HEALTH_LOG", log)
+    state["_health_mtime"] = d._health_log_mtime()
 
     assert d._store_changed(store, state) is False
     # The decorated fragment only runs inside a Streamlit session, so the
@@ -2174,3 +2181,28 @@ def test_main_shows_the_last_health_check_in_the_sidebar(
 
     messages = [str(args) for name, args in fake.calls if name == expected_call]
     assert any("Health check" in m and "2026-10-21 06:30:05" in m for m in messages)
+
+
+def test_poll_reruns_when_the_health_check_publishes_a_new_verdict(monkeypatch, tmp_path):
+    """A health check that fails at 06:30 must show up without a manual rerun."""
+    state = {"_activities_fingerprint": "same"}
+    fake = _MainSt(state)
+    _patch_st(monkeypatch, fake)
+
+    store = mock.Mock()
+    store.activities_fingerprint.return_value = "same"
+    monkeypatch.setattr(d, "get_store", lambda: store)
+
+    log = tmp_path / "health.log"
+    log.write_text("health check: 2026-10-21 06:30:05 PASS\n")
+    monkeypatch.setattr(d, "HEALTH_LOG", log)
+    state["_health_mtime"] = d._health_log_mtime()
+
+    d.poll_store_changes.__wrapped__()
+    assert not [c for c in fake.calls if c[0] == "rerun"]
+
+    # The scheduled check publishes a FAIL verdict: the log changes, so the
+    # dashboard must rerun and show it.
+    log.write_text("health check: 2026-10-21 06:30:05 FAIL\n")
+    d.poll_store_changes.__wrapped__()
+    assert [c for c in fake.calls if c[0] == "rerun"]
