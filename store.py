@@ -80,7 +80,7 @@ class MetricStore:
     def __init__(self, path):
         self._path = str(path)
         self._local = threading.local()
-        self._connections: list[sqlite3.Connection] = []
+        self._connections: list[tuple[threading.Thread, sqlite3.Connection]] = []
         self._connections_lock = threading.Lock()
         self.conn.executescript(SCHEMA)
         self._apply_migrations()
@@ -101,6 +101,7 @@ class MetricStore:
         handles the concurrency (WAL lets readers run during a write,
         busy_timeout makes a blocked writer wait instead of failing).
         """
+        self._reap_dead_connections()
         c = getattr(self._local, "conn", None)
         if c is None:
             c = sqlite3.connect(self._path, check_same_thread=False)
@@ -108,8 +109,28 @@ class MetricStore:
             c.execute("PRAGMA busy_timeout=5000")
             self._local.conn = c
             with self._connections_lock:
-                self._connections.append(c)
+                self._connections.append((threading.current_thread(), c))
         return c
+
+    def _reap_dead_connections(self) -> None:
+        """Close the connections of threads that have finished.
+
+        Streamlit runs each session on its own thread and each fragment on a
+        pool thread, and both die with the session while the store — a cached
+        resource — lives on. A connection left open by a finished thread holds
+        file descriptors (two each) and the launchd agent's limit is 256, so
+        without this the dashboard stops accepting connections after enough
+        sessions ("Too many open files" in the dashboard's error log).
+        """
+        with self._connections_lock:
+            alive = []
+            for thread, c in self._connections:
+                if thread.is_alive():
+                    alive.append((thread, c))
+                    continue
+                with contextlib.suppress(sqlite3.Error):
+                    c.close()
+            self._connections = alive
 
     @property
     def path(self) -> Path:
@@ -523,7 +544,7 @@ class MetricStore:
     def close(self) -> None:
         with self._connections_lock:
             conns, self._connections = self._connections, []
-        for c in conns:
+        for _thread, c in conns:
             with contextlib.suppress(sqlite3.Error):
                 c.close()
         self._local = threading.local()

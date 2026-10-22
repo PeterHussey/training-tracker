@@ -296,6 +296,31 @@ def test_each_thread_gets_its_own_connection(tmp_path):
     assert id(main_conn) not in {id(c) for c in conns}
 
 
+def test_connections_of_finished_threads_are_closed(tmp_path):
+    # Streamlit runs each session on its own thread and each fragment on a
+    # pool thread; both die with the session while the store — a cached
+    # resource — lives on. A connection left open by a finished thread holds
+    # file descriptors (two each) and the launchd agent's limit is 256, so
+    # enough sessions later the dashboard stops accepting connections.
+    store = MetricStore(str(tmp_path / "t.db"))
+    seen: list[sqlite3.Connection] = []
+
+    def grab():
+        c = store.conn
+        c.execute("SELECT 1").fetchone()
+        seen.append(c)
+
+    t = threading.Thread(target=grab)
+    t.start()
+    t.join()
+    assert seen
+
+    store.conn.execute("SELECT 1").fetchone()  # any later access reaps
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        seen[0].execute("SELECT 1")
+
+
 def test_concurrent_readers_get_a_complete_profile(tmp_path):
     # The symptom of the shared connection: a reader saw a truncated result
     # set (missing 'hrmax') and raised KeyError. Every reader must get the
