@@ -1,5 +1,7 @@
 """Tests for health_check.py — the checks, and the CLI that runs them."""
 
+import os
+import time
 from datetime import date, timedelta
 
 import pytest
@@ -241,3 +243,63 @@ def test_main_summary_line_says_fail_when_a_check_fails(tmp_path, monkeypatch, c
     out = capsys.readouterr().out
     assert rc == 1
     assert out.strip().splitlines()[-1].endswith(" FAIL")
+
+
+# --- the scheduled refresh must actually fire ---
+
+
+def test_refresh_schedule_check_passes_when_the_job_ran_recently(tmp_path):
+    log = tmp_path / "refresh.log"
+    log.write_text("refresh: 0 new activities, 38653 metric rows written\n")
+    ctx = _ctx(tmp_path, _seed(tmp_path))
+    ctx.refresh_log = log
+    assert "refresh" in health_check.check_refresh_schedule(ctx)
+
+
+def test_refresh_schedule_check_fails_when_the_log_is_stale(tmp_path):
+    log = tmp_path / "refresh.log"
+    log.write_text("refresh: 0 new activities\n")
+    old = time.time() - 3 * 24 * 3600
+    os.utime(log, (old, old))
+    ctx = _ctx(tmp_path, _seed(tmp_path))
+    ctx.refresh_log = log
+    with pytest.raises(AssertionError, match="scheduled refresh"):
+        health_check.check_refresh_schedule(ctx)
+
+
+def test_refresh_schedule_check_fails_when_there_is_no_log(tmp_path):
+    ctx = _ctx(tmp_path, _seed(tmp_path))
+    ctx.refresh_log = tmp_path / "missing.log"
+    with pytest.raises(AssertionError, match="no scheduled refresh log"):
+        health_check.check_refresh_schedule(ctx)
+
+
+# --- the health log must stay bounded ---
+
+
+def test_trim_log_keeps_the_last_lines(tmp_path):
+    log = tmp_path / "health.log"
+    log.write_text("\n".join(f"line {i}" for i in range(10)) + "\n")
+    assert health_check.trim_log(log, keep=3) == 7
+    assert log.read_text().splitlines() == ["line 7", "line 8", "line 9"]
+
+
+def test_trim_log_leaves_a_short_log_alone(tmp_path):
+    log = tmp_path / "health.log"
+    log.write_text("one\ntwo\n")
+    assert health_check.trim_log(log, keep=10) == 0
+    assert log.read_text() == "one\ntwo\n"
+
+
+def test_trim_log_ignores_a_missing_file(tmp_path):
+    assert health_check.trim_log(tmp_path / "missing.log", keep=3) == 0
+
+
+def test_main_trims_the_health_log(tmp_path, monkeypatch):
+    log = tmp_path / "health.log"
+    log.write_text("\n".join(f"line {i}" for i in range(10)) + "\n")
+    monkeypatch.setattr(health_check, "HEALTH_LOG", log)
+    monkeypatch.setattr(health_check, "HEALTH_LOG_MAX_LINES", 3)
+    monkeypatch.setattr(health_check, "CHECKS", [("ok", lambda ctx: "fine")])
+    health_check.main(["--db", str(_seed(tmp_path))])
+    assert log.read_text().splitlines() == ["line 7", "line 8", "line 9"]

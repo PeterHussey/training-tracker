@@ -16,6 +16,8 @@ The checks are the ones the 2026-10-20 status review had to write as
 throwaway probe scripts; they are here so the next review starts from a known
 baseline instead of rediscovering it. The last one probes the dashboard
 service itself, so a dead dashboard is a visible FAIL rather than a silent one.
+One check reads the refresh job's own log: only that proves the daily timer
+fired, which no manual kickstart can.
 """
 
 import argparse
@@ -43,12 +45,21 @@ VOLUME_DAILY = "volume.distance_total_daily"
 # The launchd dashboard plist pins this address and port.
 DASHBOARD_HEALTH_URL = "http://127.0.0.1:8501/_stcore/health"
 DASHBOARD_TIMEOUT_S = 5
+LOGS_DIR = REPO / "logs"
+HEALTH_LOG = LOGS_DIR / "health.log"
+REFRESH_LOG = LOGS_DIR / "refresh.log"
+HEALTH_LOG_MAX_LINES = 500
+# The refresh job runs daily at 05:00 and this check at 06:30, so a successful
+# run is a couple of hours old by the time we look. A day of slack covers a
+# machine that was asleep at 05:00.
+REFRESH_MAX_AGE_H = 26
 
 
 @dataclass
 class Context:
     db_path: Path
     spec_path: Path
+    refresh_log: Path = REFRESH_LOG
 
 
 def _copy_db(src_path: Path) -> Path:
@@ -204,6 +215,24 @@ def check_refresh(ctx: Context) -> str:
     return f"refresh wrote {rows} metric rows"
 
 
+def check_refresh_schedule(ctx: Context) -> str:
+    """The scheduled refresh must actually fire (criterion 11).
+
+    Every other piece of evidence about the refresh is a manual kickstart;
+    only the job's own log proves the timer fired. The refresh writes one
+    line to stdout per successful run, so a stale log means no run.
+    """
+    log = ctx.refresh_log
+    if not log.exists():
+        raise AssertionError(f"no scheduled refresh log at {log}")
+    age_h = (datetime.now() - datetime.fromtimestamp(log.stat().st_mtime)).total_seconds() / 3600
+    if age_h > REFRESH_MAX_AGE_H:
+        raise AssertionError(
+            f"last scheduled refresh was {age_h:.1f}h ago (limit {REFRESH_MAX_AGE_H}h) — {log}"
+        )
+    return f"last scheduled refresh {age_h:.1f}h ago"
+
+
 def check_stored_vs_garmin(ctx: Context) -> str:
     """A few stored activities must still match what Garmin reports."""
     store = MetricStore(ctx.db_path)
@@ -258,12 +287,32 @@ def check_dashboard(ctx: Context) -> str:
     return f"{DASHBOARD_HEALTH_URL} -> ok"
 
 
+def trim_log(path: Path, keep: int | None = None) -> int:
+    """Keep a log bounded: rewrite it with its last `keep` lines.
+
+    launchd appends to these files, so truncating in place is safe — the
+    next write lands at the end of the shortened file.
+    """
+    keep = HEALTH_LOG_MAX_LINES if keep is None else keep
+    try:
+        if not path.exists():
+            return 0
+        lines = path.read_text(errors="replace").splitlines()
+        if len(lines) <= keep:
+            return 0
+        path.write_text("\n".join(lines[-keep:]) + "\n")
+    except OSError:
+        return 0
+    return len(lines) - keep
+
+
 CHECKS = [
     ("store-mode", check_store_mode),
     ("monthly-rollup", check_monthly_rollup),
     ("spec-covers-families", check_spec_covers_families),
     ("concurrency", check_concurrency),
     ("refresh", check_refresh),
+    ("refresh-schedule", check_refresh_schedule),
     ("stored-vs-garmin", check_stored_vs_garmin),
     ("dashboard", check_dashboard),
 ]
@@ -277,6 +326,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     ctx = Context(db_path=Path(args.db), spec_path=SPEC_PATH)
+    trim_log(HEALTH_LOG)
     failures = 0
     for name, fn in CHECKS:
         if args.only and name not in args.only:
