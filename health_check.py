@@ -23,6 +23,7 @@ plausibly fresh for a day.
 """
 
 import argparse
+import os
 import sqlite3
 import subprocess
 import sys
@@ -381,11 +382,12 @@ def check_dashboard(ctx: Context) -> str:
     return f"{DASHBOARD_HEALTH_URL} -> ok"
 
 
-def trim_log(path: Path, keep: int | None = None) -> int:
+def trim_log(path: Path, keep: int | None = None, restore_mtime: bool = False) -> int:
     """Keep a log bounded: rewrite it with its last `keep` lines.
 
     launchd appends to these files, so truncating in place is safe — the
-    next write lands at the end of the shortened file.
+    next write lands at the end of the shortened file. `restore_mtime` keeps
+    the original timestamp, for logs whose mtime is itself a signal.
     """
     keep = HEALTH_LOG_MAX_LINES if keep is None else keep
     try:
@@ -394,7 +396,10 @@ def trim_log(path: Path, keep: int | None = None) -> int:
         lines = path.read_text(errors="replace").splitlines()
         if len(lines) <= keep:
             return 0
+        stamp = path.stat() if restore_mtime else None
         path.write_text("\n".join(lines[-keep:]) + "\n")
+        if stamp is not None:
+            os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
     except OSError:
         return 0
     return len(lines) - keep
@@ -428,11 +433,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"not installed yet: no store at {ctx.db_path} (run refresh.py to create it)")
         print(f"health check: {datetime.now():%Y-%m-%d %H:%M:%S} SKIP")
         return 0
-    trim_log(LOGS_DIR / "health.log")
-    trim_log(LOGS_DIR / "dashboard.log")
-    # Never the refresh log: its mtime is the signal the refresh-schedule
-    # check reads, and rewriting it would make a dead refresh look fresh.
-    trim_log(LOGS_DIR / "dashboard.err.log")
+    # Trim every launchd log. The refresh log's mtime is the signal the
+    # refresh-schedule check reads, so its stamp is restored after the rewrite
+    # — otherwise a healthy trim would make a dead refresh look fresh.
+    for log in sorted(LOGS_DIR.glob("*.log")):
+        trim_log(log, restore_mtime=log == ctx.refresh_log)
     failures = 0
     for name, fn in CHECKS:
         if args.only and name not in args.only:

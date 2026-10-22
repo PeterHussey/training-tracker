@@ -1094,7 +1094,7 @@ def render_load_tab(view, windowed, units) -> None:
                 line={"color": PALETTE["orange"]},
             )
         )
-        fig.add_hline(y=0, line_dash="dot", line_color="gray")
+        fig.add_hline(y=0, line_dash="dot", line_color=PALETTE["gray"])
         style(
             fig,
             title="Fitness (CTL) / Fatigue (ATL) / Form (TSB)",
@@ -1115,12 +1115,12 @@ def render_load_tab(view, windowed, units) -> None:
         st.write("ACWR needs a >=28-day combined-load span to build the chronic window.")
     else:
         fig = go.Figure()
-        fig.add_hrect(y0=0.8, y1=1.3, fillcolor="lightgreen", opacity=0.2, line_width=0)
+        fig.add_hrect(y0=0.8, y1=1.3, fillcolor=PALETTE["safe"], opacity=0.2, line_width=0)
         fig.add_trace(
             go.Scatter(x=acwr.index, y=acwr.values, name="ACWR", line={"color": PALETTE["blue"]})
         )
-        fig.add_hline(y=0.5, line_dash="dot", line_color="red")
-        fig.add_hline(y=1.5, line_dash="dot", line_color="red")
+        fig.add_hline(y=0.5, line_dash="dot", line_color=PALETTE["danger"])
+        fig.add_hline(y=1.5, line_dash="dot", line_color=PALETTE["danger"])
         style(
             fig,
             title="Acute:Chronic Workload Ratio (coupled 7/28)",
@@ -1137,9 +1137,9 @@ def render_load_tab(view, windowed, units) -> None:
     max_ratio = windowed.get("injury.max_run_ratio")
     if max_ratio is not None and not max_ratio.empty:
         fig = go.Figure()
-        fig.add_hrect(y0=0.0, y1=1.1, fillcolor="lightgreen", opacity=0.15, line_width=0)
-        fig.add_hrect(y0=1.1, y1=1.3, fillcolor="orange", opacity=0.15, line_width=0)
-        fig.add_hrect(y0=1.3, y1=3.0, fillcolor="red", opacity=0.1, line_width=0)
+        fig.add_hrect(y0=0.0, y1=1.1, fillcolor=PALETTE["safe"], opacity=0.15, line_width=0)
+        fig.add_hrect(y0=1.1, y1=1.3, fillcolor=PALETTE["caution"], opacity=0.15, line_width=0)
+        fig.add_hrect(y0=1.3, y1=3.0, fillcolor=PALETTE["danger"], opacity=0.1, line_width=0)
         fig.add_trace(
             go.Scatter(
                 x=max_ratio.index,
@@ -1149,8 +1149,10 @@ def render_load_tab(view, windowed, units) -> None:
                 line={"color": PALETTE["blue"]},
             )
         )
-        fig.add_hline(y=1.1, line_dash="dash", line_color="orange", annotation_text="110%")
-        fig.add_hline(y=1.3, line_dash="dash", line_color="red", annotation_text="130%")
+        fig.add_hline(
+            y=1.1, line_dash="dash", line_color=PALETTE["caution"], annotation_text="110%"
+        )
+        fig.add_hline(y=1.3, line_dash="dash", line_color=PALETTE["danger"], annotation_text="130%")
         style(
             fig,
             title="Longest Safe Run — single run vs rolling 30-day max",
@@ -1606,7 +1608,7 @@ def render_volume_tab(
         wow = volume.week_over_week_pct(windowed.get("volume.duration_total_daily"))
         if wow is not None and len(wow):
             fig = go.Figure(go.Bar(x=wow.index, y=wow.values * 100, name="week-over-week %"))
-            fig.add_hline(y=0, line_dash="dot", line_color="gray")
+            fig.add_hline(y=0, line_dash="dot", line_color=PALETTE["gray"])
             style(
                 fig,
                 title=f"{'Month-over-month' if is_monthly else 'Week-over-week'} duration change",
@@ -1622,7 +1624,7 @@ def render_volume_tab(
     wow = volume.week_over_week_pct(windowed.get("volume.distance_total_daily"))
     if wow is not None and len(wow):
         fig = go.Figure(go.Bar(x=wow.index, y=wow.values * 100, name="week-over-week %"))
-        fig.add_hline(y=0, line_dash="dot", line_color="gray")
+        fig.add_hline(y=0, line_dash="dot", line_color=PALETTE["gray"])
         style(
             fig,
             title=f"{'Month-over-month' if is_monthly else 'Week-over-week'} distance change",

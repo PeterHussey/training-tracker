@@ -11,6 +11,14 @@ from chart_theme import PALETTE, PLOTLY_CONFIG, style
 ROOT = Path(__file__).resolve().parents[1]
 HEX_RE = re.compile(r"#[0-9A-Fa-f]{6}")
 LEGACY_HEXES = {"#F18F01", "#2E86AB", "#A23B72"}
+# Quoted CSS colour names, not preceded by "[" so PALETTE["blue"] is allowed.
+CSS_NAMES = (
+    "red|orange|yellow|green|blue|purple|pink|brown|gray|grey|black|white"
+    "|lightgreen|lightblue|lightgray|lightgrey|darkred|darkgreen|darkblue"
+    "|steelblue|gold|silver|navy|teal|olive|maroon|lime|cyan|magenta|violet"
+    "|coral|salmon|khaki|beige"
+)
+CSS_NAME_RE = re.compile(rf"""(?<!\[)["'](?:{CSS_NAMES})["']""", re.IGNORECASE)
 
 
 def test_style_applies_shared_layout():
@@ -50,12 +58,19 @@ def test_style_caller_override_wins():
 
 
 def test_palette_values_are_unique_and_legacy_hexes_confined():
-    assert len(set(PALETTE.values())) == 3
+    assert len(set(PALETTE.values())) == len(PALETTE)
     for hex_code in LEGACY_HEXES:
         assert hex_code in (ROOT / "chart_theme.py").read_text()
     # Hex colour literals must stay out of the dashboard; the theme module is
     # scoped as the single owner (other files use named colours).
     assert HEX_RE.findall((ROOT / "dashboard.py").read_text()) == []
+
+
+def test_dashboard_has_no_colour_literals():
+    """Criterion 13: every colour comes from the theme, hex or CSS name."""
+    source = (ROOT / "dashboard.py").read_text()
+    offenders = HEX_RE.findall(source) + CSS_NAME_RE.findall(source)
+    assert offenders == [], f"colour literals belong in chart_theme.py: {offenders}"
 
 
 def test_render_passes_shared_config(monkeypatch):

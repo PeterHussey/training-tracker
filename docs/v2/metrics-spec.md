@@ -40,8 +40,8 @@
 ### 2.3 Conditional (aggregated)
 - decoupling: eligible runs (sport=running, elapsed>=5400s, gain<=25 m/km,
   route-matched), per-half HR/pace, aggregated >=6 sessions, trend only.
-  **NOT emitted by `run_pipeline`** — module + tests shipped; emission waits on
-  the activity-details ingest path.
+  Emitted by `run_pipeline` as `load.decoupling` per eligible run; the
+  aggregated trend needs the session grouping the dashboard builds.
 
 ### 2.4 Runalyze VDOT families (ported 2026-10-17)
 Faithful port of Runalyze 4.3.x's legacy VO2max chain (AGPL; formulas by

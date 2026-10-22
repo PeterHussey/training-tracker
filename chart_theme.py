@@ -10,7 +10,21 @@ import streamlit as st
 ORANGE = "#F18F01"
 BLUE = "#2E86AB"
 MAGENTA = "#A23B72"
-PALETTE = {"orange": ORANGE, "blue": BLUE, "magenta": MAGENTA}
+# Zone and reference colours are named, not hex: the bands they shade are
+# semantic (in band / over-reaching / red-flag), so the name is the label.
+GRAY = "gray"  # zero and reference lines
+SAFE = "lightgreen"  # in-band zone shading
+CAUTION = "orange"  # upper band, the 110% line
+DANGER = "red"  # over the limit, the 130% line
+PALETTE = {
+    "orange": ORANGE,
+    "blue": BLUE,
+    "magenta": MAGENTA,
+    "gray": GRAY,
+    "safe": SAFE,
+    "caution": CAUTION,
+    "danger": DANGER,
+}
 PLOTLY_CONFIG = {"displayModeBar": False}
 
 LAYOUT = {

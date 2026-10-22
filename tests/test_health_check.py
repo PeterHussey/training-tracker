@@ -398,14 +398,17 @@ def test_trim_log_ignores_a_missing_file(tmp_path):
     assert health_check.trim_log(tmp_path / "missing.log", keep=3) == 0
 
 
-def test_main_trims_the_dashboard_logs_but_not_the_refresh_log(tmp_path, monkeypatch):
-    # The dashboard's error log grows without bound (it took the fd errors
-    # to 89 KB in two days). The refresh log must never be rewritten: its
-    # mtime is the signal the refresh-schedule check reads.
+def test_main_trims_every_log_and_preserves_the_refresh_mtime(tmp_path, monkeypatch):
+    # launchd appends to these files forever: the dashboard's error log took
+    # fd errors to 89 KB in two days. The refresh log is trimmed too, but its
+    # mtime is the signal the refresh-schedule check reads, so the stamp is
+    # restored — a trim must not make a dead refresh look fresh.
     dash = tmp_path / "dashboard.err.log"
     dash.write_text("\n".join(f"line {i}" for i in range(10)) + "\n")
     refresh = tmp_path / "refresh.log"
-    refresh.write_text("refresh: 0 new activities\n")
+    refresh.write_text("\n".join(f"line {i}" for i in range(10)) + "\n")
+    stamp = 1_700_000_000.0
+    os.utime(refresh, (stamp, stamp))
     health = tmp_path / "health.log"
     health.write_text("health check: PASS\n")
     # Every log the check touches lives under LOGS_DIR, so redirecting that
@@ -415,8 +418,9 @@ def test_main_trims_the_dashboard_logs_but_not_the_refresh_log(tmp_path, monkeyp
     monkeypatch.setattr(health_check, "CHECKS", [("ok", lambda ctx: "fine")])
     health_check.main(["--db", str(_seed(tmp_path))])
     assert dash.read_text().splitlines() == ["line 7", "line 8", "line 9"]
+    assert refresh.read_text().splitlines() == ["line 7", "line 8", "line 9"]
+    assert refresh.stat().st_mtime == pytest.approx(stamp)
     assert health.read_text() == "health check: PASS\n"
-    assert refresh.read_text() == "refresh: 0 new activities\n"
 
 
 def test_main_trims_the_health_log(tmp_path, monkeypatch):
