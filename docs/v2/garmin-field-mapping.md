@@ -1,13 +1,13 @@
 # Garmin Field → v2 Metric Mapping
 
-> Generated source of truth: `v2/garmin_fields.py`. Endpoints: activity list,
+> Generated source of truth: `garmin_fields.py`. Endpoints: activity list,
 > activity details, lactate threshold, race predictions, training status,
 > user settings / heart-rate zones.
 
 **Confirmation status (frozen fixtures vs live):** live Garmin capture is not
 possible in this environment (no credentials/2FA), so no row below was confirmed
 against a live session. The activity-list rows are confirmed against the frozen
-`v2/tests/fixtures/activities_sample.json` — a 20-activity subset of the real
+`tests/fixtures/activities_sample.json` — a 20-activity subset of the real
 cached Garmin activity-list payload (8 running, 4 treadmill_running,
 4 indoor_cycling, 4 strength_training). The lactate-threshold and race-prediction
 rows are confirmed against their frozen fixtures, which were written from the
