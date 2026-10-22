@@ -1,10 +1,13 @@
 # tests/test_store.py
+import sqlite3
 import threading
 from datetime import date
 from profile import RunnerProfile, default_profile
 
+import pytest
+
 from normalize import Activity
-from store import MetricStore
+from store import SCHEMA_VERSION, MetricStore
 
 ACT = Activity(
     activity_id=1,
@@ -412,16 +415,30 @@ def test_has_intervals_roundtrip(tmp_path):
     assert reloaded[2].has_intervals is True
 
 
-def test_migrate_prunes_rolling_keys_on_reopen(tmp_path):
+def test_migrate_prunes_rolling_keys_when_the_store_is_migrated(tmp_path):
+    """Dead metric keys are pruned when an old store is migrated. The pruning
+    is part of migration v1, so it runs once — not on every later open."""
     db = str(tmp_path / "t.db")
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE metric_series ("
+        "metric TEXT NOT NULL, date TEXT NOT NULL, value REAL NOT NULL, "
+        "source TEXT NOT NULL, params TEXT NOT NULL DEFAULT '{}', "
+        "flags TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (metric, date))"
+    )
+    conn.executemany(
+        "INSERT INTO metric_series (metric, date, value, source) VALUES (?, ?, ?, ?)",
+        [
+            ("load.lt_hr_rolling", "2026-04-01", 160.0, "computed"),
+            ("load.lt_hr_best20", "2026-04-01", 170.0, "computed"),
+        ],
+    )
+    conn.commit()
+    conn.close()
     store = MetricStore(db)
-    store.save_metric_rows([_legacy_row("load.lt_hr_rolling"), _legacy_row("load.lt_hr_best20")])
+    assert store.read_metric("load.lt_hr_rolling") == []
+    assert len(store.read_metric("load.lt_hr_best20")) == 1
     store.close()
-    # Reopening triggers _migrate, which prunes the dead rolling keys.
-    reopened = MetricStore(db)
-    assert reopened.read_metric("load.lt_hr_rolling") == []
-    assert len(reopened.read_metric("load.lt_hr_best20")) == 1
-    reopened.close()
 
 
 def test_elapsed_s_roundtrip(tmp_path):
@@ -819,3 +836,66 @@ def test_snapshot_defaults_to_a_backups_dir_beside_the_store(tmp_path):
     store.close()
     assert dest.parent == tmp_path / "backups"
     assert dest.exists()
+
+
+# --- Schema versioning (PRAGMA user_version) ---
+
+
+def test_store_records_the_schema_version(tmp_path):
+    """A freshly opened store is stamped with the code's schema version."""
+    store = MetricStore(str(tmp_path / "t.db"))
+    assert store.schema_version == SCHEMA_VERSION
+    assert store.conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    store.close()
+
+
+def test_migration_runs_once_across_reopens(tmp_path, monkeypatch):
+    """user_version marks a migrated store, so the migration is not repeated
+    on every later open."""
+    db = str(tmp_path / "t.db")
+    calls = []
+
+    def spy(self):
+        calls.append("migrate")
+
+    monkeypatch.setattr(MetricStore, "_migrate_v1", spy, raising=False)
+
+    store = MetricStore(db)
+    store.close()
+    assert calls == ["migrate"]
+
+    reopened = MetricStore(db)
+    reopened.close()
+    assert calls == ["migrate"]
+
+
+def test_old_store_is_migrated_and_marked(tmp_path):
+    """A store written before versioning existed (no user_version) is migrated
+    on open and then stamped."""
+    db = str(tmp_path / "t.db")
+    conn = sqlite3.connect(db)
+    conn.execute(PRE_EVENT_TYPE_SCHEMA)
+    conn.execute(
+        "INSERT INTO activities (activity_id, activity_date, sport, distance_m, "
+        "duration_s, elapsed_s, name) VALUES (9, '2026-03-01', 'running', 18000.0, "
+        "6300.0, 6400.0, 'Old Row')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = MetricStore(db)
+    names = [r[1] for r in store.conn.execute("PRAGMA table_info(activities)").fetchall()]
+    assert "event_type" in names
+    assert "avg_cadence" in names
+    assert store.schema_version == SCHEMA_VERSION
+    store.close()
+
+
+def test_store_written_by_a_newer_version_is_refused(tmp_path):
+    """Old code must not open a store that a newer version wrote."""
+    db = str(tmp_path / "t.db")
+    conn = sqlite3.connect(db)
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    conn.close()
+    with pytest.raises(RuntimeError, match="newer"):
+        MetricStore(db)

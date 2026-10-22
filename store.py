@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS metric_series (
 CREATE INDEX IF NOT EXISTS idx_metric ON metric_series (metric, date);
 """
 
+# Schema migrations, applied in order when a store is opened. Each entry is
+# (version, method name); the version is written to PRAGMA user_version once
+# the migration has run, so an already-migrated store does no work on later
+# opens. Never edit a shipped migration — add a new one instead.
+_MIGRATIONS = ((1, "_migrate_v1"),)
+SCHEMA_VERSION = max(version for version, _ in _MIGRATIONS)
+
 
 def default_db_path() -> Path:
     """DB location: $TRAINING_DB, else data/training.sqlite beside the repo."""
@@ -76,7 +83,12 @@ class MetricStore:
         self._connections: list[sqlite3.Connection] = []
         self._connections_lock = threading.Lock()
         self.conn.executescript(SCHEMA)
-        self._migrate()
+        self._apply_migrations()
+
+    @property
+    def schema_version(self) -> int:
+        """The store's schema version (PRAGMA user_version)."""
+        return int(self.conn.execute("PRAGMA user_version").fetchone()[0])
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -125,8 +137,27 @@ class MetricStore:
             old.unlink()
         return dest
 
-    def _migrate(self) -> None:
-        """In-place migrations for stores created before a schema change.
+    def _apply_migrations(self) -> None:
+        """Bring the store up to SCHEMA_VERSION, once.
+
+        PRAGMA user_version records which migrations have already run, so an
+        already-migrated store does no work on every later open.
+        """
+        current = self.schema_version
+        if current > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"store schema v{current} is newer than this code (v{SCHEMA_VERSION}) — "
+                "update the app or restore an older backup"
+            )
+        for version, method in _MIGRATIONS:
+            if version <= current:
+                continue
+            getattr(self, method)()
+            self.conn.execute(f"PRAGMA user_version = {version}")
+            self.conn.commit()
+
+    def _migrate_v1(self) -> None:
+        """Migration 1: the columns added after the original schema.
 
         `CREATE TABLE IF NOT EXISTS` leaves existing tables untouched, so a new
         column must be added via ALTER TABLE. Idempotent on already-migrated

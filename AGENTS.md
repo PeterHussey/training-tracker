@@ -43,7 +43,7 @@
 - `profile.py` — `RunnerProfile` dataclass (HRmax, HRrest, sex, zones, Banister params).
 - `metrics/` — Pure computation modules (one per metric family). No DB, no network.
 - `metric_series.py` — Converts pandas output to metric_series rows.
-- `store.py` — SQLite with tables: `runner_profile`, `activities`, `metric_series`.
+- `store.py` — SQLite with tables: `runner_profile`, `activities`, `metric_series`. Schema changes go through the numbered migrations in `store.py` (`_MIGRATIONS`); the applied version lives in `PRAGMA user_version`.
 - `session.py` — Pure: builds dated series + interpretation context for dashboard.
 - `e2e_report.py` — CLI metric report. Flags exit code 1 if checks fail.
 
