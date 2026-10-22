@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from profile import RunnerProfile
 
@@ -98,6 +98,32 @@ class MetricStore:
             with self._connections_lock:
                 self._connections.append(c)
         return c
+
+    @property
+    def path(self) -> Path:
+        return Path(self._path)
+
+    def snapshot(self, dest_dir: Path | None = None, keep: int = 7) -> Path:
+        """Copy the store to a timestamped file and keep the newest `keep`.
+
+        Called before a mutating refresh so a bad write can be undone. Uses
+        sqlite3's backup API: the live DB is in WAL mode, so a plain file copy
+        would not be a consistent snapshot.
+        """
+        target_dir = Path(dest_dir) if dest_dir is not None else self.path.parent / "backups"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        dest = target_dir / f"training-{datetime.now():%Y%m%d-%H%M%S}.sqlite"
+        src = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True)
+        dst = sqlite3.connect(dest)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+        stale = sorted(target_dir.glob("training-*.sqlite"))
+        for old in stale[: max(len(stale) - keep, 0)]:
+            old.unlink()
+        return dest
 
     def _migrate(self) -> None:
         """In-place migrations for stores created before a schema change.

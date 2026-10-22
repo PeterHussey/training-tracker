@@ -27,6 +27,7 @@ def main() -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     store = MetricStore(path)
     try:
+        _snapshot(store)
         return _refresh(store)
     except Exception as exc:
         # The launchd job reads this line in logs/refresh.err.log — a stack
@@ -35,6 +36,21 @@ def main() -> int:
         return 1
     finally:
         store.close()
+
+
+def _snapshot(store: MetricStore) -> None:
+    """Copy the store before the refresh mutates it.
+
+    The store is the only artefact that cannot be rebuilt from Garmin, so a
+    bad write has to be undoable. A failed snapshot warns but never stops the
+    refresh — the data is worth more than the backup.
+    """
+    try:
+        dest = store.snapshot()
+    except Exception as exc:
+        print(f"[refresh] backup failed ({exc.__class__.__name__}: {exc})", file=sys.stderr)
+        return
+    print(f"[refresh] backup written to {dest}")
 
 
 def _refresh(store: MetricStore) -> int:

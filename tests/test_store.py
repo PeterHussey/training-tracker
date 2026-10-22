@@ -791,3 +791,31 @@ def test_migrate_avg_cadence_idempotent_on_reopen(tmp_path):
     names = [r[1] for r in reopened.conn.execute("PRAGMA table_info(activities)").fetchall()]
     reopened.close()
     assert names.count("avg_cadence") == 1
+
+
+def test_snapshot_copies_the_store_and_prunes_old_ones(tmp_path):
+    """The snapshot must be a usable copy, and only the newest few are kept."""
+    db = tmp_path / "training.sqlite"
+    store = MetricStore(db)
+    store.save_activities([ACT])
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    for i in range(9):
+        (backups / f"training-2020010{i}-000000.sqlite").write_bytes(b"")
+
+    dest = store.snapshot(backups, keep=7)
+    store.close()
+
+    copy = MetricStore(dest)
+    assert len(copy.load_activities()) == 1
+    copy.close()
+    assert len(list(backups.glob("training-*.sqlite"))) == 7
+
+
+def test_snapshot_defaults_to_a_backups_dir_beside_the_store(tmp_path):
+    db = tmp_path / "training.sqlite"
+    store = MetricStore(db)
+    dest = store.snapshot()
+    store.close()
+    assert dest.parent == tmp_path / "backups"
+    assert dest.exists()

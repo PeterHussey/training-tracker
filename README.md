@@ -8,6 +8,7 @@ Personal Garmin running tracker.
 2. Run tests: `.venv/bin/python -m pytest -p no:cacheprovider -q`
 3. Launch dashboard: `.venv/bin/streamlit run dashboard.py`
 4. DB location: `data/training.sqlite` (gitignored; override with `TRAINING_DB` env var). Garmin auth uses `~/.garmin-mcp/v2_tokenstore.json` with 1Password/env fallback (`GARMIN_EMAIL`/`GARMIN_PASSWORD`).
+5. Backups: every scheduled refresh snapshots the store to `data/backups/` before it writes (the newest 7 are kept). To restore: stop the dashboard, copy the wanted `training-<stamp>.sqlite` over `data/training.sqlite`, delete any leftover `training.sqlite-wal` / `training.sqlite-shm`, then restart the dashboard.
 
 ## Data flow
 
