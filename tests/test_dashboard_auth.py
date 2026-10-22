@@ -60,3 +60,25 @@ def test_dashboard_survives_missing_garmin_credentials(seeded_app):
     assert any("Garmin auth unavailable" in w for w in warnings)
     # The stored data still renders — the app degrades, it does not stop.
     assert len(at.tabs) >= 1
+
+
+def test_dashboard_reports_an_unopenable_store_instead_of_a_traceback(tmp_path):
+    """A store path that cannot be created used to escape as a bare traceback
+    — the user saw a stack trace and nothing telling them what to do."""
+    blocker = tmp_path / "data"
+    blocker.write_text("not a directory")
+    old_db = os.environ.get("TRAINING_DB")
+    os.environ["TRAINING_DB"] = str(blocker / "training.sqlite")
+    try:
+        at = AppTest.from_file("../dashboard.py", default_timeout=30)
+        at.run()
+    finally:
+        st.cache_resource.clear()
+        if old_db is not None:
+            os.environ["TRAINING_DB"] = old_db
+        else:
+            os.environ.pop("TRAINING_DB", None)
+
+    assert not at.exception
+    errors = [e.value for e in at.error]
+    assert any("Cannot open the training store" in e for e in errors)

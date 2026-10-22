@@ -2045,7 +2045,18 @@ def render_paces_table(windowed, units) -> None:
 
 def main() -> None:
     st.title("Training Tracker")
-    store = get_store()
+    try:
+        store = get_store()
+    except Exception as exc:
+        # An unopenable store (a newer schema, a data/ that cannot be created)
+        # used to surface as a bare traceback with no way forward.
+        st.error(f"Cannot open the training store at {DB_PATH}: {exc}")
+        st.caption(
+            "Restore a backup from `data/backups/` (see the README), "
+            "or run `refresh.py` to rebuild the store."
+        )
+        st.stop()
+        return
 
     persisted_profile = store.load_runner_profile()
     _units_display = "km" if (persisted_profile or default_profile()).units == "metric" else "miles"

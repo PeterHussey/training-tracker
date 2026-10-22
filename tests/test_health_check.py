@@ -1,8 +1,9 @@
 """Tests for health_check.py — the checks, and the CLI that runs them."""
 
 import os
+import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 import requests
@@ -272,6 +273,72 @@ def test_refresh_schedule_check_fails_when_there_is_no_log(tmp_path):
     ctx.refresh_log = tmp_path / "missing.log"
     with pytest.raises(AssertionError, match="no scheduled refresh log"):
         health_check.check_refresh_schedule(ctx)
+
+
+def test_refresh_schedule_check_fails_when_a_refresh_is_wedged(tmp_path):
+    """A start with no completion and 2 hours on the clock is not a slow run."""
+    log = tmp_path / "refresh.log"
+    started = (datetime.now() - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+    log.write_text(f"refresh: 0 new activities, 1 metric rows written\n[refresh] start {started}\n")
+    ctx = _ctx(tmp_path, _seed(tmp_path))
+    ctx.refresh_log = log
+    with pytest.raises(AssertionError, match="has not finished"):
+        health_check.check_refresh_schedule(ctx)
+
+
+def test_refresh_schedule_check_passes_while_a_refresh_is_running(tmp_path):
+    log = tmp_path / "refresh.log"
+    started = (datetime.now() - timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S")
+    log.write_text(f"refresh: 0 new activities, 1 metric rows written\n[refresh] start {started}\n")
+    ctx = _ctx(tmp_path, _seed(tmp_path))
+    ctx.refresh_log = log
+    assert "has been running" in health_check.check_refresh_schedule(ctx)
+
+
+def test_refresh_schedule_check_sees_the_completed_run_not_the_start(tmp_path):
+    log = tmp_path / "refresh.log"
+    started = (datetime.now() - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    log.write_text(
+        f"[refresh] start {started}\n"
+        "[refresh] backup written to /tmp/x.sqlite\n"
+        "refresh: 2 new activities, 10 metric rows written\n"
+    )
+    ctx = _ctx(tmp_path, _seed(tmp_path))
+    ctx.refresh_log = log
+    assert "last scheduled refresh" in health_check.check_refresh_schedule(ctx)
+
+
+def test_main_says_not_installed_when_there_is_no_store(tmp_path, monkeypatch, capsys):
+    """A fresh clone has no data/training.sqlite; that is not seven failures."""
+    monkeypatch.setattr(health_check, "LOGS_DIR", tmp_path)
+    rc = health_check.main(["--db", str(tmp_path / "data" / "training.sqlite")])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "not installed yet" in out
+    assert out.strip().splitlines()[-1].endswith(" SKIP")
+
+
+# --- the scheduled job must stay loaded ---
+
+
+class _Proc:
+    def __init__(self, returncode: int = 0):
+        self.returncode = returncode
+        self.stdout = ""
+        self.stderr = ""
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="launchd is macOS-only")
+def test_refresh_job_check_passes_when_launchd_knows_the_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(health_check.subprocess, "run", lambda *a, **k: _Proc(0))
+    assert "loaded" in health_check.check_refresh_job(_ctx(tmp_path, _seed(tmp_path)))
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="launchd is macOS-only")
+def test_refresh_job_check_fails_when_the_job_is_not_loaded(tmp_path, monkeypatch):
+    monkeypatch.setattr(health_check.subprocess, "run", lambda *a, **k: _Proc(113))
+    with pytest.raises(AssertionError, match="not loaded"):
+        health_check.check_refresh_job(_ctx(tmp_path, _seed(tmp_path)))
 
 
 # --- the health log must stay bounded ---

@@ -10,7 +10,7 @@ Run: `.venv/bin/python refresh.py`
 from __future__ import annotations
 
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from profile import default_profile
 
@@ -25,6 +25,10 @@ CACHE_DIR = Path(__file__).resolve().parent / "cache" / "app_cache"
 def main() -> int:
     path = default_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    # launchd redirects stdout to a file, which is block-buffered: without
+    # flush this line never lands and a running refresh looks as dead as a
+    # wedged one. The health check reads the marker to tell them apart.
+    print(f"[refresh] start {datetime.now():%Y-%m-%d %H:%M:%S}", flush=True)
     store = MetricStore(path)
     try:
         _snapshot(store)
@@ -50,7 +54,7 @@ def _snapshot(store: MetricStore) -> None:
     except Exception as exc:
         print(f"[refresh] backup failed ({exc.__class__.__name__}: {exc})", file=sys.stderr)
         return
-    print(f"[refresh] backup written to {dest}")
+    print(f"[refresh] backup written to {dest}", flush=True)
 
 
 def _refresh(store: MetricStore) -> int:
@@ -70,7 +74,7 @@ def _refresh(store: MetricStore) -> int:
     race = gw.fetch_race_predictions_trend(trend_start.isoformat(), end.isoformat()) or []
     vo2 = gw.fetch_vo2max_trend(trend_start.isoformat(), end.isoformat()) or []
     rows = persist_session_metrics(store, store.load_activities(), profile, lt, race, vo2)
-    print(f"refresh: {len(acts)} new activities, {rows} metric rows written")
+    print(f"refresh: {len(acts)} new activities, {rows} metric rows written", flush=True)
     return 0
 
 

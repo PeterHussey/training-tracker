@@ -17,11 +17,14 @@ throwaway probe scripts; they are here so the next review starts from a known
 baseline instead of rediscovering it. The last one probes the dashboard
 service itself, so a dead dashboard is a visible FAIL rather than a silent one.
 One check reads the refresh job's own log: only that proves the daily timer
-fired, which no manual kickstart can.
+fired, which no manual kickstart can. One asks launchd whether that job is
+still loaded — a job that was uninstalled never runs again, and its log stays
+plausibly fresh for a day.
 """
 
 import argparse
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import threading
@@ -53,6 +56,14 @@ HEALTH_LOG_MAX_LINES = 500
 # run is a couple of hours old by the time we look. A day of slack covers a
 # machine that was asleep at 05:00.
 REFRESH_MAX_AGE_H = 26
+# refresh.py writes a start line before it fetches and the completion line
+# above after it: a start with no completion is a run in progress, or a wedged
+# one. A healthy run takes minutes.
+REFRESH_START = "[refresh] start "
+REFRESH_DONE = "refresh: "
+REFRESH_STUCK_MIN = 30
+# The launchd job that must stay loaded for the daily refresh to happen.
+REFRESH_JOB = "com.trainingtracker.refresh"
 
 
 @dataclass
@@ -219,18 +230,78 @@ def check_refresh_schedule(ctx: Context) -> str:
     """The scheduled refresh must actually fire (criterion 11).
 
     Every other piece of evidence about the refresh is a manual kickstart;
-    only the job's own log proves the timer fired. The refresh writes one
-    line to stdout per successful run, so a stale log means no run.
+    only the job's own log proves the timer fired. The job writes a start line
+    before it fetches and a completion line after, so a start with no
+    completion means a run that is either in progress or wedged — the case
+    that used to sit silent in the log for a day.
     """
     log = ctx.refresh_log
     if not log.exists():
         raise AssertionError(f"no scheduled refresh log at {log}")
+    started = _running_since(log)
+    if started is not None:
+        minutes = (datetime.now() - started).total_seconds() / 60
+        if minutes > REFRESH_STUCK_MIN:
+            raise AssertionError(
+                f"a refresh started at {started:%Y-%m-%d %H:%M:%S} and has not finished "
+                f"after {minutes:.0f} min — it is wedged, not running"
+            )
+        return f"a refresh has been running since {started:%H:%M:%S} ({minutes:.0f} min)"
     age_h = (datetime.now() - datetime.fromtimestamp(log.stat().st_mtime)).total_seconds() / 3600
     if age_h > REFRESH_MAX_AGE_H:
         raise AssertionError(
             f"last scheduled refresh was {age_h:.1f}h ago (limit {REFRESH_MAX_AGE_H}h) — {log}"
         )
     return f"last scheduled refresh {age_h:.1f}h ago"
+
+
+def _running_since(log: Path) -> datetime | None:
+    """When the last refresh started, if no completion line has followed it."""
+    try:
+        lines = log.read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    last_start = last_done = -1
+    started: datetime | None = None
+    for i, line in enumerate(lines):
+        if line.startswith(REFRESH_START):
+            last_start, started = i, _parse_stamp(line[len(REFRESH_START) :])
+        elif line.startswith(REFRESH_DONE):
+            last_done = i
+    return started if last_start > last_done else None
+
+
+def _parse_stamp(text: str) -> datetime | None:
+    try:
+        return datetime.strptime(text.strip(), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def check_refresh_job(ctx: Context) -> str:
+    """The scheduled refresh job must still be loaded under launchd.
+
+    An uninstalled or renamed job never runs again, while its log keeps the
+    previous run's line — so the schedule check alone stays green until the
+    staleness limit. launchctl exits non-zero when the label is not loaded.
+    """
+    if sys.platform != "darwin":
+        return "skipped (launchd is macOS-only)"
+    try:
+        proc = subprocess.run(
+            ["launchctl", "list", REFRESH_JOB],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise AssertionError(f"could not ask launchd about {REFRESH_JOB}: {exc}") from exc
+    if proc.returncode != 0:
+        raise AssertionError(
+            f"{REFRESH_JOB} is not loaded — the daily refresh will not run; "
+            "reinstall it with deploy/launchd/install.sh"
+        )
+    return f"{REFRESH_JOB} is loaded"
 
 
 def check_stored_vs_garmin(ctx: Context) -> str:
@@ -313,6 +384,7 @@ CHECKS = [
     ("concurrency", check_concurrency),
     ("refresh", check_refresh),
     ("refresh-schedule", check_refresh_schedule),
+    ("refresh-job", check_refresh_job),
     ("stored-vs-garmin", check_stored_vs_garmin),
     ("dashboard", check_dashboard),
 ]
@@ -326,6 +398,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     ctx = Context(db_path=Path(args.db), spec_path=SPEC_PATH, refresh_log=LOGS_DIR / "refresh.log")
+    if not ctx.db_path.exists():
+        # A fresh clone, or a machine where the service was never installed:
+        # there is nothing to check yet, and six OperationalErrors plus a
+        # missing log is not how to say so.
+        print(f"not installed yet: no store at {ctx.db_path} (run refresh.py to create it)")
+        print(f"health check: {datetime.now():%Y-%m-%d %H:%M:%S} SKIP")
+        return 0
     trim_log(LOGS_DIR / "health.log")
     trim_log(LOGS_DIR / "dashboard.log")
     # Never the refresh log: its mtime is the signal the refresh-schedule

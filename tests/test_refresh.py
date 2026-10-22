@@ -59,6 +59,19 @@ def test_refresh_snapshots_the_store_before_it_writes(tmp_path, monkeypatch, cap
     assert "backup written to" in capsys.readouterr().out
 
 
+def test_a_refresh_writes_a_start_line_before_it_fetches(tmp_path, monkeypatch, capsys):
+    """The start line is what tells the health check a refresh is running from
+    a wedged one; the completion line is what ends that state."""
+    monkeypatch.setenv("TRAINING_DB", str(tmp_path / "t.sqlite"))
+    monkeypatch.setattr(refresh, "GarminGateway", _StubGateway)
+
+    assert refresh.main() == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("[refresh] start ")
+    assert lines[-1].startswith("refresh: ")
+
+
 def test_a_failed_snapshot_does_not_stop_the_refresh(tmp_path, monkeypatch, capsys):
     """A backup that cannot be written must not cost us the refresh."""
     monkeypatch.setenv("TRAINING_DB", str(tmp_path / "t.sqlite"))
