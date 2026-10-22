@@ -295,10 +295,31 @@ def test_trim_log_ignores_a_missing_file(tmp_path):
     assert health_check.trim_log(tmp_path / "missing.log", keep=3) == 0
 
 
+def test_main_trims_the_dashboard_logs_but_not_the_refresh_log(tmp_path, monkeypatch):
+    # The dashboard's error log grows without bound (it took the fd errors
+    # to 89 KB in two days). The refresh log must never be rewritten: its
+    # mtime is the signal the refresh-schedule check reads.
+    dash = tmp_path / "dashboard.err.log"
+    dash.write_text("\n".join(f"line {i}" for i in range(10)) + "\n")
+    refresh = tmp_path / "refresh.log"
+    refresh.write_text("refresh: 0 new activities\n")
+    health = tmp_path / "health.log"
+    health.write_text("health check: PASS\n")
+    # Every log the check touches lives under LOGS_DIR, so redirecting that
+    # one constant keeps the test off the real logs/.
+    monkeypatch.setattr(health_check, "LOGS_DIR", tmp_path)
+    monkeypatch.setattr(health_check, "HEALTH_LOG_MAX_LINES", 3)
+    monkeypatch.setattr(health_check, "CHECKS", [("ok", lambda ctx: "fine")])
+    health_check.main(["--db", str(_seed(tmp_path))])
+    assert dash.read_text().splitlines() == ["line 7", "line 8", "line 9"]
+    assert health.read_text() == "health check: PASS\n"
+    assert refresh.read_text() == "refresh: 0 new activities\n"
+
+
 def test_main_trims_the_health_log(tmp_path, monkeypatch):
     log = tmp_path / "health.log"
     log.write_text("\n".join(f"line {i}" for i in range(10)) + "\n")
-    monkeypatch.setattr(health_check, "HEALTH_LOG", log)
+    monkeypatch.setattr(health_check, "LOGS_DIR", tmp_path)
     monkeypatch.setattr(health_check, "HEALTH_LOG_MAX_LINES", 3)
     monkeypatch.setattr(health_check, "CHECKS", [("ok", lambda ctx: "fine")])
     health_check.main(["--db", str(_seed(tmp_path))])

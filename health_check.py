@@ -46,7 +46,7 @@ VOLUME_DAILY = "volume.distance_total_daily"
 DASHBOARD_HEALTH_URL = "http://127.0.0.1:8501/_stcore/health"
 DASHBOARD_TIMEOUT_S = 5
 LOGS_DIR = REPO / "logs"
-HEALTH_LOG = LOGS_DIR / "health.log"
+# The refresh job's log mtime is the signal the refresh-schedule check reads.
 REFRESH_LOG = LOGS_DIR / "refresh.log"
 HEALTH_LOG_MAX_LINES = 500
 # The refresh job runs daily at 05:00 and this check at 06:30, so a successful
@@ -325,8 +325,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip", action="append", default=[], help="skip these checks")
     args = parser.parse_args(argv)
 
-    ctx = Context(db_path=Path(args.db), spec_path=SPEC_PATH)
-    trim_log(HEALTH_LOG)
+    ctx = Context(db_path=Path(args.db), spec_path=SPEC_PATH, refresh_log=LOGS_DIR / "refresh.log")
+    trim_log(LOGS_DIR / "health.log")
+    trim_log(LOGS_DIR / "dashboard.log")
+    # Never the refresh log: its mtime is the signal the refresh-schedule
+    # check reads, and rewriting it would make a dead refresh look fresh.
+    trim_log(LOGS_DIR / "dashboard.err.log")
     failures = 0
     for name, fn in CHECKS:
         if args.only and name not in args.only:
