@@ -3,6 +3,7 @@
 from datetime import date, timedelta
 
 import pytest
+import requests
 
 import health_check
 import refresh
@@ -143,6 +144,41 @@ def test_stored_vs_garmin_check_fails_when_garmin_disagrees(tmp_path, monkeypatc
     monkeypatch.setattr(health_check, "_gateway", lambda: _Gw())
     with pytest.raises(AssertionError, match="distance"):
         health_check.check_stored_vs_garmin(_ctx(tmp_path, path))
+
+
+class _Resp:
+    """Minimal stand-in for a requests response."""
+
+    def __init__(self, status_code: int = 200, text: str = "ok"):
+        self.status_code = status_code
+        self.text = text
+
+
+def test_dashboard_check_passes_when_the_service_is_healthy(tmp_path, monkeypatch):
+    monkeypatch.setattr(health_check.requests, "get", lambda url, timeout=None: _Resp())
+    detail = health_check.check_dashboard(_ctx(tmp_path, _seed(tmp_path)))
+    assert "-> ok" in detail
+
+
+def test_dashboard_check_fails_when_the_service_is_unreachable(tmp_path, monkeypatch):
+    def boom(url, timeout=None):
+        raise requests.ConnectionError("connection refused")
+
+    monkeypatch.setattr(health_check.requests, "get", boom)
+    with pytest.raises(AssertionError, match="unreachable"):
+        health_check.check_dashboard(_ctx(tmp_path, _seed(tmp_path)))
+
+
+def test_dashboard_check_fails_when_the_service_is_not_healthy(tmp_path, monkeypatch):
+    monkeypatch.setattr(health_check.requests, "get", lambda url, timeout=None: _Resp(500, "boom"))
+    with pytest.raises(AssertionError, match="HTTP 500"):
+        health_check.check_dashboard(_ctx(tmp_path, _seed(tmp_path)))
+
+    monkeypatch.setattr(
+        health_check.requests, "get", lambda url, timeout=None: _Resp(200, "not ok")
+    )
+    with pytest.raises(AssertionError, match="said"):
+        health_check.check_dashboard(_ctx(tmp_path, _seed(tmp_path)))
 
 
 def test_main_exits_non_zero_when_a_check_fails(tmp_path, monkeypatch, capsys):

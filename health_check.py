@@ -14,7 +14,8 @@ consistent snapshot).
 
 The checks are the ones the 2026-10-20 status review had to write as
 throwaway probe scripts; they are here so the next review starts from a known
-baseline instead of rediscovering it.
+baseline instead of rediscovering it. The last one probes the dashboard
+service itself, so a dead dashboard is a visible FAIL rather than a silent one.
 """
 
 import argparse
@@ -28,6 +29,7 @@ from pathlib import Path
 from profile import default_profile
 
 import pandas as pd
+import requests
 
 import refresh
 from gateway import GarminGateway
@@ -38,6 +40,9 @@ REPO = Path(__file__).resolve().parent
 SPEC_PATH = REPO / "docs" / "v2" / "metrics-spec.md"
 CACHE_DIR = REPO / "cache" / "app_cache"
 VOLUME_DAILY = "volume.distance_total_daily"
+# The launchd dashboard plist pins this address and port.
+DASHBOARD_HEALTH_URL = "http://127.0.0.1:8501/_stcore/health"
+DASHBOARD_TIMEOUT_S = 5
 
 
 @dataclass
@@ -235,6 +240,24 @@ def check_stored_vs_garmin(ctx: Context) -> str:
     return f"{compared} activity(s) match Garmin"
 
 
+def check_dashboard(ctx: Context) -> str:
+    """The dashboard service must be up and healthy (criterion 10).
+
+    A dead dashboard is the one failure nobody would otherwise notice: the
+    refresh job still runs, the store still grows, and the app is simply gone.
+    """
+    try:
+        resp = requests.get(DASHBOARD_HEALTH_URL, timeout=DASHBOARD_TIMEOUT_S)
+    except requests.RequestException as exc:
+        raise AssertionError(f"{DASHBOARD_HEALTH_URL} unreachable: {exc}") from exc
+    if resp.status_code != 200:
+        raise AssertionError(f"{DASHBOARD_HEALTH_URL} returned HTTP {resp.status_code}")
+    body = resp.text.strip()
+    if body != "ok":
+        raise AssertionError(f"{DASHBOARD_HEALTH_URL} said {body!r}")
+    return f"{DASHBOARD_HEALTH_URL} -> ok"
+
+
 CHECKS = [
     ("store-mode", check_store_mode),
     ("monthly-rollup", check_monthly_rollup),
@@ -242,6 +265,7 @@ CHECKS = [
     ("concurrency", check_concurrency),
     ("refresh", check_refresh),
     ("stored-vs-garmin", check_stored_vs_garmin),
+    ("dashboard", check_dashboard),
 ]
 
 
