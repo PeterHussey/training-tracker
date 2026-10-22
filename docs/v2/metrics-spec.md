@@ -138,6 +138,16 @@ the bisection has no valid answer — the raw row when the raw vdot is outside
 `[15, 90]`, a damped row when the **damped** vdot is. The prognosis table and the
 paces table are hidden when their inputs are absent.
 
+Canonical day: an activity's day is its `activity_date` — the calendar date of
+Garmin's local start time (`startTimeLocal`). The shape window `[t-30d, t]` is
+evaluated on that day: the series is keyed by `activity_date`, and the window
+filter matches activities by start instant (the `beginTimestamp` epoch, or noon
+of the stored day when no epoch is available) against the day's window ending
+at 23:59:59 local. The store does not persist the epoch — a stored activity
+reloads with no timestamp and falls back to noon of its own day — so for stored
+data the day and the window always agree. See §7.14 for what that costs after a
+timezone change.
+
 Training paces: a display-only table at 65 → 110 % of vVO2max in 5 % steps, from
 the current shape rounded half-up via `daniels_gilbert.pace_s_per_km`. It is
 derived in-session (bottom of Overview) and is **never stored**.
@@ -204,6 +214,15 @@ derived in-session (bottom of Overview) and is **never stored**.
     prediction of future performance. A run outside 3 km–marathon stores no row
     at all (no zero filler); an age outside 30–110 is clamped to the table's
     edge rather than left ungraded. The age used is `activity year - birth year`.
+14. The activity's day is Garmin's local start date, but its start *instant* is
+    the epoch Garmin reports, and the two can disagree after a timezone change
+    or travel. Stored activities carry only the day (no epoch is persisted), so
+    the shape window is self-consistent for everything the store holds; an
+    activity parsed straight from a live payload keeps its epoch, and if that
+    instant falls on a different calendar day than `startTimeLocal`, its own day
+    may hold no qualifying run in the trailing 30-day window — that day is then
+    dropped from `vdot.shape` (a gap, never a zero). Persisting the epoch
+    without changing the window rule would move this gap into production.
 
 ## 8. Registry metric keys
 
