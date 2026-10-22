@@ -78,17 +78,53 @@ def test_monthly_rollup_check_is_quiet_when_the_month_has_no_activity(tmp_path):
     assert "no activity yet" in detail
 
 
-def test_spec_check_fails_for_an_undocumented_family(tmp_path):
+def _spec_text(*keys: str) -> str:
+    """A spec with the registry section the health check parses."""
+    return "## 8. Registry metric keys\n\n```\n" + "\n".join(keys) + "\n```\n"
+
+
+def test_spec_check_fails_for_an_undocumented_key(tmp_path):
     path = _seed(tmp_path, metrics=[("zzz_unknown.metric", "2026-01-01", 1.0)])
-    ctx = _ctx(tmp_path, path, spec_text="volume pmc")
-    with pytest.raises(AssertionError, match="zzz_unknown"):
-        health_check.check_spec_covers_families(ctx)
+    ctx = _ctx(tmp_path, path, spec_text=_spec_text("volume.distance_total_daily"))
+    with pytest.raises(AssertionError, match="zzz_unknown.metric"):
+        health_check.check_spec_covers_keys(ctx)
 
 
-def test_spec_check_passes_when_every_family_is_documented(tmp_path):
+def test_spec_check_passes_when_every_key_is_documented(tmp_path):
     path = _seed(tmp_path, metrics=[("volume.distance_total_daily", "2026-01-01", 1.0)])
-    ctx = _ctx(tmp_path, path, spec_text="volume")
-    assert "1 families documented" in health_check.check_spec_covers_families(ctx)
+    ctx = _ctx(tmp_path, path, spec_text=_spec_text("volume.distance_total_daily"))
+    assert "1 stored keys documented" in health_check.check_spec_covers_keys(ctx)
+
+
+def test_spec_check_fails_when_the_registry_section_is_missing(tmp_path):
+    path = _seed(tmp_path, metrics=[("volume.distance_total_daily", "2026-01-01", 1.0)])
+    ctx = _ctx(tmp_path, path, spec_text="no registry section here")
+    with pytest.raises(AssertionError, match="missing from §8"):
+        health_check.check_spec_covers_keys(ctx)
+
+
+def test_the_spec_lists_every_key_the_pipeline_emits_for_the_fixture():
+    """A metric whose key is not registered in §8 fails the nightly check, so
+    the fixture pins the registry against the pipeline itself."""
+    import json
+    from pathlib import Path
+    from profile import default_profile
+
+    from normalize import from_summary
+    from pipeline import compute_metric_rows
+
+    fixtures = Path(__file__).parent / "fixtures"
+    acts = [from_summary(a) for a in json.loads((fixtures / "activities_sample.json").read_text())]
+    rows = compute_metric_rows(
+        acts,
+        default_profile(age=40, hrrest=60, sex="M"),
+        json.loads((fixtures / "lactate_threshold.json").read_text()),
+        json.loads((fixtures / "race_predictions.json").read_text()),
+    )
+    undocumented = sorted(
+        {r["metric"] for r in rows} - health_check._spec_keys(health_check.SPEC_PATH)
+    )
+    assert undocumented == [], f"not in the spec's registry: {undocumented}"
 
 
 def test_concurrency_check_passes(tmp_path):

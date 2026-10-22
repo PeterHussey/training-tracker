@@ -3,6 +3,10 @@
 Source of truth for docs/v2/garmin-field-mapping.md. endpoint is one of:
 activity_list | activity_details | lt | race_predictions | training_status |
 user_settings | heart_rate_zones | daily_summary
+
+METRICS names metric families with the field-mapping's own labels
+(`trimp_edwards`, `ctl`, `marathon_shape`, …). Those are not the keys the store
+writes: the stored keys are listed in docs/v2/metrics-spec.md §8.
 """
 
 from dataclasses import dataclass

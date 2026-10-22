@@ -3,6 +3,10 @@
 > Generated source of truth: `garmin_fields.py`. Endpoints: activity list,
 > activity details, lactate threshold, race predictions, training status,
 > user settings / heart-rate zones.
+>
+> The metric labels below (`trimp_edwards`, `ctl`, `marathon_shape`, …) are the
+> field-mapping's family labels, not the keys the store writes — those are
+> listed in `docs/v2/metrics-spec.md` §8.
 
 **Confirmation status (frozen fixtures vs live):** live Garmin capture is not
 possible in this environment (no credentials/2FA), so no row below was confirmed

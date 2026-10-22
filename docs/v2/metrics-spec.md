@@ -226,13 +226,94 @@ derived in-session (bottom of Overview) and is **never stored**.
 
 ## 8. Registry metric keys
 
+Every `metric_series` row carries a key, and the pipeline's complete key set is
+listed below — one key per line, sorted. `health_check.py`'s `spec-covers-keys`
+probe fails when the store holds a key this list omits, so a new metric has to
+be registered here in the same change that emits it.
+
 ```
-volume, elevation, gap, trimp_edwards, trimp_banister, ctl, atl,
-tsb, acwr, decoupling, vo2max, lt_hr, lt_pace, cs_approx,
-race_5k, race_10k, race_half, race_full, load_reference,
-cross_training, vdot_shape, marathon_shape, prognosis
+age_graded.pct
+elevation.daily_gain_running
+elevation.gain_per_km_running
+elevation.rolling28d_running
+fitness.vo2max
+gap.running
+injury.max_run_ratio
+load.acwr
+load.acwr_pct
+load.banister
+load.banister_cross
+load.banister_running
+load.banister_treadmill
+load.cs_approx
+load.decoupling
+load.decoupling_mean
+load.edwards
+load.edwards_cross
+load.edwards_running
+load.edwards_treadmill
+load.lt_effort_dots20_hr
+load.lt_effort_dots20_pace
+load.lt_effort_dots30_hr
+load.lt_effort_dots30_pace
+load.lt_hr
+load.lt_hr_best20
+load.lt_hr_best30
+load.lt_pace
+load.lt_pace_best20
+load.lt_pace_best30
+marathon.shape_pct
+pmc.atl
+pmc.ctl
+pmc.tsb
+prognosis.1
+prognosis.10
+prognosis.10_damped
+prognosis.1_damped
+prognosis.21.1
+prognosis.21.1_damped
+prognosis.3
+prognosis.3_damped
+prognosis.42.2
+prognosis.42.2_damped
+prognosis.5
+prognosis.50
+prognosis.50_damped
+prognosis.5_damped
+race_10k
+race_5k
+race_full
+race_half
+vdot.shape
+volume.distance_cross
+volume.distance_running
+volume.distance_running_daily
+volume.distance_strength
+volume.distance_total
+volume.distance_total_daily
+volume.distance_treadmill
+volume.distance_treadmill_daily
+volume.duration_cross
+volume.duration_cross_daily
+volume.duration_running
+volume.duration_running_daily
+volume.duration_strength
+volume.duration_strength_daily
+volume.duration_total
+volume.duration_total_daily
+volume.duration_treadmill
+volume.duration_treadmill_daily
 ```
 
-Canonical metric keys (source of truth: `garmin_fields.py` `METRICS`; do not
-change here without changing the registry). Generated during Step 3 verification,
-kept verbatim so the appendix can be machine-checked.
+Naming rules: the first segment is the family (`volume`, `load`, `pmc`, …);
+`_daily` marks the daily series a windowed aggregate is built from; `_running`,
+`_cross`, `_strength`, `_treadmill` mark a sport split; `prognosis.<distance>`
+is a race-distance prognosis in km and `_damped` applies the marathon-shape
+damping factor. Keys absent from a store are conditional on the data
+(`session.CONDITIONAL_METRICS` records the reason for each).
+
+The Garmin field mapping speaks a different vocabulary on purpose:
+`garmin_fields.py` `METRICS` names metric *families* with the field-mapping
+labels (`trimp_edwards`, `ctl`, `marathon_shape`, …) used by
+`docs/v2/garmin-field-mapping.md`, not the stored keys above. It is not the
+source of truth for this list.

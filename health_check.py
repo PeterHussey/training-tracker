@@ -138,21 +138,44 @@ def check_monthly_rollup(ctx: Context) -> str:
     return f"{month:%Y-%m} bucket {monthly.loc[label]:.3f} over {len(days)} day(s)"
 
 
-def check_spec_covers_families(ctx: Context) -> str:
-    """Every stored metric family must be documented in the metric spec."""
+def check_spec_covers_keys(ctx: Context) -> str:
+    """Every stored metric key must be in the spec's §8 registry.
+
+    Matching family prefixes let a key drift past unnoticed: the spec used to
+    list 23 legacy labels while the store wrote 68 dotted keys.
+    """
     store = MetricStore(ctx.db_path)
     try:
-        families = {
-            m.split(".")[0]
-            for (m,) in store.conn.execute("SELECT DISTINCT metric FROM metric_series")
-        }
+        stored = {m for (m,) in store.conn.execute("SELECT DISTINCT metric FROM metric_series")}
     finally:
         store.close()
-    spec = ctx.spec_path.read_text()
-    missing = sorted(f for f in families if f not in spec)
+    missing = sorted(stored - _spec_keys(ctx.spec_path))
     if missing:
-        raise AssertionError(f"undocumented in {ctx.spec_path.name}: {', '.join(missing)}")
-    return f"{len(families)} families documented"
+        raise AssertionError(
+            f"{len(missing)} stored key(s) missing from §8 of {ctx.spec_path.name}: "
+            f"{', '.join(missing)}"
+        )
+    return f"{len(stored)} stored keys documented"
+
+
+def _spec_keys(spec_path: Path) -> set[str]:
+    """The registry keys the spec lists: the fenced block under §8."""
+    text = spec_path.read_text()
+    start = text.find("## 8. Registry metric keys")
+    if start < 0:
+        return set()
+    section = text[start:]
+    end = section.find("\n## ", 1)
+    if end > 0:
+        section = section[:end]
+    keys: set[str] = set()
+    in_block = False
+    for line in section.splitlines():
+        if line.startswith("```"):
+            in_block = not in_block
+        elif in_block and line.strip():
+            keys.add(line.strip())
+    return keys
 
 
 def check_concurrency(ctx: Context) -> str:
@@ -380,7 +403,7 @@ def trim_log(path: Path, keep: int | None = None) -> int:
 CHECKS = [
     ("store-mode", check_store_mode),
     ("monthly-rollup", check_monthly_rollup),
-    ("spec-covers-families", check_spec_covers_families),
+    ("spec-covers-keys", check_spec_covers_keys),
     ("concurrency", check_concurrency),
     ("refresh", check_refresh),
     ("refresh-schedule", check_refresh_schedule),
